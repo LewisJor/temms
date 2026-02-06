@@ -1,0 +1,26 @@
+[Unit]
+Description=TEMMS - Tactical Edge Model Management System
+Documentation=https://github.com/yourusername/temms
+After=network.target
+
+[Service]
+Type=simple
+User=temms
+Group=temms
+WorkingDirectory=/opt/temms
+Environment="PATH=/opt/temms/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/opt/temms/venv/bin/temms daemon start --foreground
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Watchdog
+WatchdogSec=30s
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,39 @@
+apiVersion: temms/v1
+kind: SlotPolicy
+metadata:
+  name: battery-adaptive-multislot
+  description: Reduce compute load when battery is low
+
+spec:
+  slot: vision
+
+  rules:
+    - name: low-battery
+      priority: 90
+      conditions:
+        all:
+          - metric: platform.power.battery_pct
+            operator: lte
+            value: 20
+          - metric: platform.power.power_source
+            operator: eq
+            value: battery
+      action:
+        switch_to: mobilenet-tiny
+
+    - name: critical-battery
+      priority: 200
+      conditions:
+        all:
+          - metric: platform.power.battery_pct
+            operator: lte
+            value: 10
+      action:
+        switch_to: mobilenet-minimal
+
+  allow_operator_override: true
+
+  fallback_chain:
+    - yolov8-full
+    - mobilenet-tiny
+    - mobilenet-minimal

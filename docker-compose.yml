@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  # Local MLflow server with PostgreSQL backend
+  mlflow-db:
+    image: postgres:14
+    container_name: temms-mlflow-db
+    environment:
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: mlflow
+      POSTGRES_DB: mlflow
+    volumes:
+      - mlflow-db-data:/var/lib/postgresql/data
+    networks:
+      - temms-local
+    restart: unless-stopped
+
+  mlflow-server:
+    image: python:3.10-slim
+    container_name: temms-mlflow-server
+    depends_on:
+      - mlflow-db
+    environment:
+      - MLFLOW_BACKEND_STORE_URI=postgresql://mlflow:mlflow@mlflow-db:5432/mlflow
+      - MLFLOW_ARTIFACT_ROOT=/mlflow/artifacts
+    volumes:
+      - mlflow-artifacts:/mlflow/artifacts
+      - ./scripts/mlflow-entrypoint.sh:/entrypoint.sh
+    ports:
+      - "5000:5000"
+    networks:
+      - temms-local
+    restart: unless-stopped
+    command: /entrypoint.sh
+
+  # Optional: MinIO for S3-compatible artifact storage (local)
+  # Uncomment if you want S3-like storage instead of filesystem
+  # minio:
+  #   image: minio/minio
+  #   container_name: temms-minio
+  #   environment:
+  #     MINIO_ROOT_USER: minioadmin
+  #     MINIO_ROOT_PASSWORD: minioadmin
+  #   volumes:
+  #     - minio-data:/data
+  #   ports:
+  #     - "9000:9000"
+  #     - "9001:9001"
+  #   networks:
+  #     - temms-local
+  #   command: server /data --console-address ":9001"
+
+networks:
+  temms-local:
+    driver: bridge
+
+volumes:
+  mlflow-db-data:
+  mlflow-artifacts:
+  # minio-data:

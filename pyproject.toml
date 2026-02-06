@@ -1,0 +1,106 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "temms"
+version = "0.1.0"
+description = "Tactical Edge Model Management System - Offline-first ML model management for DDIL environments"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "TEMMS Team"}
+]
+keywords = ["ml", "edge", "autonomous", "offline", "model-management"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "typer[all]>=0.9.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.24.0",
+    "python-multipart>=0.0.6",
+    "httpx>=0.25.0",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+# MLflow for local model registry
+mlflow = [
+    "mlflow>=2.8.0",
+    "psycopg2-binary>=2.9.0",  # For PostgreSQL backend
+]
+
+# ML runtime dependencies (optional, install what you need)
+onnx = ["onnxruntime>=1.16.0"]
+tflite = ["tensorflow>=2.14.0"]
+torch = ["torch>=2.1.0"]
+all-runtimes = [
+    "onnxruntime>=1.16.0",
+    "tensorflow>=2.14.0",
+    "torch>=2.1.0",
+]
+
+# Image processing for inference preprocessing
+image = ["pillow>=10.0.0"]
+
+# Full inference stack
+inference = [
+    "onnxruntime>=1.16.0",
+    "pillow>=10.0.0",
+]
+
+[project.scripts]
+temms = "temms.__main__:app"
+
+[project.urls]
+Homepage = "https://github.com/yourusername/temms"
+Documentation = "https://github.com/yourusername/temms/docs"
+Repository = "https://github.com/yourusername/temms"
+Issues = "https://github.com/yourusername/temms/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --cov=temms --cov-report=term-missing"
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false

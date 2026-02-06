@@ -1,0 +1,39 @@
+apiVersion: temms/v1
+kind: SlotPolicy
+metadata:
+  name: thermal-adaptive-vision
+  description: Switch to lighter model when device overheats
+
+spec:
+  slot: vision
+
+  rules:
+    - name: thermal-throttle
+      priority: 100
+      conditions:
+        all:
+          - metric: platform.compute.cpu_temp_c
+            operator: gte
+            value: 75  # Celsius
+            min_confidence: 0.7
+      action:
+        switch_to: yolov8-tiny
+        preload:
+          - mobilenet-fallback
+
+    - name: critical-overheat
+      priority: 200
+      conditions:
+        all:
+          - metric: platform.compute.cpu_temp_c
+            operator: gte
+            value: 85  # Critical temperature
+      action:
+        switch_to: mobilenet-fallback
+
+  allow_operator_override: true
+
+  fallback_chain:
+    - yolov8-full
+    - yolov8-tiny
+    - mobilenet-fallback

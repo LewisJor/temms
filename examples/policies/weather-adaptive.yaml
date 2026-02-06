@@ -1,0 +1,52 @@
+apiVersion: temms/v1
+kind: SlotPolicy
+metadata:
+  name: weather-adaptive-vision
+  description: Adapt vision model to weather conditions
+
+spec:
+  slot: vision
+
+  rules:
+    - name: fog-conditions
+      priority: 80
+      conditions:
+        any:
+          - metric: environmental.atmospheric.visibility_m
+            operator: lte
+            value: 100
+          - metric: environmental.atmospheric.precipitation
+            operator: in
+            value: [fog, mist]
+      action:
+        switch_to: yolov8-fog
+
+    - name: night-operations
+      priority: 70
+      conditions:
+        all:
+          - metric: environmental.celestial.ambient
+            operator: in
+            value: [low, dark]
+      action:
+        switch_to: yolov8-lowlight
+
+    - name: thermal-required
+      priority: 150
+      conditions:
+        all:
+          - metric: environmental.atmospheric.visibility_m
+            operator: lte
+            value: 20
+          - metric: operational.mission.priority
+            operator: eq
+            value: critical
+      action:
+        switch_to: yolov8-thermal-fusion
+
+  allow_operator_override: true
+
+  fallback_chain:
+    - yolov8-daylight
+    - yolov8-lowlight
+    - yolov8-minimal
