@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from enum import Enum
 import json
 
+from temms.core.database import Database
+
 
 class SlotState(str, Enum):
     """Slot operational state."""
@@ -17,6 +19,22 @@ class SlotState(str, Enum):
     LOADING = "loading"
     RUNNING = "running"
     ERROR = "error"
+
+
+@dataclass
+class OperatorOverride:
+    """Active operator override for a slot."""
+    model_id: str
+    reason: str
+    source: str  # operator ID or "api"
+    set_at: datetime
+    expires_at: Optional[datetime] = None
+
+    def is_expired(self) -> bool:
+        """Check if the override has expired."""
+        if self.expires_at is None:
+            return False
+        return datetime.now() >= self.expires_at
 
 
 @dataclass
@@ -31,6 +49,7 @@ class Slot:
     updated_at: datetime
     candidates: List[str]  # Model names that can run in this slot
     metadata: Dict[str, Any]
+    operator_override: Optional[OperatorOverride] = None
 
     def to_dict(self) -> dict:
         return {
@@ -43,51 +62,84 @@ class Slot:
             "updated_at": self.updated_at.isoformat(),
             "candidates": self.candidates,
             "metadata": self.metadata,
+            "operator_override": {
+                "model_id": self.operator_override.model_id,
+                "reason": self.operator_override.reason,
+                "source": self.operator_override.source,
+                "set_at": self.operator_override.set_at.isoformat(),
+                "expires_at": self.operator_override.expires_at.isoformat()
+                if self.operator_override.expires_at else None,
+            } if self.operator_override else None,
         }
 
 
-class SlotManager:
+class SlotManager(Database):
     """Manages model slots for multi-model deployment."""
 
-    def __init__(self, db_path: Path):
-        """Initialize slot manager."""
-        self.db_path = db_path
-        self._init_db()
-
-    def _init_db(self) -> None:
+    def _init_tables(self) -> None:
         """Initialize slots database."""
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.execute("""
+            CREATE TABLE IF NOT EXISTS slots (
+                name TEXT PRIMARY KEY,
+                description TEXT,
+                required BOOLEAN DEFAULT false,
+                default_model TEXT,
+                active_model_id TEXT,
+                state TEXT DEFAULT 'stopped',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                candidates JSON,
+                metadata JSON,
+                override_model_id TEXT,
+                override_reason TEXT,
+                override_source TEXT,
+                override_set_at TIMESTAMP,
+                override_expires_at TIMESTAMP
+            )
+        """)
 
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS slots (
-                    name TEXT PRIMARY KEY,
-                    description TEXT,
-                    required BOOLEAN DEFAULT false,
-                    default_model TEXT,
-                    active_model_id TEXT,
-                    state TEXT DEFAULT 'stopped',
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    candidates JSON,
-                    metadata JSON
-                )
-            """)
+        # Decision log - every model switch
+        self.execute("""
+            CREATE TABLE IF NOT EXISTS slot_decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slot TEXT NOT NULL,
+                from_model TEXT,
+                to_model TEXT,
+                trigger_type TEXT,
+                trigger_detail TEXT,
+                conditions_snapshot JSON,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
-            # Decision log - every model switch
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS slot_decisions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    slot TEXT NOT NULL,
-                    from_model TEXT,
-                    to_model TEXT,
-                    trigger_type TEXT,
-                    trigger_detail TEXT,
-                    conditions_snapshot JSON,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
+        self.conn.commit()
 
-            conn.commit()
+    @staticmethod
+    def _row_to_slot(row: sqlite3.Row) -> Slot:
+        """Map a database row to a Slot."""
+        override = None
+        if row["override_model_id"] is not None:
+            override = OperatorOverride(
+                model_id=row["override_model_id"],
+                reason=row["override_reason"] or "",
+                source=row["override_source"] or "unknown",
+                set_at=datetime.fromisoformat(row["override_set_at"])
+                if row["override_set_at"] else datetime.now(),
+                expires_at=datetime.fromisoformat(row["override_expires_at"])
+                if row["override_expires_at"] else None,
+            )
+
+        return Slot(
+            name=row["name"],
+            description=row["description"],
+            required=bool(row["required"]),
+            default_model=row["default_model"],
+            active_model_id=row["active_model_id"],
+            state=SlotState(row["state"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+            candidates=json.loads(row["candidates"]),
+            metadata=json.loads(row["metadata"]),
+            operator_override=override,
+        )
 
     def create_slot(
         self,
@@ -103,24 +155,22 @@ class SlotManager:
         metadata = metadata or {}
         updated_at = datetime.now()
 
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                """
-                INSERT INTO slots (name, description, required, default_model, state, updated_at, candidates, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    name,
-                    description,
-                    required,
-                    default_model,
-                    SlotState.STOPPED.value,
-                    updated_at,
-                    json.dumps(candidates),
-                    json.dumps(metadata),
-                ),
-            )
-            conn.commit()
+        self.execute_and_commit(
+            """
+            INSERT INTO slots (name, description, required, default_model, state, updated_at, candidates, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                name,
+                description,
+                required,
+                default_model,
+                SlotState.STOPPED.value,
+                updated_at,
+                json.dumps(candidates),
+                json.dumps(metadata),
+            ),
+        )
 
         return Slot(
             name=name,
@@ -136,47 +186,19 @@ class SlotManager:
 
     def get_slot(self, name: str) -> Optional[Slot]:
         """Get slot by name."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute("SELECT * FROM slots WHERE name = ?", (name,))
-            row = cursor.fetchone()
-
-        if not row:
-            return None
-
-        return Slot(
-            name=row["name"],
-            description=row["description"],
-            required=bool(row["required"]),
-            default_model=row["default_model"],
-            active_model_id=row["active_model_id"],
-            state=SlotState(row["state"]),
-            updated_at=datetime.fromisoformat(row["updated_at"]),
-            candidates=json.loads(row["candidates"]),
-            metadata=json.loads(row["metadata"]),
+        return self.fetch_one_mapped(
+            "SELECT * FROM slots WHERE name = ?",
+            (name,),
+            self._row_to_slot,
         )
 
     def list_slots(self) -> List[Slot]:
         """List all slots."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute("SELECT * FROM slots")
-            rows = cursor.fetchall()
-
-        return [
-            Slot(
-                name=row["name"],
-                description=row["description"],
-                required=bool(row["required"]),
-                default_model=row["default_model"],
-                active_model_id=row["active_model_id"],
-                state=SlotState(row["state"]),
-                updated_at=datetime.fromisoformat(row["updated_at"]),
-                candidates=json.loads(row["candidates"]),
-                metadata=json.loads(row["metadata"]),
-            )
-            for row in rows
-        ]
+        return self.fetch_all_mapped(
+            "SELECT * FROM slots",
+            (),
+            self._row_to_slot,
+        )
 
     def activate_model(
         self,
@@ -204,68 +226,133 @@ class SlotManager:
         updated_at = datetime.now()
         conditions = conditions or {}
 
-        with sqlite3.connect(self.db_path) as conn:
-            # Update slot
-            conn.execute(
-                """
-                UPDATE slots
-                SET active_model_id = ?, state = ?, updated_at = ?
-                WHERE name = ?
-                """,
-                (model_id, SlotState.RUNNING.value, updated_at, slot_name),
-            )
+        # Update slot
+        self.execute(
+            """
+            UPDATE slots
+            SET active_model_id = ?, state = ?, updated_at = ?
+            WHERE name = ?
+            """,
+            (model_id, SlotState.RUNNING.value, updated_at, slot_name),
+        )
 
-            # Log decision
-            conn.execute(
-                """
-                INSERT INTO slot_decisions
-                (slot, from_model, to_model, trigger_type, trigger_detail, conditions_snapshot)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    slot_name,
-                    from_model,
-                    model_id,
-                    trigger_type,
-                    trigger_detail,
-                    json.dumps(conditions),
-                ),
-            )
+        # Log decision
+        self.execute(
+            """
+            INSERT INTO slot_decisions
+            (slot, from_model, to_model, trigger_type, trigger_detail, conditions_snapshot)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                slot_name,
+                from_model,
+                model_id,
+                trigger_type,
+                trigger_detail,
+                json.dumps(conditions),
+            ),
+        )
 
-            conn.commit()
+        self.conn.commit()
+
+    def set_operator_override(
+        self,
+        slot_name: str,
+        model_id: str,
+        reason: str = "",
+        source: str = "api",
+        duration_s: Optional[int] = None,
+    ) -> None:
+        """
+        Set an operator override for a slot.
+
+        When an override is active, the policy engine should skip
+        evaluation for this slot.
+
+        Args:
+            slot_name: Target slot
+            model_id: Model to force
+            reason: Human-readable reason
+            source: Override source identifier
+            duration_s: Override duration in seconds (None = permanent until cleared)
+        """
+        slot = self.get_slot(slot_name)
+        if not slot:
+            raise ValueError(f"Slot not found: {slot_name}")
+
+        now = datetime.now()
+        expires_at = None
+        if duration_s is not None:
+            from datetime import timedelta
+            expires_at = now + timedelta(seconds=duration_s)
+
+        self.execute_and_commit(
+            """
+            UPDATE slots
+            SET override_model_id = ?, override_reason = ?,
+                override_source = ?, override_set_at = ?,
+                override_expires_at = ?, updated_at = ?
+            WHERE name = ?
+            """,
+            (model_id, reason, source, now, expires_at, now, slot_name),
+        )
+
+    def clear_operator_override(self, slot_name: str) -> None:
+        """Clear operator override for a slot."""
+        self.execute_and_commit(
+            """
+            UPDATE slots
+            SET override_model_id = NULL, override_reason = NULL,
+                override_source = NULL, override_set_at = NULL,
+                override_expires_at = NULL, updated_at = ?
+            WHERE name = ?
+            """,
+            (datetime.now(), slot_name),
+        )
+
+    def has_active_override(self, slot_name: str) -> bool:
+        """
+        Check if a slot has an active (non-expired) operator override.
+
+        Also cleans up expired overrides automatically.
+        """
+        slot = self.get_slot(slot_name)
+        if slot is None or slot.operator_override is None:
+            return False
+
+        if slot.operator_override.is_expired():
+            self.clear_operator_override(slot_name)
+            return False
+
+        return True
 
     def get_decision_log(self, slot_name: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
         """Get decision log for audit."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            if slot_name:
-                cursor = conn.execute(
-                    """
-                    SELECT * FROM slot_decisions
-                    WHERE slot = ?
-                    ORDER BY created_at DESC
-                    LIMIT ?
-                    """,
-                    (slot_name, limit),
-                )
-            else:
-                cursor = conn.execute(
-                    """
-                    SELECT * FROM slot_decisions
-                    ORDER BY created_at DESC
-                    LIMIT ?
-                    """,
-                    (limit,),
-                )
-            rows = cursor.fetchall()
+        if slot_name:
+            rows = self.fetchall(
+                """
+                SELECT * FROM slot_decisions
+                WHERE slot = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (slot_name, limit),
+            )
+        else:
+            rows = self.fetchall(
+                """
+                SELECT * FROM slot_decisions
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
 
         return [dict(row) for row in rows]
 
     def update_slot_state(self, slot_name: str, state: SlotState) -> None:
         """Update slot state."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                "UPDATE slots SET state = ?, updated_at = ? WHERE name = ?",
-                (state.value, datetime.now(), slot_name),
-            )
-            conn.commit()
+        self.execute_and_commit(
+            "UPDATE slots SET state = ?, updated_at = ? WHERE name = ?",
+            (state.value, datetime.now(), slot_name),
+        )

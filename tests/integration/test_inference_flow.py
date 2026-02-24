@@ -118,7 +118,8 @@ class TestConditionToPolicyFlow:
         result = full_system["policy_engine"].evaluate_slot("vision")
 
         # Should want to switch to tiny model
-        assert result == "test-model-tiny"
+        assert result.switch_to == "test-model-tiny"
+        assert result.is_default is False
 
     def test_policy_evaluation_with_non_matching_condition(
         self, full_client, full_system, sample_policy_yaml
@@ -146,8 +147,8 @@ class TestConditionToPolicyFlow:
         # Evaluate policy
         result = full_system["policy_engine"].evaluate_slot("vision")
 
-        # Should return None (no switch needed)
-        assert result is None
+        # Should return no switch needed (no rules matched, no default_model in policy)
+        assert result.switch_to is None
 
 
 class TestSlotManagement:

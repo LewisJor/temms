@@ -2,14 +2,26 @@
 Policy evaluation engine.
 """
 
+from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 import logging
+import re
 
 from temms.policy.schema import SlotPolicy, PolicyRule, Condition, ConditionGroup
 from temms.conditions.store import ConditionStore
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PolicyEvalResult:
+    """Result of policy evaluation for a slot."""
+    switch_to: Optional[str] = None  # Model name to switch to
+    version: Optional[str] = None  # Optional version pin
+    preload: List[str] = field(default_factory=list)  # Models to preload
+    triggered_by: Optional[str] = None  # Rule name or "default_model"
+    is_default: bool = False  # True if returning to default model
 
 
 class PolicyEngine:
@@ -37,7 +49,7 @@ class PolicyEngine:
         self.load_policy(policy)
         return policy
 
-    def evaluate_slot(self, slot_name: str) -> Optional[str]:
+    def evaluate_slot(self, slot_name: str) -> PolicyEvalResult:
         """
         Evaluate all policies for a slot and determine if model should switch.
 
@@ -45,7 +57,7 @@ class PolicyEngine:
             slot_name: Slot to evaluate
 
         Returns:
-            Model name to switch to, or None if no switch needed
+            PolicyEvalResult with switch_to model, version, preload list, and trigger info
         """
         # Get all policies for this slot
         slot_policies = [
@@ -54,7 +66,7 @@ class PolicyEngine:
         ]
 
         if not slot_policies:
-            return None
+            return PolicyEvalResult()
 
         # Sort rules by priority (highest first)
         all_rules = []
@@ -71,9 +83,28 @@ class PolicyEngine:
                     f"Policy rule matched: {policy.metadata.name}/{rule.name} "
                     f"-> {rule.action.switch_to}"
                 )
-                return rule.action.switch_to
+                return PolicyEvalResult(
+                    switch_to=rule.action.switch_to,
+                    version=rule.action.version,
+                    preload=rule.action.preload or [],
+                    triggered_by=f"{policy.metadata.name}/{rule.name}",
+                    is_default=False,
+                )
 
-        return None
+        # No rule matched - check for default_model across slot policies
+        for policy in slot_policies:
+            if policy.spec.default_model is not None:
+                logger.info(
+                    f"No rules matched for slot {slot_name}, "
+                    f"returning default model: {policy.spec.default_model}"
+                )
+                return PolicyEvalResult(
+                    switch_to=policy.spec.default_model,
+                    triggered_by="default_model",
+                    is_default=True,
+                )
+
+        return PolicyEvalResult()
 
     def _evaluate_rule(self, rule: PolicyRule) -> bool:
         """Evaluate a single rule."""
@@ -93,6 +124,12 @@ class PolicyEngine:
 
     def _evaluate_condition(self, condition: Condition) -> bool:
         """Evaluate a single condition."""
+        # Handle exists/not_exists before value lookup
+        if condition.operator == "exists":
+            return self.condition_store.get(condition.metric) is not None
+        if condition.operator == "not_exists":
+            return self.condition_store.get(condition.metric) is None
+
         # Get current value from condition store
         cond_value = self.condition_store.get(condition.metric)
 
@@ -129,6 +166,8 @@ class PolicyEngine:
                 return value in target
             elif op == "not_in":
                 return value not in target
+            elif op == "matches":
+                return bool(re.search(str(target), str(value)))
             else:
                 logger.warning(f"Unknown operator: {op}")
                 return False

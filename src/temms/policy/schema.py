@@ -25,6 +25,7 @@ class ConditionGroup(BaseModel):
 class PolicyAction(BaseModel):
     """Action to take when rule matches."""
     switch_to: str  # Model name to switch to
+    version: Optional[str] = None  # Pin specific version (default: latest imported)
     preload: Optional[List[str]] = None  # Models to preload (not activate)
 
 
@@ -45,6 +46,7 @@ class SlotPolicyMetadata(BaseModel):
 class SlotPolicySpec(BaseModel):
     """Policy specification."""
     slot: str  # Which slot this policy controls
+    default_model: Optional[str] = None  # Model to use when no rules match
     rules: List[PolicyRule]
     allow_operator_override: bool = Field(default=True)
     fallback_chain: List[str] = Field(default_factory=list)

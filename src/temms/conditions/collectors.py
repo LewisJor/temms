@@ -380,7 +380,7 @@ async def collect_all_async(
 
     Handles both sync and async collectors.
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     all_conditions = {}
 
     async def collect_one(collector):
