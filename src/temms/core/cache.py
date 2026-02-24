@@ -10,6 +10,8 @@ from datetime import datetime
 from dataclasses import dataclass
 from enum import Enum
 
+from temms.core.database import Database
+
 
 class ModelFormat(str, Enum):
     """Supported model formats."""
@@ -60,48 +62,66 @@ class ImportedPackage:
     manifest: Dict[str, Any]
 
 
-class ModelCache:
+class ModelCache(Database):
     """Local cache of imported models (not a full registry)."""
 
-    def __init__(self, db_path: Path):
-        """Initialize cache with database path."""
-        self.db_path = db_path
-        self._init_db()
-
-    def _init_db(self) -> None:
+    def _init_tables(self) -> None:
         """Initialize database schema."""
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.execute("""
+            CREATE TABLE IF NOT EXISTS packages (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                version TEXT NOT NULL,
+                source TEXT NOT NULL,
+                imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                manifest JSON NOT NULL
+            )
+        """)
 
-        with sqlite3.connect(self.db_path) as conn:
-            # Imported packages
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS packages (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    version TEXT NOT NULL,
-                    source TEXT NOT NULL,
-                    imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    manifest JSON NOT NULL
-                )
-            """)
+        self.execute("""
+            CREATE TABLE IF NOT EXISTS cached_models (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                version TEXT NOT NULL,
+                format TEXT NOT NULL,
+                path TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                size_bytes INTEGER,
+                metadata JSON,
+                package_id TEXT REFERENCES packages(id),
+                imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
-            # Cached models (from packages)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS cached_models (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    version TEXT NOT NULL,
-                    format TEXT NOT NULL,
-                    path TEXT NOT NULL,
-                    sha256 TEXT NOT NULL,
-                    size_bytes INTEGER,
-                    metadata JSON,
-                    package_id TEXT REFERENCES packages(id),
-                    imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
+        self.conn.commit()
 
-            conn.commit()
+    @staticmethod
+    def _row_to_model(row: sqlite3.Row) -> CachedModel:
+        """Map a database row to a CachedModel."""
+        return CachedModel(
+            id=row["id"],
+            name=row["name"],
+            version=row["version"],
+            format=ModelFormat(row["format"]),
+            path=Path(row["path"]),
+            sha256=row["sha256"],
+            size_bytes=row["size_bytes"],
+            metadata=json.loads(row["metadata"]),
+            package_id=row["package_id"],
+            imported_at=datetime.fromisoformat(row["imported_at"]),
+        )
+
+    @staticmethod
+    def _row_to_package(row: sqlite3.Row) -> ImportedPackage:
+        """Map a database row to an ImportedPackage."""
+        return ImportedPackage(
+            id=row["id"],
+            name=row["name"],
+            version=row["version"],
+            source=row["source"],
+            imported_at=datetime.fromisoformat(row["imported_at"]),
+            manifest=json.loads(row["manifest"]),
+        )
 
     def add_package(
         self,
@@ -114,15 +134,13 @@ class ModelCache:
         """Record imported package."""
         imported_at = datetime.now()
 
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                """
-                INSERT INTO packages (id, name, version, source, imported_at, manifest)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (package_id, name, version, source, imported_at, json.dumps(manifest)),
-            )
-            conn.commit()
+        self.execute_and_commit(
+            """
+            INSERT INTO packages (id, name, version, source, imported_at, manifest)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (package_id, name, version, source, imported_at, json.dumps(manifest)),
+        )
 
         return ImportedPackage(
             id=package_id,
@@ -149,27 +167,25 @@ class ModelCache:
         imported_at = datetime.now()
         metadata = metadata or {}
 
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                """
-                INSERT INTO cached_models
-                (id, name, version, format, path, sha256, size_bytes, metadata, package_id, imported_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    model_id,
-                    name,
-                    version,
-                    format.value,
-                    str(path),
-                    sha256,
-                    size_bytes,
-                    json.dumps(metadata),
-                    package_id,
-                    imported_at,
-                ),
-            )
-            conn.commit()
+        self.execute_and_commit(
+            """
+            INSERT INTO cached_models
+            (id, name, version, format, path, sha256, size_bytes, metadata, package_id, imported_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                model_id,
+                name,
+                version,
+                format.value,
+                str(path),
+                sha256,
+                size_bytes,
+                json.dumps(metadata),
+                package_id,
+                imported_at,
+            ),
+        )
 
         return CachedModel(
             id=model_id,
@@ -186,99 +202,45 @@ class ModelCache:
 
     def get_model(self, model_id: str) -> Optional[CachedModel]:
         """Get cached model by ID."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(
-                "SELECT * FROM cached_models WHERE id = ?", (model_id,)
-            )
-            row = cursor.fetchone()
-
-        if not row:
-            return None
-
-        return CachedModel(
-            id=row["id"],
-            name=row["name"],
-            version=row["version"],
-            format=ModelFormat(row["format"]),
-            path=Path(row["path"]),
-            sha256=row["sha256"],
-            size_bytes=row["size_bytes"],
-            metadata=json.loads(row["metadata"]),
-            package_id=row["package_id"],
-            imported_at=datetime.fromisoformat(row["imported_at"]),
+        return self.fetch_one_mapped(
+            "SELECT * FROM cached_models WHERE id = ?",
+            (model_id,),
+            self._row_to_model,
         )
 
     def list_models(self) -> List[CachedModel]:
         """List all cached models."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute("SELECT * FROM cached_models ORDER BY imported_at DESC")
-            rows = cursor.fetchall()
-
-        return [
-            CachedModel(
-                id=row["id"],
-                name=row["name"],
-                version=row["version"],
-                format=ModelFormat(row["format"]),
-                path=Path(row["path"]),
-                sha256=row["sha256"],
-                size_bytes=row["size_bytes"],
-                metadata=json.loads(row["metadata"]),
-                package_id=row["package_id"],
-                imported_at=datetime.fromisoformat(row["imported_at"]),
-            )
-            for row in rows
-        ]
+        return self.fetch_all_mapped(
+            "SELECT * FROM cached_models ORDER BY imported_at DESC",
+            (),
+            self._row_to_model,
+        )
 
     def find_model(self, name: str, version: Optional[str] = None) -> Optional[CachedModel]:
-        """Find cached model by name and optional version."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            if version:
-                cursor = conn.execute(
-                    "SELECT * FROM cached_models WHERE name = ? AND version = ?",
-                    (name, version),
-                )
-            else:
-                cursor = conn.execute(
-                    "SELECT * FROM cached_models WHERE name = ? ORDER BY imported_at DESC LIMIT 1",
-                    (name,),
-                )
-            row = cursor.fetchone()
+        """
+        Find cached model by name and optional version.
 
-        if not row:
-            return None
-
-        return CachedModel(
-            id=row["id"],
-            name=row["name"],
-            version=row["version"],
-            format=ModelFormat(row["format"]),
-            path=Path(row["path"]),
-            sha256=row["sha256"],
-            size_bytes=row["size_bytes"],
-            metadata=json.loads(row["metadata"]),
-            package_id=row["package_id"],
-            imported_at=datetime.fromisoformat(row["imported_at"]),
-        )
+        When version is not specified, returns the most recently imported version.
+        This "latest version" behavior is intentional for edge deployment:
+        importing a new package should activate the newest models.
+        """
+        if version:
+            return self.fetch_one_mapped(
+                "SELECT * FROM cached_models WHERE name = ? AND version = ?",
+                (name, version),
+                self._row_to_model,
+            )
+        else:
+            return self.fetch_one_mapped(
+                "SELECT * FROM cached_models WHERE name = ? ORDER BY imported_at DESC LIMIT 1",
+                (name,),
+                self._row_to_model,
+            )
 
     def list_packages(self) -> List[ImportedPackage]:
         """List all imported packages."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute("SELECT * FROM packages ORDER BY imported_at DESC")
-            rows = cursor.fetchall()
-
-        return [
-            ImportedPackage(
-                id=row["id"],
-                name=row["name"],
-                version=row["version"],
-                source=row["source"],
-                imported_at=datetime.fromisoformat(row["imported_at"]),
-                manifest=json.loads(row["manifest"]),
-            )
-            for row in rows
-        ]
+        return self.fetch_all_mapped(
+            "SELECT * FROM packages ORDER BY imported_at DESC",
+            (),
+            self._row_to_package,
+        )

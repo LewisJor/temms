@@ -8,6 +8,11 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from dataclasses import dataclass
 import json
+import logging
+
+from temms.core.database import Database
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -31,7 +36,7 @@ class ConditionValue:
         }
 
 
-class ConditionStore:
+class ConditionStore(Database):
     """
     Stores and manages runtime conditions.
 
@@ -44,41 +49,53 @@ class ConditionStore:
     - 0: Default assumptions
     """
 
-    def __init__(self, db_path: Path):
-        """Initialize condition store."""
-        self.db_path = db_path
-        self._init_db()
-
-    def _init_db(self) -> None:
+    def _init_tables(self) -> None:
         """Initialize conditions database."""
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.execute("""
+            CREATE TABLE IF NOT EXISTS conditions (
+                path TEXT PRIMARY KEY,
+                value TEXT,
+                source TEXT,
+                priority INTEGER,
+                confidence REAL DEFAULT 1.0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS conditions (
-                    path TEXT PRIMARY KEY,
-                    value TEXT,
-                    source TEXT,
-                    priority INTEGER,
-                    confidence REAL DEFAULT 1.0,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
+        # Condition history for replay/analysis
+        self.execute("""
+            CREATE TABLE IF NOT EXISTS condition_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT,
+                value TEXT,
+                source TEXT,
+                priority INTEGER,
+                confidence REAL,
+                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
-            # Condition history for replay/analysis
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS condition_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    path TEXT,
-                    value TEXT,
-                    source TEXT,
-                    priority INTEGER,
-                    confidence REAL,
-                    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
+        self.conn.commit()
 
-            conn.commit()
+    @staticmethod
+    def _row_to_condition(row: sqlite3.Row) -> Optional[ConditionValue]:
+        """Map a database row to a ConditionValue, handling corrupt data."""
+        try:
+            value = json.loads(row["value"])
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.warning(
+                f"Corrupt condition value for path '{row['path']}': {e}. Skipping."
+            )
+            return None
+
+        return ConditionValue(
+            path=row["path"],
+            value=value,
+            source=row["source"],
+            priority=row["priority"],
+            confidence=row["confidence"],
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
 
     def set(
         self,
@@ -87,9 +104,11 @@ class ConditionStore:
         source: str,
         priority: int,
         confidence: float = 1.0,
-    ) -> ConditionValue:
+    ) -> Optional[ConditionValue]:
         """
         Set a condition value.
+
+        Only updates if the new priority >= existing priority for the same path.
 
         Args:
             path: Dotted path (e.g., "weather.visibility_m")
@@ -99,73 +118,61 @@ class ConditionStore:
             confidence: Confidence score (0.0-1.0)
 
         Returns:
-            ConditionValue
+            ConditionValue if set/updated, or existing value if priority too low
         """
         updated_at = datetime.now()
         value_json = json.dumps(value)
 
-        with sqlite3.connect(self.db_path) as conn:
-            # Get existing condition to check priority
-            cursor = conn.execute(
-                "SELECT priority FROM conditions WHERE path = ?", (path,)
-            )
-            row = cursor.fetchone()
+        # Check existing priority
+        row = self.fetchone(
+            "SELECT priority FROM conditions WHERE path = ?", (path,)
+        )
 
-            # Only update if new priority >= existing priority
-            if row is None or priority >= row[0]:
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO conditions
-                    (path, value, source, priority, confidence, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (path, value_json, source, priority, confidence, updated_at),
-                )
+        # Only update if new priority >= existing priority
+        if row is not None and priority < row["priority"]:
+            # Priority too low — return the existing stored value
+            return self.get(path)
 
-                # Archive to history
-                conn.execute(
-                    """
-                    INSERT INTO condition_history
-                    (path, value, source, priority, confidence)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (path, value_json, source, priority, confidence),
-                )
+        self.execute(
+            """
+            INSERT OR REPLACE INTO conditions
+            (path, value, source, priority, confidence, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (path, value_json, source, priority, confidence, updated_at),
+        )
 
-                conn.commit()
+        # Archive to history
+        self.execute(
+            """
+            INSERT INTO condition_history
+            (path, value, source, priority, confidence)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (path, value_json, source, priority, confidence),
+        )
 
-                return ConditionValue(
-                    path=path,
-                    value=value,
-                    source=source,
-                    priority=priority,
-                    confidence=confidence,
-                    updated_at=updated_at,
-                )
+        self.conn.commit()
 
-        # Priority too low - return the existing stored value
-        return self.get(path)
+        return ConditionValue(
+            path=path,
+            value=value,
+            source=source,
+            priority=priority,
+            confidence=confidence,
+            updated_at=updated_at,
+        )
 
     def get(self, path: str) -> Optional[ConditionValue]:
         """Get current condition value by path."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(
-                "SELECT * FROM conditions WHERE path = ?", (path,)
-            )
-            row = cursor.fetchone()
+        row = self.fetchone(
+            "SELECT * FROM conditions WHERE path = ?", (path,)
+        )
 
         if not row:
             return None
 
-        return ConditionValue(
-            path=row["path"],
-            value=json.loads(row["value"]),
-            source=row["source"],
-            priority=row["priority"],
-            confidence=row["confidence"],
-            updated_at=datetime.fromisoformat(row["updated_at"]),
-        )
+        return self._row_to_condition(row)
 
     def get_all(self, prefix: Optional[str] = None) -> Dict[str, ConditionValue]:
         """
@@ -177,28 +184,20 @@ class ConditionStore:
         Returns:
             Dictionary mapping path to ConditionValue
         """
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            if prefix:
-                cursor = conn.execute(
-                    "SELECT * FROM conditions WHERE path LIKE ?",
-                    (f"{prefix}.%",),
-                )
-            else:
-                cursor = conn.execute("SELECT * FROM conditions")
-            rows = cursor.fetchall()
-
-        return {
-            row["path"]: ConditionValue(
-                path=row["path"],
-                value=json.loads(row["value"]),
-                source=row["source"],
-                priority=row["priority"],
-                confidence=row["confidence"],
-                updated_at=datetime.fromisoformat(row["updated_at"]),
+        if prefix:
+            rows = self.fetchall(
+                "SELECT * FROM conditions WHERE path LIKE ?",
+                (f"{prefix}.%",),
             )
-            for row in rows
-        }
+        else:
+            rows = self.fetchall("SELECT * FROM conditions")
+
+        result = {}
+        for row in rows:
+            cond = self._row_to_condition(row)
+            if cond is not None:
+                result[cond.path] = cond
+        return result
 
     def get_snapshot(self) -> Dict[str, Any]:
         """
@@ -221,6 +220,13 @@ class ConditionStore:
 
         return snapshot
 
+    def exists(self, path: str) -> bool:
+        """Check if a condition path exists in the store."""
+        row = self.fetchone(
+            "SELECT 1 FROM conditions WHERE path = ?", (path,)
+        )
+        return row is not None
+
     def clear_operator_overrides(self) -> int:
         """
         Clear all operator overrides (priority >= 1000).
@@ -228,16 +234,16 @@ class ConditionStore:
         Returns:
             Number of conditions cleared
         """
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
-                "DELETE FROM conditions WHERE priority >= 1000"
-            )
-            conn.commit()
-            return cursor.rowcount
+        cursor = self.execute_and_commit(
+            "DELETE FROM conditions WHERE priority >= 1000"
+        )
+        return cursor.rowcount
 
     def get_stale_conditions(self, max_age_seconds: int = 300) -> List[str]:
         """
         Find conditions that haven't been updated recently.
+
+        Uses SQLite datetime functions for reliable timestamp comparison.
 
         Args:
             max_age_seconds: Maximum age in seconds
@@ -245,19 +251,12 @@ class ConditionStore:
         Returns:
             List of stale condition paths
         """
-        # Compare as ISO strings since both updated_at and cutoff use local time
-        cutoff_ts = datetime.now().timestamp() - max_age_seconds
-        cutoff_iso = datetime.fromtimestamp(cutoff_ts).isoformat()
-
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(
-                """
-                SELECT path FROM conditions
-                WHERE updated_at < ?
-                """,
-                (cutoff_iso,),
-            )
-            rows = cursor.fetchall()
+        rows = self.fetchall(
+            """
+            SELECT path FROM conditions
+            WHERE datetime(updated_at) < datetime('now', ? || ' seconds')
+            """,
+            (str(-max_age_seconds),),
+        )
 
         return [row["path"] for row in rows]

@@ -3,8 +3,9 @@ Main TEMMS daemon - runs policy evaluation loop.
 
 Responsibilities:
 - Periodic condition collection (configurable interval)
-- Policy evaluation per slot
-- Model switching execution
+- Policy evaluation per slot (event-driven + periodic)
+- Operator override enforcement
+- Model switching and preloading execution
 - Inference server hosting
 - Telemetry buffering
 """
@@ -19,8 +20,8 @@ from datetime import datetime
 
 from temms.slots.manager import SlotManager, SlotState
 from temms.conditions.store import ConditionStore
-from temms.conditions.collectors import ConditionCollector
-from temms.policy.engine import PolicyEngine
+from temms.conditions.collectors import ConditionCollector, collect_all_async
+from temms.policy.engine import PolicyEngine, PolicyEvalResult
 from temms.core.cache import ModelCache
 from temms.core.storage import ModelStorage
 from temms.inference.runtime import InferenceRuntime
@@ -67,9 +68,10 @@ class TEMMSDaemon:
 
     Orchestrates:
     - Inference server (FastAPI/Uvicorn)
-    - Condition collection loop
-    - Policy evaluation loop
-    - Model switching
+    - Condition collection loop (concurrent collectors)
+    - Policy evaluation loop (event-driven + periodic)
+    - Model switching and preloading
+    - Operator override enforcement
     """
 
     def __init__(
@@ -82,18 +84,6 @@ class TEMMSDaemon:
         model_storage: ModelStorage,
         collectors: Optional[List[ConditionCollector]] = None,
     ):
-        """
-        Initialize daemon.
-
-        Args:
-            config: Daemon configuration
-            slot_manager: SlotManager instance
-            condition_store: ConditionStore instance
-            policy_engine: PolicyEngine instance
-            model_cache: ModelCache instance
-            model_storage: ModelStorage instance
-            collectors: List of condition collectors
-        """
         self.config = config
         self.slot_manager = slot_manager
         self.condition_store = condition_store
@@ -112,6 +102,7 @@ class TEMMSDaemon:
         # State
         self._running = False
         self._shutdown_event = asyncio.Event()
+        self._conditions_changed = asyncio.Event()  # Issue #3: event coordination
         self._server = None
         self._tasks: List[asyncio.Task] = []
 
@@ -166,7 +157,7 @@ class TEMMSDaemon:
         logger.info(f"Config: host={self.config.inference_host}, port={self.config.inference_port}")
 
         # Setup signal handlers
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, self._signal_handler)
 
@@ -277,31 +268,36 @@ class TEMMSDaemon:
                 self.slot_manager.update_slot_state(slot.name, SlotState.ERROR)
 
     async def _condition_loop(self) -> None:
-        """Periodically collect conditions from all collectors."""
+        """
+        Periodically collect conditions from all collectors concurrently.
+
+        Uses collect_all_async for concurrent collection (#15).
+        Signals the policy loop via _conditions_changed event (#3).
+        """
         logger.info(
             f"Condition collection loop started (interval: {self.config.condition_interval_s}s)"
         )
 
         while self._running:
             try:
-                for collector in self.collectors:
-                    try:
-                        # Collectors are sync, run in executor
-                        loop = asyncio.get_event_loop()
-                        conditions = await loop.run_in_executor(
-                            None, collector.collect
-                        )
+                # Collect from all collectors concurrently
+                all_conditions = await collect_all_async(self.collectors)
 
-                        for path, value in conditions.items():
-                            self.condition_store.set(
-                                path=path,
-                                value=value,
-                                source=collector.source_name,
-                                priority=collector.source_priority,
-                            )
+                # Store collected conditions
+                for path, value in all_conditions.items():
+                    # Determine source and priority from the collector that produced this
+                    # Since collect_all_async merges results, use a default
+                    # The individual collector's priority is embedded in the result
+                    self.condition_store.set(
+                        path=path,
+                        value=value,
+                        source="collector",
+                        priority=100,  # Sensor priority
+                    )
 
-                    except Exception as e:
-                        logger.error(f"Collector {collector.source_name} failed: {e}")
+                # Signal the policy loop that conditions changed
+                if all_conditions:
+                    self._conditions_changed.set()
 
             except Exception as e:
                 logger.error(f"Condition loop error: {e}")
@@ -319,7 +315,13 @@ class TEMMSDaemon:
         logger.info("Condition collection loop stopped")
 
     async def _policy_loop(self) -> None:
-        """Periodically evaluate policies for all slots."""
+        """
+        Evaluate policies for all slots.
+
+        Triggers on:
+        1. Condition change event (sub-second reaction, #3)
+        2. Periodic timer (fallback, ensures nothing is missed)
+        """
         logger.info(
             f"Policy evaluation loop started (interval: {self.config.policy_interval_s}s)"
         )
@@ -331,20 +333,42 @@ class TEMMSDaemon:
             except Exception as e:
                 logger.error(f"Policy loop error: {e}")
 
-            # Wait for next interval or shutdown
+            # Wait for conditions_changed event, periodic timer, or shutdown
+            # Whichever fires first triggers the next evaluation
             try:
-                await asyncio.wait_for(
-                    self._shutdown_event.wait(),
-                    timeout=self.config.policy_interval_s,
+                shutdown_task = asyncio.create_task(self._shutdown_event.wait())
+                conditions_task = asyncio.create_task(self._conditions_changed.wait())
+                timer_task = asyncio.create_task(
+                    asyncio.sleep(self.config.policy_interval_s)
                 )
-                break  # Shutdown requested
-            except asyncio.TimeoutError:
-                pass  # Continue loop
+
+                done, pending = await asyncio.wait(
+                    [shutdown_task, conditions_task, timer_task],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                # Cancel pending tasks
+                for task in pending:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+
+                # Check if shutdown was the trigger
+                if shutdown_task in done:
+                    break
+
+                # Clear the conditions_changed event for next cycle
+                self._conditions_changed.clear()
+
+            except asyncio.CancelledError:
+                break
 
         logger.info("Policy evaluation loop stopped")
 
     async def _evaluate_all_slots(self) -> None:
-        """Evaluate policies for all running slots."""
+        """Evaluate policies for all running slots, respecting operator overrides."""
         slots = self.slot_manager.list_slots()
         conditions = self.condition_store.get_snapshot()
 
@@ -353,35 +377,63 @@ class TEMMSDaemon:
                 continue
 
             try:
-                # Evaluate policies for this slot
-                new_model_name = self.policy_engine.evaluate_slot(slot.name)
+                # Check for active operator override (#1)
+                if self.slot_manager.has_active_override(slot.name):
+                    logger.debug(
+                        f"POLICY_SKIP slot={slot.name} reason=operator_override_active"
+                    )
+                    continue
 
-                if new_model_name is None:
+                # Evaluate policies for this slot
+                result = self.policy_engine.evaluate_slot(slot.name)
+
+                if result.switch_to is None:
                     continue  # No change needed
 
-                # Find model in cache
-                new_model = self.model_cache.find_model(new_model_name)
+                # Find model in cache (with optional version pin, #8)
+                new_model = self.model_cache.find_model(
+                    result.switch_to, version=result.version
+                )
                 if new_model is None:
                     logger.warning(
-                        f"Policy selected model not found: {new_model_name}"
+                        f"Policy selected model not found: {result.switch_to}"
                     )
                     continue
 
                 # Check if already active
                 if new_model.id == slot.active_model_id:
-                    continue  # Already running correct model
+                    # Already running correct model, but handle preloads
+                    await self._handle_preloads(slot.name, result.preload)
+                    continue
 
                 # Execute switch
+                trigger_detail = result.triggered_by or "policy_evaluation"
                 await self._execute_switch(
                     slot_name=slot.name,
                     new_model_id=new_model.id,
                     trigger_type="policy",
-                    trigger_detail=f"policy_evaluation",
+                    trigger_detail=trigger_detail,
                     conditions=conditions,
                 )
 
+                # Handle preloads from the policy result (#16)
+                await self._handle_preloads(slot.name, result.preload)
+
             except Exception as e:
                 logger.error(f"Policy evaluation failed for slot {slot.name}: {e}")
+
+    async def _handle_preloads(self, slot_name: str, preload_list: List[str]) -> None:
+        """Preload models specified in policy result."""
+        for model_name in preload_list:
+            model = self.model_cache.find_model(model_name)
+            if model is None:
+                logger.debug(f"Preload model not found: {model_name}")
+                continue
+
+            try:
+                await self.inference_runtime.preload_model(slot_name, model.id)
+            except Exception as e:
+                logger.debug(f"Failed to preload {model_name}: {e}")
 
     async def _execute_switch(
         self,

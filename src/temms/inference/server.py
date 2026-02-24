@@ -370,6 +370,15 @@ async def override_model(
         logger.error(f"Failed to load model {model.id} for slot {slot_name}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to load model: {str(e)}")
 
+    # Set operator override so policy loop respects it
+    state.slot_manager.set_operator_override(
+        slot_name=slot_name,
+        model_id=model.id,
+        reason=request.reason or "manual override",
+        source="api",
+        duration_s=request.duration_s,
+    )
+
     # Activate model with operator trigger
     state.slot_manager.activate_model(
         slot_name=slot_name,
