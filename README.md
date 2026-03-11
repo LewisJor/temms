@@ -1,239 +1,112 @@
-# TEMMS - Tactical Edge Model Management System
+# TEMMS
 
-**Offline-first ML model management for edge devices in DDIL (Denied, Degraded, Intermittent, Limited) environments.**
+Manage ML models on devices that can't always phone home.
 
-Target platforms: NVIDIA Jetson (Nano/Orin), Raspberry Pi 4/5, and similar ARM64/x86 edge hardware.
+TEMMS (Tactical Edge Model Management System) is a daemon that runs on edge hardware (Jetson Nano, Raspberry Pi, etc.) and automatically switches between ML models based on environmental conditions. Fog rolls in? TEMMS loads the low-visibility model. Battery dying? TEMMS drops to the lightweight fallback. Operator says use thermal? Done — and logged.
 
-## Core Value Proposition
-
-**"Manage ML models on devices that can't always phone home."**
-
-TEMMS enables autonomous systems to:
-- **Switch models** based on environmental conditions (weather, lighting, temperature)
-- **Operate offline** with pre-packaged model updates via USB/SD card
-- **Manage multiple models** concurrently across different slots (vision, targeting, navigation)
-- **Make deterministic decisions** with full audit trails
-- **Degrade gracefully** when conditions change or models fail
-
-## Architecture: Three-Tier Design
+Existing tools (AWS Greengrass, Azure IoT Edge) assume your device is online. TEMMS assumes it isn't.
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│            MLflow (Local or Cloud - Your Choice)             │
-│  - Standard model registry (not modified)                     │
-│  - Can run completely offline (SQLite + local storage)       │
-│  - Teams use familiar MLflow UI                              │
-│  - Track experiments, versions, metrics                       │
-└────────────────┬─────────────────────────────────────────────┘
-                 │
-                 │ Local network or same machine
-                 │
-┌────────────────▼─────────────────────────────────────────────┐
-│              TEMMS Hub (Your IP - Local or Cloud)            │
-│  - DDIL sync layer                                           │
-│  - Packages models from MLflow into TEMMS packages           │
-│  - Delta updates, fleet management                           │
-│  - Works with local or cloud MLflow                          │
-└────────────────┬─────────────────────────────────────────────┘
-                 │
-                 │ USB/SD card or local network transfer
-                 │
-┌────────────────▼─────────────────────────────────────────────┐
-│                TEMMS Daemon (Edge Device)                    │
-│  - NO registry logic (cache only)                            │
-│  - Receives pre-packaged models                              │
-│  - Multi-slot management                                     │
-│  - Policy-driven switching                                   │
-│  - Runs completely offline                                   │
-└──────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                    TEMMS Daemon                          │
+│                                                          │
+│   Conditions ──→ Policy Engine ──→ Model Loader          │
+│   (fog? heat?      (YAML rules)     (hot-swap, no        │
+│    battery?)                          downtime)           │
+│                        │                                  │
+│                        ▼                                  │
+│              Inference Server (HTTP)                      │
+│              POST /v1/slots/vision/infer                  │
+│                                                          │
+│   ┌──────────┐  ┌──────────┐  ┌──────────┐              │
+│   │ yolov8   │  │ yolov8   │  │ mobilenet│              │
+│   │ daylight │  │ lowlight │  │ tiny     │              │
+│   │ (active) │  │          │  │ (fallbck)│              │
+│   └──────────┘  └──────────┘  └──────────┘              │
+└─────────────────────────────────────────────────────────┘
 ```
-
-### Offline Capability
-
-**All three tiers can run completely offline:**
-
-- **MLflow**: Run locally with SQLite backend and file storage
-- **Hub**: Reads from local MLflow, outputs packages to filesystem/USB
-- **Daemon**: Imports packages, runs with zero network dependencies
-
-See [Local MLflow Setup](docs/LOCAL_MLFLOW_SETUP.md) for full offline configuration.
-
-### What TEMMS Daemon Does (Build Now)
-
-- **Package Import**: Accept pre-validated model packages
-- **Multi-Slot Management**: Run multiple models concurrently (vision, targeting, navigation)
-- **Condition System**: Monitor environment, platform, and operational state
-- **Policy Engine**: Evaluate rules and switch models automatically
-- **Fallback Chains**: Deterministic degradation when models fail
-- **Inference Serving**: gRPC/HTTP API for model inference
-- **Decision Audit**: Log every model switch with full context
-
-### What TEMMS Hub Does (Build Later)
-
-- Package models from MLflow into TEMMS format
-- Delta updates (only send changed models)
-- Fleet-wide sync coordination
-- Offline distribution manifest generation
 
 ## Quick Start
 
-### Installation
+### Install and run (3 commands)
 
 ```bash
-# Clone repository
-git clone https://github.com/yourusername/temms.git
-cd temms
-
-# Install TEMMS Daemon
-pip install -e ".[onnx]"  # With ONNX Runtime support
-
-# Optional: Install with all ML runtimes
-pip install -e ".[all-runtimes]"
-
-# Optional: Install MLflow for local model registry
-pip install -e ".[mlflow]"
+git clone https://github.com/yourusername/temms.git && cd temms
+pip install -e ".[dev,sim]"
+make test  # 268 tests, should all pass
 ```
 
-### Set Up Local MLflow (Optional but Recommended)
+### Run the visual simulation
 
-For completely offline operation:
+The fastest way to see what TEMMS does. This generates synthetic driving frames, applies weather effects (fog, rain, night), sends them through inference, and shows a live dashboard:
 
 ```bash
-# Quick setup script
-bash scripts/setup-local-mlflow.sh
+# Install with GUI support
+pip install -e ".[dev,sim-visual]"
 
-# Or manual setup
-pip install mlflow
-mlflow server \
-  --backend-store-uri sqlite:///~/mlflow-local/mlflow.db \
-  --default-artifact-root ~/mlflow-local/artifacts \
-  --host 127.0.0.1 \
-  --port 5000
+# Start the daemon (terminal 1)
+make docker-up
 
-# Access UI at http://localhost:5000
+# Run the visual sim (terminal 2)
+make sim-visual
 ```
 
-See [Local MLflow Setup](docs/LOCAL_MLFLOW_SETUP.md) for detailed instructions.
+You'll see a window with two panels — clean image on the left, weather-augmented on the right — and a status bar showing which model TEMMS selected. As fog rolls in, watch the model switch from `yolov8-daylight` to `yolov8-lowlight`.
 
-### Initialize TEMMS
+No webcam needed. No GPU needed. Runs on any laptop.
+
+### Docker sim environment
+
+If you just want the daemon running in Docker with MLflow:
 
 ```bash
-# Initialize configuration
-temms init
+make docker-up
+# TEMMS UI:   http://localhost:8080/ui/
+# TEMMS API:  http://localhost:8080/v1/health
+# MLflow UI:  http://localhost:5000
+# API Docs:   http://localhost:8080/docs
 
-# Or specify custom paths
-temms init --config ./local.temms.yaml --data-dir ./local-data
+# Run headless sim scenario
+make sim-headless
+
+# Check the logs
+make docker-logs
+
+# Tear it all down
+make docker-clean
 ```
 
-### Import a Model Package
+## How It Works
+
+TEMMS has three concepts: **slots**, **conditions**, and **policies**.
+
+### Slots
+
+A slot is a named inference endpoint. An autonomous robot might have a `vision` slot, a `targeting` slot, and a `navigation` slot — each running a different model, each switchable independently.
 
 ```bash
-# Import pre-packaged models and policies
-temms import ./path/to/temms-package/
-
-# Skip hash verification (faster, less safe)
-temms import ./path/to/package/ --no-verify
-```
-
-### Configure Slots
-
-```bash
-# Create a slot for vision models
-temms slot create vision \
-  --description "Primary perception model" \
-  --required \
-  --default yolov8-daylight \
-  --candidates "yolov8-daylight,yolov8-lowlight,yolov8-fog"
-
-# List all slots
+temms slot create vision --required --default-model yolov8-daylight
+temms slot create targeting --default-model rgb-tracker-v1
 temms slot list
-
-# Check slot status
-temms slot status vision
 ```
 
-### Manage Conditions
+### Conditions
+
+Conditions are the state of the world. Temperature, visibility, battery level, time of day, mission phase. They come from sensors, from derived calculations, or from operator injection.
 
 ```bash
-# Set operator override (highest priority)
-temms condition set weather.visibility_m 50
+# Operator says visibility is 50 meters
+temms condition set environmental.atmospheric.visibility_m 50
 
-# Set mission parameters
-temms condition set operational.mission.phase patrol
-temms condition set operational.mission.priority normal
-
-# View all conditions
+# System automatically collects CPU temp, memory, time
 temms condition list
-
-# View nested condition snapshot
-temms condition snapshot
 ```
 
-### Manual Model Switching
+Conditions have priorities. Operator overrides (priority 1000) beat sensors (100) beat cached values (10).
 
-```bash
-# Activate specific model in a slot
-temms slot set vision yolov8-fog --reason "Heavy fog detected"
+### Policies
 
-# View decision history
-temms slot decisions --slot vision --limit 10
-```
-
-### Check System Status
-
-```bash
-temms status
-```
-
-## Package Format
-
-TEMMS expects pre-packaged model bundles created by the Hub:
-
-```
-temms-package/
-├── manifest.json          # Package metadata
-├── models/                # Pre-validated model files
-│   ├── yolov8-daylight.onnx
-│   ├── yolov8-lowlight.onnx
-│   └── mobilenet-tiny.onnx
-└── policies/              # Policy YAML files
-    ├── weather-adaptive.yaml
-    └── thermal-adaptive.yaml
-```
-
-### Example manifest.json
-
-```json
-{
-  "schema_version": "v1",
-  "package_id": "pkg-vision-20240115",
-  "name": "vision-models",
-  "version": "1.0.0",
-  "created_by": "mlflow-packager",
-  "models": [
-    {
-      "id": "model-yolov8-daylight-001",
-      "name": "yolov8-daylight",
-      "version": "1.0.0",
-      "format": "onnx",
-      "filename": "yolov8-daylight.onnx",
-      "sha256": "abc123...",
-      "size_bytes": 12345678
-    }
-  ],
-  "policies": [
-    {
-      "name": "weather-adaptive",
-      "filename": "weather-adaptive.yaml",
-      "slot": "vision"
-    }
-  ]
-}
-```
-
-## Policy-Driven Model Switching
-
-Policies define rules for automatic model switching based on conditions:
+Policies are YAML files that say "when X, use model Y":
 
 ```yaml
 apiVersion: temms/v1
@@ -242,6 +115,7 @@ metadata:
   name: weather-adaptive-vision
 spec:
   slot: vision
+  default_model: yolov8-daylight
 
   rules:
     - name: fog-conditions
@@ -251,157 +125,230 @@ spec:
           - metric: environmental.atmospheric.visibility_m
             operator: lte
             value: 100
-          - metric: environmental.atmospheric.precipitation
-            operator: in
-            value: [fog, mist]
       action:
-        switch_to: yolov8-fog
+        switch_to: yolov8-lowlight
+
+    - name: critical-low-visibility
+      priority: 150
+      conditions:
+        all:
+          - metric: environmental.atmospheric.visibility_m
+            operator: lte
+            value: 20
+          - metric: operational.mission.priority
+            operator: eq
+            value: critical
+      action:
+        switch_to: mobilenet-tiny
 
   fallback_chain:
     - yolov8-daylight
     - yolov8-lowlight
-    - mobilenet-minimal
+    - mobilenet-tiny
 ```
 
-See `examples/policies/` for more examples.
+The policy engine evaluates rules by priority (highest wins), checks for operator overrides (they always win), and executes the fallback chain if a model fails to load.
 
-## Condition System
+Every model switch is logged with the full condition snapshot, so you can audit exactly why the system made every decision.
 
-TEMMS monitors conditions from multiple sources with priority levels:
+## Architecture
 
-| Priority | Source | Example |
-|----------|--------|---------|
-| 1000 | Operator override | Manual condition injection via CLI/API |
-| 100 | Onboard sensors | CPU temp, battery, memory |
-| 90 | Derived/computed | Time of day, sun position |
-| 50 | External data | Weather API (when connected) |
-| 10 | Cached | Last-known-good values |
-
-### Condition Categories
-
-- **Environmental**: weather, lighting, terrain, electromagnetic
-- **Operational**: mission phase, threat level, coordination
-- **Platform**: power, compute, sensors, mobility
-- **Operator**: overrides, authority level, attention state
-
-## Multi-Slot Architecture
-
-Autonomous systems run multiple models concurrently:
+Three-tier design. You only need Tier 3 to get started.
 
 ```
-┌─────────────────────────────────────────────────────┐
-│              TEMMS Daemon Slots                     │
-├─────────────────────────────────────────────────────┤
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────┐  │
-│  │ vision       │  │ targeting    │  │ nav      │  │
-│  │ yolov8-fog   │  │ thermal-v2   │  │ lidar    │  │
-│  │ (running)    │  │ (running)    │  │ (running)│  │
-│  └──────────────┘  └──────────────┘  └──────────┘  │
-└─────────────────────────────────────────────────────┘
+Tier 1: MLflow ──────── Model registry (versioning, experiments, UI)
+                │        Standard MLflow. Not modified.
+                │
+Tier 2: Hub ────────── DDIL packaging layer (delta updates, fleet sync)
+                │        Packages models for edge consumption.
+                │
+Tier 3: TEMMS Daemon ── Edge runtime (this repo)
+                         Policy engine, inference, offline-first.
 ```
 
-Each slot:
-- Runs independently
-- Has its own policies
-- Tracks activation history
-- Can be required or optional
+**Tier 3 (TEMMS Daemon)** runs completely offline. It receives pre-packaged models from the Hub (or from a USB drive), manages a local model cache, and makes all switching decisions locally.
 
-## Decision Audit
+See [docs/architecture.md](docs/architecture.md) for the full design.
 
-Every model switch is logged with full context:
-
-```bash
-$ temms slot decisions --slot vision
-
-Timestamp            From           To             Trigger
-2024-01-15 14:30:00  yolov8-day     yolov8-fog     policy: fog-conditions
-2024-01-15 14:45:00  yolov8-fog     yolov8-thermal operator: manual override
-2024-01-15 15:00:00  yolov8-thermal yolov8-day     policy: clear-weather
-```
-
-## Development
-
-### Project Structure
+## Project Structure
 
 ```
 temms/
 ├── src/temms/
-│   ├── core/           # Cache, storage, package import
-│   ├── slots/          # Multi-slot management
-│   ├── conditions/     # Condition store and collectors
-│   ├── policy/         # Policy engine
-│   ├── inference/      # Inference server (TODO)
-│   ├── daemon/         # Main daemon loop (TODO)
-│   └── cli/            # CLI commands
-├── tests/
+│   ├── core/           # Model cache, storage, package import
+│   ├── slots/          # Multi-slot lifecycle management
+│   ├── conditions/     # Condition store + collectors (CPU, time, etc.)
+│   ├── policy/         # Policy engine (YAML → model switch decisions)
+│   ├── inference/      # FastAPI server + ONNX/TFLite runtime
+│   ├── daemon/         # Main daemon loop (condition → policy → switch)
+│   ├── sim/            # Visual simulation (weather effects + runner)
+│   ├── ui/             # Web dashboard (Jinja2 + HTMX)
+│   └── cli/            # CLI commands (typer)
+├── tests/              # 268 tests, ~60% coverage
 ├── examples/
-│   ├── policies/       # Example policy files
-│   └── package-example/ # Example package structure
-└── docs/
+│   ├── package-example/  # Sample model package with real ONNX models
+│   └── policies/         # Example policy YAML files
+├── scripts/            # Sim scripts, Docker entrypoint, model generator
+├── docs/               # Architecture, quickstart, policy reference
+└── docker-compose.yml  # Full sim environment (MLflow + TEMMS)
 ```
 
-### Running Tests
+## CLI Reference
 
 ```bash
-make test
+# System
+temms init                               # Initialize TEMMS
+temms status                             # System health check
+temms daemon start --foreground          # Start daemon
+
+# Models
+temms import ./path/to/package/          # Import model package
+temms model list                         # List cached models
+
+# Slots
+temms slot create vision --required      # Create a slot
+temms slot list                          # List all slots
+temms slot status vision                 # Slot details
+temms slot set vision yolov8-lowlight    # Manual model switch
+
+# Conditions
+temms condition set weather.vis 50       # Inject condition
+temms condition list                     # List all conditions
+temms condition snapshot                 # Nested condition view
+
+# Policies
+temms policy load ./policy.yaml          # Load a policy
+
+# MLflow (optional)
+temms mlflow list                        # List MLflow models
+temms mlflow register                    # Push cached models to MLflow
+temms mlflow pull <model> <version>      # Pull from MLflow
 ```
 
-### Code Quality
+## API Endpoints
+
+```
+GET  /v1/health                          # Liveness probe
+GET  /v1/status                          # Full system status
+GET  /v1/slots/{name}/status             # Slot status
+POST /v1/slots/{name}/infer              # Run inference (file upload)
+POST /v1/control/slots/{name}/model      # Operator override
+POST /v1/control/conditions              # Inject conditions
+DELETE /v1/control/conditions/overrides  # Clear overrides
+
+# Web UI
+GET  /ui/                                # Dashboard
+GET  /ui/slots                           # Slot management
+GET  /ui/conditions                      # Condition viewer + injection
+GET  /ui/decisions                       # Decision audit log
+GET  /ui/models                          # Model cache browser
+GET  /ui/import                          # Package import
+```
+
+Interactive API docs at `http://localhost:8080/docs` (Swagger UI).
+
+## Visual Simulation
+
+TEMMS includes a built-in simulation engine that applies weather effects to video frames in real-time and shows model switching as it happens.
 
 ```bash
-make format  # Format with black
-make lint    # Lint with ruff and mypy
+# Four built-in scenarios
+make sim-visual            # Fog rollout (default)
+make sim-visual-night      # Day → night → dawn cycle
+make sim-visual-rain       # Clear → downpour → clearing
+make sim-visual-stress     # Combined: fog + night + battery + thermal
+
+# Custom options
+python -m temms.sim.runner \
+  --scenario fog_rollout \
+  --source webcam \
+  --daemon-url http://localhost:8080
+
+# Headless mode (for Docker / CI)
+python -m temms.sim.runner --scenario fog_rollout --headless
 ```
+
+The weather engine applies fog, rain, snow, darkness, and sun flare effects using pure OpenCV — no additional dependencies. Each effect maps to a TEMMS condition (visibility → fog intensity, ambient light → darkness, etc.).
+
+## Model Package Format
+
+Models arrive as pre-packaged directories. In production, the Hub creates these. For development, use `scripts/generate_real_models.py`.
+
+```
+my-package/
+├── manifest.json       # Package metadata + model checksums
+├── models/
+│   ├── yolov8-daylight.onnx
+│   ├── yolov8-lowlight.onnx
+│   └── mobilenet-tiny.onnx
+└── policies/
+    └── weather-adaptive.yaml
+```
+
+```bash
+# Import a package
+temms import ./my-package/
+
+# Generate example models (real ONNX, ~8KB each)
+python scripts/generate_real_models.py
+```
+
+## Development
+
+```bash
+# Install dev + sim dependencies
+pip install -e ".[dev,sim]"
+
+# Run tests
+make test                  # All 268 tests
+make test-sim              # Just simulation tests
+make test-e2e              # E2E tests (requires docker-up)
+
+# Code quality
+make format                # black
+make lint                  # ruff + mypy
+```
+
+### Test breakdown
+
+| Suite | Tests | What it covers |
+|-------|-------|----------------|
+| Core | 152 | Cache, storage, package import, slots, conditions |
+| Policy | 49 | Policy parsing, evaluation, operator overrides |
+| Sim | 58 | Weather effects, scenarios, condition mapping |
+| Integration | 9 | Real ONNX model loading, inference, hot-swap |
+
+## Target Hardware
+
+| Device | CPU | RAM | Status |
+|--------|-----|-----|--------|
+| NVIDIA Jetson Nano | ARM64 | 4GB | Primary target |
+| NVIDIA Jetson Orin Nano | ARM64 | 8GB | Supported |
+| Raspberry Pi 4/5 | ARM64 | 4-8GB | Supported |
+| Any Linux x86_64 | x86_64 | 4GB+ | Supported |
+| MacBook (Docker) | ARM64 | 8GB+ | Development/sim |
 
 ## Roadmap
 
-### ✅ Phase 1: Core Infrastructure (Complete)
-- [x] Package import and cache
-- [x] Multi-slot management
-- [x] Condition system with priorities
-- [x] Policy engine with slot-awareness
-- [x] CLI for import, slot, condition management
-- [x] Decision audit logging
-
-### 🚧 Phase 2: Runtime & Inference (In Progress)
-- [ ] Inference server (gRPC/HTTP)
-- [ ] Model loader with hot-swap
-- [ ] Daemon with policy evaluation loop
-- [ ] Condition collectors (system metrics, time-based)
-- [ ] Fallback chain execution
-
-### 📋 Phase 3: Hub Integration (Planned)
-- [ ] Hub: MLflow to TEMMS package converter
-- [ ] Hub: Delta update generation
-- [ ] Hub: Fleet sync coordination
-- [ ] Opportunistic cloud sync in daemon
-
-### 🎯 Phase 4: Advanced Features
-- [ ] Model ensemble/voting
-- [ ] Predictive model pre-loading
-- [ ] Cross-slot dependencies
-- [ ] Swarm condition sharing
-- [ ] Graceful degradation profiles
+- [x] **Phase 1**: Core infrastructure — cache, slots, conditions, policy engine, CLI
+- [x] **Phase 2**: Runtime — inference server, model loader, daemon, operator overrides
+- [x] **Phase 3**: Sim environment — Docker, real ONNX models, Web UI, MLflow bridge, visual sim
+- [ ] **Phase 4**: Hub — MLflow packaging, delta updates, fleet sync, air-gap export
+- [ ] **Phase 5**: Advanced — model ensembles, predictive preloading, swarm condition sharing
 
 ## Why TEMMS?
 
-Existing edge ML tools (AWS Greengrass, Azure IoT Edge) assume connectivity. TEMMS is designed for:
-
-- **Military/defense** - Autonomous systems in contested environments
-- **Remote operations** - Oil rigs, mines, agricultural robots
-- **Disaster response** - Drones and robots in areas without infrastructure
-- **Space/maritime** - Extended offline operation periods
+| Feature | Greengrass | Azure IoT Edge | TEMMS |
+|---------|-----------|---------------|-------|
+| Offline-first | ❌ | ❌ | ✅ |
+| Policy-driven model switching | ❌ | ❌ | ✅ |
+| Deterministic fallback chains | ❌ | ❌ | ✅ |
+| ML model versioning (first-class) | ❌ | ❌ | ✅ |
+| No Kubernetes dependency | ❌ | ❌ | ✅ |
+| USB/air-gap model updates | ❌ | ❌ | ✅ |
+| Decision audit trail | ❌ | ❌ | ✅ |
+| Runs on 4GB Jetson | ⚠️ | ⚠️ | ✅ |
 
 ## License
 
 Apache 2.0
-
-## Contributing
-
-Contributions welcome! Please see CONTRIBUTING.md for guidelines.
-
-## References
-
-- [ONNX Runtime](https://onnxruntime.ai/)
-- [NVIDIA Jetson Documentation](https://docs.nvidia.com/jetson/)
-- [MLflow](https://mlflow.org/)
