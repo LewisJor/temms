@@ -456,5 +456,111 @@ def policy(
         raise typer.Exit(1)
 
 
+@app.command()
+def mlflow(
+    action: str = typer.Argument(..., help="Action: list, register, pull"),
+    model_name: Optional[str] = typer.Argument(None, help="Model name (for pull)"),
+    model_version: Optional[str] = typer.Option(None, "--version", "-v", help="Model version"),
+    tracking_uri: Optional[str] = typer.Option(
+        None, "--tracking-uri", help="MLflow tracking URI"
+    ),
+    config_path: Path = typer.Option(
+        Path("/etc/temms/temms.yaml"),
+        "--config",
+        "-c",
+        help="Configuration file path",
+    ),
+):
+    """MLflow integration commands."""
+    try:
+        from temms.mlflow_bridge import MLflowBridge
+    except ImportError:
+        console.print("[red]MLflow not installed. Install with: pip install mlflow[/red]")
+        raise typer.Exit(1)
+
+    bridge = MLflowBridge(tracking_uri=tracking_uri)
+
+    if not bridge.available:
+        console.print("[red]MLflow package not available. Install with: pip install mlflow[/red]")
+        raise typer.Exit(1)
+
+    if action == "list":
+        console.print("[bold]MLflow Registered Models[/bold]\n")
+        models = bridge.list_models()
+
+        if not models:
+            console.print("[yellow]No models found in MLflow[/yellow]")
+            raise typer.Exit(0)
+
+        table = Table(title="MLflow Models")
+        table.add_column("Name", style="cyan")
+        table.add_column("Latest Version", style="green")
+        table.add_column("Status", style="yellow")
+
+        for model in models:
+            versions = model.get("latest_versions", [])
+            if versions:
+                for v in versions:
+                    table.add_row(
+                        model["name"],
+                        v.get("version", "-"),
+                        v.get("status", "-"),
+                    )
+            else:
+                table.add_row(model["name"], "-", "-")
+
+        console.print(table)
+
+    elif action == "register":
+        from temms.core.config import Config
+        from temms.core.cache import ModelCache
+
+        if not config_path.exists():
+            console.print("[red]TEMMS not initialized. Run 'temms init' first.[/red]")
+            raise typer.Exit(1)
+
+        config = Config.load(config_path)
+        cache = ModelCache(config.database.path)
+        models = cache.list_models()
+
+        if not models:
+            console.print("[yellow]No models in cache to register[/yellow]")
+            raise typer.Exit(0)
+
+        console.print(f"[bold]Registering {len(models)} models in MLflow...[/bold]")
+
+        # Create a mock import result for registration
+        from temms.core.package import ImportedPackageResult
+        result = ImportedPackageResult(
+            package=None,
+            models=models,
+            policies=[],
+            manifest=None,
+        )
+
+        count = bridge.register_imported_models(result)
+        console.print(f"[green]Registered {count} models in MLflow[/green]")
+
+    elif action == "pull":
+        if model_name is None:
+            console.print("[red]Model name required for pull[/red]")
+            raise typer.Exit(1)
+
+        console.print(f"[bold]Pulling {model_name} from MLflow...[/bold]")
+        package_dir = bridge.pull_model(model_name, version=model_version)
+
+        if package_dir:
+            console.print(f"[green]Model pulled to: {package_dir}[/green]")
+            console.print(f"\nImport with: temms import {package_dir}")
+        else:
+            console.print("[red]Failed to pull model[/red]")
+            raise typer.Exit(1)
+
+    else:
+        console.print(f"[red]Unknown action: {action}[/red]")
+        console.print("Valid actions: list, register, pull")
+        raise typer.Exit(1)
+
+
 if __name__ == "__main__":
     app()

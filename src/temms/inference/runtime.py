@@ -252,8 +252,11 @@ class InferenceRuntime:
                     )
 
             # Run inference WITHOUT holding the lock
+            # Get the actual input name from the runtime session
+            input_name = self._get_model_input_name(loaded.runtime)
+
             processed_input = self._preprocess_input(
-                input_data, content_type, loaded.model_info
+                input_data, content_type, loaded.model_info, input_name=input_name
             )
 
             outputs = loaded.runtime.infer(processed_input)
@@ -268,11 +271,30 @@ class InferenceRuntime:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, _infer)
 
+    def _get_model_input_name(self, runtime: ModelRuntime) -> str:
+        """
+        Get the input tensor name from a loaded model runtime.
+
+        For ONNX models, reads session.get_inputs()[0].name.
+        Falls back to "input" for other runtimes.
+        """
+        try:
+            # ONNX Runtime: session has get_inputs()
+            if hasattr(runtime, "session") and runtime.session is not None:
+                inputs = runtime.session.get_inputs()
+                if inputs:
+                    return inputs[0].name
+        except Exception as e:
+            logger.debug(f"Could not get input name from runtime: {e}")
+
+        return "input"
+
     def _preprocess_input(
         self,
         input_data: bytes,
         content_type: str,
         model_info: CachedModel,
+        input_name: str = "input",
     ) -> Any:
         """
         Preprocess input data for inference.
@@ -281,6 +303,7 @@ class InferenceRuntime:
             input_data: Raw bytes
             content_type: MIME type
             model_info: Model metadata for shape/type info
+            input_name: Name of the model's input tensor
 
         Returns:
             Preprocessed input suitable for model
@@ -318,19 +341,18 @@ class InferenceRuntime:
                 # Add batch dimension
                 arr = np.expand_dims(arr, 0)
 
-                # For ONNX: return dict with input name
-                return {"input": arr.astype(np.float32)}
+                return {input_name: arr.astype(np.float32)}
 
             except ImportError:
                 logger.warning("PIL not available, using raw bytes")
-                return {"input": np.frombuffer(input_data, dtype=np.float32).reshape(input_shape)}
+                return {input_name: np.frombuffer(input_data, dtype=np.float32).reshape(input_shape)}
 
         else:
             # Generic binary data - assume numpy array
             arr = np.frombuffer(input_data, dtype=np.float32)
             if input_shape:
                 arr = arr.reshape(input_shape)
-            return {"input": arr}
+            return {input_name: arr}
 
     def _postprocess_output(self, outputs: Any) -> List[Any]:
         """

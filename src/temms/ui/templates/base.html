@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}TEMMS{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <style>
+        [hx-indicator] .htmx-indicator { display: none; }
+        .htmx-request .htmx-indicator { display: inline; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Navigation -->
+    <nav class="bg-gray-900 text-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-4">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center space-x-4">
+                    <a href="/ui/" class="text-xl font-bold text-green-400">TEMMS</a>
+                    <span class="text-gray-400 text-sm">Edge Model Manager</span>
+                </div>
+                <div class="flex space-x-4">
+                    <a href="/ui/" class="px-3 py-2 rounded text-sm hover:bg-gray-700 {% if active_page == 'dashboard' %}bg-gray-700{% endif %}">Dashboard</a>
+                    <a href="/ui/slots" class="px-3 py-2 rounded text-sm hover:bg-gray-700 {% if active_page == 'slots' %}bg-gray-700{% endif %}">Slots</a>
+                    <a href="/ui/conditions" class="px-3 py-2 rounded text-sm hover:bg-gray-700 {% if active_page == 'conditions' %}bg-gray-700{% endif %}">Conditions</a>
+                    <a href="/ui/decisions" class="px-3 py-2 rounded text-sm hover:bg-gray-700 {% if active_page == 'decisions' %}bg-gray-700{% endif %}">Decisions</a>
+                    <a href="/ui/models" class="px-3 py-2 rounded text-sm hover:bg-gray-700 {% if active_page == 'models' %}bg-gray-700{% endif %}">Models</a>
+                    <a href="/ui/import" class="px-3 py-2 rounded text-sm hover:bg-gray-700 {% if active_page == 'import' %}bg-gray-700{% endif %}">Import</a>
+                    <a href="http://localhost:5000" target="_blank" class="px-3 py-2 rounded text-sm hover:bg-gray-700 text-blue-300">MLflow &#8599;</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 py-6">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-gray-100 border-t mt-8">
+        <div class="max-w-7xl mx-auto px-4 py-3 text-sm text-gray-500">
+            TEMMS v0.1.0 | API: <a href="/v1/health" class="text-blue-500">/v1/health</a> |
+            <a href="/docs" class="text-blue-500">API Docs</a>
+        </div>
+    </footer>
+</body>
+</html>

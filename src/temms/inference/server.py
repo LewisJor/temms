@@ -170,10 +170,19 @@ def create_app(
         lifespan=lifespan,
     )
 
-    # Register routes
+    # Register API routes
     application.include_router(inference_router)
     application.include_router(control_router)
     application.include_router(status_router)
+
+    # Register Web UI routes
+    try:
+        from temms.ui.routes import create_ui_router
+        ui_router = create_ui_router(get_state)
+        application.include_router(ui_router)
+        logger.info("Web UI registered at /ui/")
+    except Exception as e:
+        logger.warning(f"Could not load Web UI: {e}")
 
     return application
 

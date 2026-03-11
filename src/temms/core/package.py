@@ -175,12 +175,24 @@ class PackageImporter:
             manifest=manifest.model_dump(),
         )
 
-        return ImportedPackageResult(
+        result = ImportedPackageResult(
             package=package,
             models=imported_models,
             policies=imported_policies,
             manifest=manifest,
         )
+
+        # Register in MLflow if available (optional, for local dev)
+        try:
+            from temms.mlflow_bridge import MLflowBridge
+            bridge = MLflowBridge()
+            if bridge.available:
+                bridge.register_imported_models(result)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).debug(f"MLflow registration skipped: {e}")
+
+        return result
 
     def _compute_hash(self, file_path: Path) -> str:
         """Compute SHA256 hash of file."""
