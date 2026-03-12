@@ -10,6 +10,9 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 from datetime import datetime
+from urllib.parse import quote
+
+from markupsafe import escape
 
 from fastapi import APIRouter, Request, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse
@@ -334,20 +337,26 @@ def create_ui_router(get_state_func) -> APIRouter:
                 "error": "red",
             }.get(slot.state.value, "gray")
 
+            slot_name = escape(slot.name)
+            slot_name_url = quote(slot.name, safe="")
+            slot_state = escape(slot.state.value)
+            slot_description = escape(slot.description)
+            slot_model = escape(slot.active_model_id or "none")
+
             html_parts.append(f'''
             <div class="bg-white rounded-lg shadow p-4">
                 <div class="flex justify-between items-center mb-2">
-                    <h3 class="font-semibold text-lg">{slot.name}</h3>
+                    <h3 class="font-semibold text-lg">{slot_name}</h3>
                     <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-{state_color}-100 text-{state_color}-800">
-                        {slot.state.value}
+                        {slot_state}
                     </span>
                 </div>
-                <p class="text-sm text-gray-600">{slot.description}</p>
+                <p class="text-sm text-gray-600">{slot_description}</p>
                 <p class="text-sm mt-2">
                     <span class="font-medium">Model:</span>
-                    <span class="text-blue-600">{slot.active_model_id or "none"}</span>
+                    <span class="text-blue-600">{slot_model}</span>
                 </p>
-                <a href="/ui/slots/{slot.name}" class="text-sm text-blue-500 hover:underline mt-2 block">Details &rarr;</a>
+                <a href="/ui/slots/{slot_name_url}" class="text-sm text-blue-500 hover:underline mt-2 block">Details &rarr;</a>
             </div>
             ''')
 
