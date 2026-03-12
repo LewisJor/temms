@@ -1,360 +1,161 @@
-# TEMMS Quick Start Guide
+# Quickstart
 
-## Installation
+This gets you from zero to watching TEMMS switch models in under 5 minutes.
 
-### Prerequisites
+## Prerequisites
 
-- Python 3.10 or higher
-- pip and venv
-- Linux system (Ubuntu 20.04/22.04 recommended)
-- Target hardware: NVIDIA Jetson, Raspberry Pi, or x86 Linux
+- Python 3.10+
+- Docker and Docker Compose (for sim environment)
+- ~2GB disk space (Docker images + ONNX models)
 
-### Install TEMMS
+## Step 1: Clone and install
 
 ```bash
-# Clone repository
 git clone https://github.com/yourusername/temms.git
 cd temms
 
-# Create virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
+# Create a virtualenv (recommended)
+python -m venv .venv
+source .venv/bin/activate   # Linux/macOS
+# .venv\Scripts\activate    # Windows
 
-# Install TEMMS with ONNX Runtime support
-pip install -e ".[onnx]"
-
-# Or install all runtime support
-pip install -e ".[all-runtimes]"
+# Install with all development + simulation dependencies
+pip install -e ".[dev,sim]"
 ```
 
-## Initialize System
+Verify the install:
 
 ```bash
-# Initialize with default paths (/etc/temms, /var/lib/temms)
-# Note: May require sudo for system paths
-sudo temms init
-
-# Or initialize in local directory for development
-temms init --config ./local.temms.yaml --data-dir ./local-data
+temms --help
+# Should print the CLI help
 ```
 
-This creates:
-- Configuration file
-- Model storage directories
-- Policy directories
-- SQLite databases
-
-## Create Your First Slot
-
-Slots represent different model purposes (vision, targeting, navigation, etc.):
+## Step 2: Run the tests
 
 ```bash
-temms slot create vision \
-  --description "Primary perception model" \
-  --required \
-  --default yolov8-daylight \
-  --candidates "yolov8-daylight,yolov8-lowlight,yolov8-fog,mobilenet-tiny"
+make test
+# Expected: 268 passed, 16 skipped in ~5s
 ```
 
-View slots:
-```bash
-temms slot list
-```
+If any tests fail, check your Python version (`python --version` — need 3.10+) and that numpy/onnxruntime installed correctly.
 
-## Import a Model Package
+## Step 3: Start the Docker sim environment
 
-### Option 1: Use Example Package (Development)
+This launches two containers:
 
-The repository includes an example package structure:
+| Service | URL | What it does |
+|---------|-----|-------------|
+| TEMMS Daemon | http://localhost:8080 | Edge runtime + inference server |
+| MLflow | http://localhost:5000 | Model registry UI |
 
 ```bash
-# View example package
-ls examples/package-example/
-
-# Note: You'll need to add actual model files and update hashes
-# For now, this will fail without real models
-temms import examples/package-example/ --no-verify
+make docker-up
 ```
 
-### Option 2: Create Your Own Package
-
-Create a package directory:
+Wait 15-20 seconds for initialization. Check if it's ready:
 
 ```bash
-mkdir -p my-package/{models,policies}
+curl http://localhost:8080/v1/health
+# {"status":"ok","timestamp":"..."}
 ```
 
-Create `my-package/manifest.json`:
+Open the TEMMS dashboard: http://localhost:8080/ui/
 
-```json
-{
-  "schema_version": "v1",
-  "package_id": "pkg-test-001",
-  "name": "test-models",
-  "version": "1.0.0",
-  "created_at": "2024-01-15T10:00:00Z",
-  "models": [
-    {
-      "id": "model-test-001",
-      "name": "test-model",
-      "version": "1.0.0",
-      "format": "onnx",
-      "filename": "model.onnx",
-      "sha256": "<compute with: sha256sum model.onnx>",
-      "size_bytes": 12345678
-    }
-  ],
-  "policies": []
-}
-```
+Open the MLflow UI: http://localhost:5000
 
-Add your model file:
-```bash
-cp /path/to/your/model.onnx my-package/models/
-```
+## Step 4: See model switching in action
 
-Import:
-```bash
-temms import my-package/
-```
+### Option A: Visual simulation (recommended)
 
-## Set Up Conditions
-
-Conditions drive policy decisions. Set some initial conditions:
+This opens a live window showing weather effects + model switching in real time.
 
 ```bash
-# Weather conditions
-temms condition set environmental.atmospheric.visibility_m 1000
-temms condition set environmental.atmospheric.precipitation none
+# Install with GUI support (has opencv with display)
+pip install -e ".[dev,sim-visual]"
 
-# Mission state
-temms condition set operational.mission.phase patrol
-temms condition set operational.mission.priority normal
-
-# View all conditions
-temms condition list
+# Run the fog scenario
+make sim-visual
 ```
 
-## Create a Policy
+What you'll see:
+1. **Left panel**: Original synthetic driving scene
+2. **Right panel**: Same scene with weather effects applied
+3. **Status bar**: Active model, latency, current conditions
 
-Create `my-policy.yaml`:
+Watch as fog rolls in → TEMMS switches from `yolov8-daylight` to `yolov8-lowlight`.
 
-```yaml
-apiVersion: temms/v1
-kind: SlotPolicy
-metadata:
-  name: simple-test-policy
-  description: Test policy for demo
+**Keyboard controls:**
+- `q` — quit
+- `s` — skip to next scenario step
+- `p` — pause/resume
 
-spec:
-  slot: vision
-
-  rules:
-    - name: low-visibility
-      priority: 50
-      conditions:
-        all:
-          - metric: environmental.atmospheric.visibility_m
-            operator: lte
-            value: 100
-      action:
-        switch_to: yolov8-fog
-
-  fallback_chain:
-    - yolov8-daylight
-    - mobilenet-tiny
-```
-
-Load policy (future feature, manual for now):
+Other scenarios:
 ```bash
-# TODO: Implement policy load command
-# temms policy load my-policy.yaml
+make sim-visual-night    # Day → night → dawn
+make sim-visual-rain     # Clear → downpour → clearing
+make sim-visual-stress   # Multi-factor stress test
 ```
 
-## Test Model Switching
+### Option B: Headless simulation
 
-### Manual Override (Operator Control)
+If you don't have a display (or you're SSH'd into a server):
 
 ```bash
-# Check current slot status
-temms slot status vision
-
-# Manually activate a model
-temms slot set vision yolov8-fog --reason "Testing fog model"
-
-# View decision history
-temms slot decisions --slot vision
+make sim-headless
 ```
 
-### Simulate Condition Changes
+This prints scenario progress and model switch decisions to stdout.
+
+### Option C: Manual condition injection
+
+Drive the model switching yourself:
 
 ```bash
-# Simulate fog rolling in
-temms condition set environmental.atmospheric.visibility_m 50
+# Set visibility to 50 meters (should trigger fog policy)
+curl -X POST http://localhost:8080/v1/control/conditions \
+  -H "Content-Type: application/json" \
+  -d '{"conditions": {"environmental.atmospheric.visibility_m": 50}}'
 
-# Policy engine would detect this and switch models
-# (when daemon is running)
+# Check what model is active now
+curl http://localhost:8080/v1/status | python -m json.tool
 
-# Clear operator override to let policies work
-temms condition clear-overrides
+# Clear overrides
+curl -X DELETE http://localhost:8080/v1/control/conditions/overrides
 ```
 
-## View System Status
+Or use the Web UI at http://localhost:8080/ui/conditions — there's an injection form.
+
+## Step 5: Inspect the decision log
+
+Every model switch is logged with the full condition snapshot:
+
+Open http://localhost:8080/ui/decisions or:
 
 ```bash
-# Overall status
-temms status
-
-# Detailed slot status
-temms slot status vision
-
-# All conditions
-temms condition snapshot
-
-# Recent decisions
-temms slot decisions --limit 20
+curl http://localhost:8080/v1/status | python -m json.tool
 ```
 
-## Next Steps
-
-### 1. Run the Daemon (When Implemented)
+## Step 6: Cleanup
 
 ```bash
-temms daemon start
+make docker-down       # Stop containers (keep data)
+make docker-clean      # Stop + remove all data (fresh start)
 ```
 
-This will:
-- Collect conditions from sensors
-- Evaluate policies periodically
-- Automatically switch models
-- Serve inference requests
+## What just happened?
 
-### 2. Use Real Model Files
+1. **Generated 3 real ONNX models** (~8KB each) — small Conv→ReLU→Pool→FC networks
+2. **Created a model package** with manifest.json + SHA256 checksums
+3. **Imported the package** into TEMMS cache with integrity verification
+4. **Created a `vision` slot** with `yolov8-daylight` as default
+5. **Loaded weather-adaptive policy** from YAML
+6. **Started the daemon** — condition loop + policy loop + inference server
 
-Replace example models with your actual ONNX/TFLite/TorchScript models.
+When fog conditions were injected, the policy engine matched the `fog-conditions` rule (visibility ≤ 100m), triggered a model switch, logged the decision, and hot-swapped the inference runtime — all in under 100ms.
 
-### 3. Create Production Policies
+## Next steps
 
-Based on your specific use case:
-- Weather-adaptive for outdoor robots
-- Battery-adaptive for power-constrained devices
-- Thermal-adaptive for edge devices
-- Mission-adaptive for autonomous systems
-
-### 4. Deploy to Edge Device
-
-Use the deployment script:
-
-```bash
-sudo bash deploy/install.sh
-```
-
-This installs TEMMS as a systemd service.
-
-## Troubleshooting
-
-### Permission Errors
-
-If using system paths (/etc/temms, /var/lib/temms), use sudo:
-```bash
-sudo temms init
-```
-
-Or use local paths for development:
-```bash
-temms init --config ./local.temms.yaml --data-dir ./local-data
-```
-
-### Package Import Fails
-
-Check:
-1. manifest.json is valid JSON
-2. Model files exist in models/ directory
-3. SHA256 hashes match (compute with `sha256sum`)
-4. Use `--no-verify` to skip hash checking (dev only)
-
-### Slot Not Found
-
-Create slot first:
-```bash
-temms slot create <name> --description "..."
-```
-
-### Condition Not Found
-
-Conditions must be set before policies can use them:
-```bash
-temms condition set <path> <value>
-```
-
-## Example Workflows
-
-### Workflow 1: Weather-Adaptive Vision
-
-```bash
-# Setup
-temms slot create vision --description "Weather-adaptive perception" --required
-temms import weather-models-package/
-
-# Sunny conditions
-temms condition set environmental.atmospheric.visibility_m 5000
-temms condition set environmental.celestial.ambient bright
-# -> Would activate yolov8-daylight
-
-# Fog rolls in
-temms condition set environmental.atmospheric.visibility_m 80
-# -> Would activate yolov8-fog
-
-# Night time
-temms condition set environmental.celestial.ambient dark
-# -> Would activate yolov8-lowlight
-```
-
-### Workflow 2: Battery Management
-
-```bash
-# Setup
-temms slot create vision --description "Battery-aware vision" --required
-temms import efficiency-models-package/
-
-# Full battery
-temms condition set platform.power.battery_pct 95
-# -> Use yolov8-full (high accuracy, high power)
-
-# Low battery
-temms condition set platform.power.battery_pct 15
-# -> Switch to mobilenet-tiny (low power)
-
-# Critical battery
-temms condition set platform.power.battery_pct 5
-# -> Switch to minimal-fallback (survival mode)
-```
-
-### Workflow 3: Multi-Slot Autonomous System
-
-```bash
-# Create slots
-temms slot create vision --description "Primary vision" --required
-temms slot create targeting --description "Target tracking" --required
-temms slot create navigation --description "Path planning" --required
-
-# Import models
-temms import vision-package/
-temms import targeting-package/
-temms import navigation-package/
-
-# Each slot can have independent policies
-# and switch independently based on conditions
-```
-
-## Learning Resources
-
-- [Architecture Overview](./ARCHITECTURE.md)
-- [Policy Reference](./POLICY_REFERENCE.md) (TODO)
-- [Condition System](./CONDITIONS.md) (TODO)
-- [Example Policies](../examples/policies/)
-
-## Getting Help
-
-- GitHub Issues: https://github.com/yourusername/temms/issues
-- Documentation: https://github.com/yourusername/temms/docs
+- [Architecture overview](architecture.md) — how the three tiers fit together
+- [Policy reference](policy-reference.md) — full YAML schema for writing policies
+- [examples/policies/](../examples/policies/) — real policy files you can study
+- Bring your own ONNX models — drop them in `examples/package-example/models/` and update `manifest.json`

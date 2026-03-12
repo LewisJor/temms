@@ -6,6 +6,7 @@ metadata:
 
 spec:
   slot: vision
+  default_model: yolov8-daylight
 
   rules:
     - name: fog-conditions
@@ -19,7 +20,7 @@ spec:
             operator: in
             value: [fog, mist]
       action:
-        switch_to: yolov8-fog
+        switch_to: yolov8-lowlight
 
     - name: night-operations
       priority: 70
@@ -31,7 +32,7 @@ spec:
       action:
         switch_to: yolov8-lowlight
 
-    - name: thermal-required
+    - name: critical-low-visibility
       priority: 150
       conditions:
         all:
@@ -42,11 +43,11 @@ spec:
             operator: eq
             value: critical
       action:
-        switch_to: yolov8-thermal-fusion
+        switch_to: mobilenet-tiny
 
   allow_operator_override: true
 
   fallback_chain:
     - yolov8-daylight
     - yolov8-lowlight
-    - yolov8-minimal
+    - mobilenet-tiny

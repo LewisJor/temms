@@ -33,6 +33,27 @@ services:
     restart: unless-stopped
     command: /entrypoint.sh
 
+  # TEMMS Edge Daemon (sim environment)
+  temms-daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: temms-daemon
+    ports:
+      - "8080:8080"
+    volumes:
+      - temms-data:/var/lib/temms
+      - ./src:/app/src:ro          # Live-reload source code (read-only)
+      - ./examples:/app/examples   # Editable example models and policies
+    environment:
+      - TEMMS_LOG_LEVEL=INFO
+      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
+    networks:
+      - temms-local
+    depends_on:
+      - mlflow-server
+    restart: unless-stopped
+
   # Optional: MinIO for S3-compatible artifact storage (local)
   # Uncomment if you want S3-like storage instead of filesystem
   # minio:
@@ -57,4 +78,5 @@ networks:
 volumes:
   mlflow-db-data:
   mlflow-artifacts:
+  temms-data:
   # minio-data:
