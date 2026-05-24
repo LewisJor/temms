@@ -145,3 +145,35 @@ init-local:
 
 run-daemon:
 	temms daemon start --config ./local.temms.yaml
+
+# ---- Week 1 runtime ops ----
+
+up:
+	docker compose up --build -d
+
+down:
+	docker compose down
+
+logs:
+	docker compose logs -f temms-daemon
+
+health:
+	curl -fsS http://localhost:8080/v1/health
+
+metrics:
+	curl -fsS http://localhost:8080/metrics
+
+deploy:
+	curl -fsS -X POST http://localhost:8080/v1/control/deploy -H "Content-Type: application/json" -d "{}"
+
+state:
+	cat /var/lib/temms/deployment_state.json || true
+
+offline:
+	curl -fsS -X POST http://localhost:8080/v1/control/offline
+
+online:
+	curl -fsS -X POST http://localhost:8080/v1/control/online
+
+sync:
+	curl -fsS -X POST http://localhost:8080/v1/control/sync

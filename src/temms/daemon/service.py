@@ -13,6 +13,7 @@ Responsibilities:
 import asyncio
 import signal
 import logging
+import time
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, field
@@ -26,6 +27,15 @@ from temms.core.cache import ModelCache
 from temms.core.storage import ModelStorage
 from temms.inference.runtime import InferenceRuntime
 from temms.inference.server import create_app
+from temms.daemon.deployment_state import DeploymentStateStore, DeploymentState
+from temms.daemon.pending_ops import PendingOperationsStore
+from temms.observability import (
+    condition_update_count,
+    policy_decision_count,
+    runtime_health_gauge,
+    set_deployment_state,
+    uptime_gauge,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +59,9 @@ class DaemonConfig:
     # Behavior
     auto_start_slots: bool = True          # Start slots with default models
     max_inference_workers: int = 4
+    deployment_state_path: Optional[Path] = None
+    pending_operations_path: Optional[Path] = None
+    offline_mode: bool = False
 
     def __post_init__(self):
         """Set default paths if not provided."""
@@ -60,6 +73,10 @@ class DaemonConfig:
             self.model_dir = base_dir / "models"
         if self.policy_dir is None:
             self.policy_dir = Path("/etc/temms/policies")
+        if self.deployment_state_path is None:
+            self.deployment_state_path = base_dir / "deployment_state.json"
+        if self.pending_operations_path is None:
+            self.pending_operations_path = base_dir / "pending_operations.json"
 
 
 class TEMMSDaemon:
@@ -105,6 +122,10 @@ class TEMMSDaemon:
         self._conditions_changed = asyncio.Event()  # Issue #3: event coordination
         self._server = None
         self._tasks: List[asyncio.Task] = []
+        self._started_at = time.time()
+
+        self.deployment_state = DeploymentStateStore(config.deployment_state_path)
+        self.pending_operations = PendingOperationsStore(config.pending_operations_path)
 
     @classmethod
     def from_config(cls, config: DaemonConfig) -> "TEMMSDaemon":
@@ -173,6 +194,7 @@ class TEMMSDaemon:
             self._tasks = [
                 asyncio.create_task(self._condition_loop(), name="condition_loop"),
                 asyncio.create_task(self._policy_loop(), name="policy_loop"),
+                asyncio.create_task(self._reconciliation_loop(), name="reconciliation_loop"),
             ]
 
             # Start inference server (blocking)
@@ -294,6 +316,7 @@ class TEMMSDaemon:
                         source="collector",
                         priority=100,  # Sensor priority
                     )
+                    condition_update_count.inc()
 
                 # Signal the policy loop that conditions changed
                 if all_conditions:
@@ -367,6 +390,42 @@ class TEMMSDaemon:
 
         logger.info("Policy evaluation loop stopped")
 
+    async def _reconciliation_loop(self) -> None:
+        """Simple desired-vs-actual reconciliation loop for deployment lifecycle."""
+        while self._running:
+            try:
+                current = self.deployment_state.get_state()
+                slots = self.slot_manager.list_slots()
+
+                if self.config.offline_mode:
+                    target = DeploymentState.OFFLINE
+                elif not slots:
+                    target = DeploymentState.PENDING
+                elif any(slot.state == SlotState.ERROR for slot in slots):
+                    target = DeploymentState.DEGRADED
+                elif all(slot.state == SlotState.RUNNING for slot in slots):
+                    target = DeploymentState.READY
+                elif any(slot.state == SlotState.LOADING for slot in slots):
+                    target = DeploymentState.DOWNLOADING
+                else:
+                    target = DeploymentState.PENDING
+
+                if target != current:
+                    self.deployment_state.set_state(target, "reconciliation")
+                    set_deployment_state(target.value)
+
+                runtime_health_gauge.set(1 if target in {DeploymentState.READY, DeploymentState.DOWNLOADING, DeploymentState.OFFLINE} else 0)
+                uptime_gauge.set(time.time() - self._started_at)
+            except Exception as e:
+                logger.error(f"Reconciliation loop error: {e}")
+                self.deployment_state.set_state(DeploymentState.FAILED, "reconciliation_error")
+
+            try:
+                await asyncio.wait_for(self._shutdown_event.wait(), timeout=1.0)
+                break
+            except asyncio.TimeoutError:
+                pass
+
     async def _evaluate_all_slots(self) -> None:
         """Evaluate policies for all running slots, respecting operator overrides."""
         slots = self.slot_manager.list_slots()
@@ -385,6 +444,7 @@ class TEMMSDaemon:
                     continue
 
                 # Evaluate policies for this slot
+                policy_decision_count.inc()
                 result = self.policy_engine.evaluate_slot(slot.name)
 
                 if result.switch_to is None:
@@ -532,6 +592,10 @@ class TEMMSDaemon:
             model_cache=self.model_cache,
             model_storage=self.model_storage,
             inference_runtime=self.inference_runtime,
+            offline_mode=self.config.offline_mode,
+            pending_operations=self.pending_operations,
+            deployment_state=self.deployment_state,
+            daemon_config=self.config,
         )
 
         # Configure uvicorn
