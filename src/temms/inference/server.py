@@ -18,6 +18,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends
+from prometheus_client import make_asgi_app
 from pydantic import BaseModel, Field
 
 from temms.slots.manager import SlotManager, SlotState
@@ -26,6 +27,7 @@ from temms.policy.engine import PolicyEngine
 from temms.core.cache import ModelCache
 from temms.core.storage import ModelStorage
 from temms.inference.runtime import InferenceRuntime
+from temms.observability import inference_request_count, inference_latency_ms, condition_update_count, deployment_count
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +110,10 @@ class AppState:
         self.model_storage = model_storage
         self.inference_runtime = inference_runtime
         self.start_time = time.time()
+        self.offline_mode = False
+        self.pending_operations = None
+        self.deployment_state = None
+        self.daemon_config = None
 
 
 # Global state - set during app creation
@@ -130,6 +136,10 @@ def create_app(
     model_cache: ModelCache,
     model_storage: ModelStorage,
     inference_runtime: "InferenceRuntime",
+    offline_mode: bool = False,
+    pending_operations: Any = None,
+    deployment_state: Any = None,
+    daemon_config: Any = None,
 ) -> FastAPI:
     """
     Create FastAPI application with injected dependencies.
@@ -155,6 +165,10 @@ def create_app(
         model_storage=model_storage,
         inference_runtime=inference_runtime,
     )
+    _app_state.offline_mode = offline_mode
+    _app_state.pending_operations = pending_operations
+    _app_state.deployment_state = deployment_state
+    _app_state.daemon_config = daemon_config
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -169,6 +183,9 @@ def create_app(
         version="0.1.0",
         lifespan=lifespan,
     )
+
+    metrics_app = make_asgi_app()
+    application.mount("/metrics", metrics_app)
 
     # Register API routes
     application.include_router(inference_router)
@@ -258,6 +275,8 @@ async def infer(
 
     # 5. Return response
     latency_ms = (time.time() - start_time) * 1000
+    inference_request_count.inc()
+    inference_latency_ms.observe(latency_ms)
 
     return InferenceResponse(
         slot=slot_name,
@@ -359,6 +378,21 @@ async def override_model(
 
     This bypasses policy evaluation until cleared.
     """
+    if state.offline_mode and state.pending_operations is not None:
+        state.pending_operations.enqueue(
+            "override_model",
+            {
+                "slot_name": slot_name,
+                "request": request.model_dump(),
+            },
+        )
+        return {
+            "status": "buffered",
+            "slot": slot_name,
+            "offline": True,
+            "timestamp": datetime.now().isoformat(),
+        }
+
     # Validate slot exists
     slot = state.slot_manager.get_slot(slot_name)
     if slot is None:
@@ -420,6 +454,16 @@ async def update_conditions(
 
     These are set with operator priority (1000) to override sensor data.
     """
+    if state.offline_mode and state.pending_operations is not None:
+        state.pending_operations.enqueue(
+            "update_conditions",
+            {"conditions": request.conditions},
+        )
+        return ConditionUpdateResponse(
+            updated=list(request.conditions.keys()),
+            timestamp=datetime.now().isoformat(),
+        )
+
     updated = []
 
     for path, value in request.conditions.items():
@@ -431,6 +475,7 @@ async def update_conditions(
             confidence=1.0,
         )
         updated.append(path)
+        condition_update_count.inc()
         logger.info(f"Condition updated via API: {path}={value}")
 
     return ConditionUpdateResponse(
@@ -453,6 +498,87 @@ async def clear_condition_overrides(
         "timestamp": datetime.now().isoformat(),
     }
 
+
+
+@control_router.post("/offline")
+async def set_offline(state: AppState = Depends(get_state)) -> Dict[str, Any]:
+    state.offline_mode = True
+    if state.daemon_config is not None:
+        state.daemon_config.offline_mode = True
+    if state.deployment_state:
+        state.deployment_state.set_state("OFFLINE", "api_offline")
+    return {"status": "success", "offline_mode": True}
+
+
+@control_router.post("/online")
+async def set_online(state: AppState = Depends(get_state)) -> Dict[str, Any]:
+    state.offline_mode = False
+    if state.daemon_config is not None:
+        state.daemon_config.offline_mode = False
+    return {"status": "success", "offline_mode": False}
+
+
+@control_router.post("/sync")
+async def sync_pending(state: AppState = Depends(get_state)) -> Dict[str, Any]:
+    if state.pending_operations is None:
+        return {"status": "success", "replayed": 0}
+    entries = state.pending_operations.read_all()
+    replayed = 0
+
+    for entry in entries:
+        operation = entry.get("operation")
+        payload = entry.get("payload", {})
+
+        if operation == "update_conditions":
+            conditions = payload.get("conditions", {})
+            for path, value in conditions.items():
+                state.condition_store.set(
+                    path=path,
+                    value=value,
+                    source="operator_api_sync",
+                    priority=1000,
+                    confidence=1.0,
+                )
+                condition_update_count.inc()
+            replayed += 1
+        elif operation == "override_model":
+            slot_name = payload.get("slot_name")
+            req = payload.get("request", {})
+            model_name = req.get("model")
+            if slot_name and model_name:
+                model = state.model_cache.find_model(model_name)
+                if model is not None:
+                    await state.inference_runtime.load_model(slot_name, model.id)
+                    state.slot_manager.set_operator_override(
+                        slot_name=slot_name,
+                        model_id=model.id,
+                        reason=req.get("reason") or "offline replay",
+                        source="api_sync",
+                        duration_s=req.get("duration_s"),
+                    )
+                    state.slot_manager.activate_model(
+                        slot_name=slot_name,
+                        model_id=model.id,
+                        trigger_type="operator",
+                        trigger_detail=req.get("reason") or "offline replay",
+                        conditions=state.condition_store.get_snapshot(),
+                    )
+                    replayed += 1
+        elif operation == "deploy":
+            deployment_count.inc()
+            replayed += 1
+
+    state.pending_operations.clear()
+    return {"status": "success", "replayed": replayed, "pending_cleared": len(entries)}
+
+
+@control_router.post("/deploy")
+async def request_deploy(request: Dict[str, Any], state: AppState = Depends(get_state)) -> Dict[str, Any]:
+    deployment_count.inc()
+    if state.offline_mode and state.pending_operations is not None:
+        state.pending_operations.enqueue("deploy", request)
+        return {"status": "buffered", "offline": True}
+    return {"status": "accepted", "offline": False}
 
 # Default app instance (for direct uvicorn usage with default config)
 # In production, use create_app() with proper dependencies
