@@ -15,6 +15,7 @@ from temms.core.database import Database
 
 class ModelFormat(str, Enum):
     """Supported model formats."""
+
     ONNX = "onnx"
     TFLITE = "tflite"
     TORCHSCRIPT = "torchscript"
@@ -24,6 +25,7 @@ class ModelFormat(str, Enum):
 @dataclass
 class CachedModel:
     """Cached model metadata (from imported package)."""
+
     id: str
     name: str
     version: str
@@ -54,6 +56,7 @@ class CachedModel:
 @dataclass
 class ImportedPackage:
     """Imported TEMMS package."""
+
     id: str
     name: str
     version: str
@@ -138,6 +141,12 @@ class ModelCache(Database):
             """
             INSERT INTO packages (id, name, version, source, imported_at, manifest)
             VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                version = excluded.version,
+                source = excluded.source,
+                imported_at = excluded.imported_at,
+                manifest = excluded.manifest
             """,
             (package_id, name, version, source, imported_at, json.dumps(manifest)),
         )
@@ -172,6 +181,16 @@ class ModelCache(Database):
             INSERT INTO cached_models
             (id, name, version, format, path, sha256, size_bytes, metadata, package_id, imported_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                version = excluded.version,
+                format = excluded.format,
+                path = excluded.path,
+                sha256 = excluded.sha256,
+                size_bytes = excluded.size_bytes,
+                metadata = excluded.metadata,
+                package_id = excluded.package_id,
+                imported_at = excluded.imported_at
             """,
             (
                 model_id,
@@ -242,5 +261,13 @@ class ModelCache(Database):
         return self.fetch_all_mapped(
             "SELECT * FROM packages ORDER BY imported_at DESC",
             (),
+            self._row_to_package,
+        )
+
+    def get_package(self, package_id: str) -> Optional[ImportedPackage]:
+        """Get imported package metadata by ID."""
+        return self.fetch_one_mapped(
+            "SELECT * FROM packages WHERE id = ?",
+            (package_id,),
             self._row_to_package,
         )

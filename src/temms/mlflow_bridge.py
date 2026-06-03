@@ -14,6 +14,8 @@ import json
 import hashlib
 import logging
 import os
+import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -39,6 +41,7 @@ class MLflowBridge:
         """Check if mlflow package is available."""
         try:
             import mlflow  # noqa: F401
+
             return True
         except ImportError:
             logger.debug("MLflow not installed, bridge will be inactive")
@@ -151,12 +154,14 @@ class MLflowBridge:
                     "tags": dict(rm.tags) if rm.tags else {},
                 }
 
-                for version in (rm.latest_versions or []):
-                    model_info["latest_versions"].append({
-                        "version": version.version,
-                        "status": version.status,
-                        "run_id": version.run_id,
-                    })
+                for version in rm.latest_versions or []:
+                    model_info["latest_versions"].append(
+                        {
+                            "version": version.version,
+                            "status": version.status,
+                            "run_id": version.run_id,
+                        }
+                    )
 
                 models.append(model_info)
 
@@ -211,10 +216,12 @@ class MLflowBridge:
             dest.mkdir(parents=True, exist_ok=True)
 
             # Download model artifacts
-            artifacts_dir = dest / "models" / model_name
-            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            download_dir = dest / "_mlflow"
+            if download_dir.exists():
+                shutil.rmtree(download_dir)
+            download_dir.mkdir(parents=True, exist_ok=True)
 
-            local_path = client.download_artifacts(run_id, "model", str(artifacts_dir))
+            local_path = client.download_artifacts(run_id, "model", str(download_dir))
 
             # Get run info for metadata
             run = client.get_run(run_id)
@@ -222,14 +229,24 @@ class MLflowBridge:
 
             # Create manifest
             model_files = list(Path(local_path).rglob("*"))
-            model_file = next((f for f in model_files if f.suffix in [".onnx", ".tflite", ".pt"]), None)
+            model_file = next(
+                (f for f in model_files if f.suffix in [".onnx", ".tflite", ".pt"]), None
+            )
 
             if model_file is None:
                 logger.error(f"No model file found in artifacts for {model_name}")
                 return None
 
+            models_dir = dest / "models"
+            if models_dir.exists():
+                shutil.rmtree(models_dir)
+            models_dir.mkdir(parents=True, exist_ok=True)
+            package_model_file = models_dir / model_file.name
+            shutil.copy2(model_file, package_model_file)
+            shutil.rmtree(download_dir, ignore_errors=True)
+
             # Compute hash
-            sha256 = hashlib.sha256(model_file.read_bytes()).hexdigest()
+            sha256 = hashlib.sha256(package_model_file.read_bytes()).hexdigest()
 
             manifest = {
                 "schema_version": "v1",
@@ -237,21 +254,28 @@ class MLflowBridge:
                 "name": model_name,
                 "version": model_version.version,
                 "description": f"Pulled from MLflow: {model_name} v{model_version.version}",
-                "created_at": run.info.start_time,
+                "created_at": _mlflow_timestamp(getattr(run.info, "start_time", None)),
                 "created_by": "mlflow-bridge",
-                "models": [{
-                    "id": f"{model_name}-{model_version.version}",
-                    "name": model_name,
-                    "version": model_version.version,
-                    "format": params.get("model_format", "onnx"),
-                    "filename": model_file.name,
-                    "sha256": sha256,
-                    "size_bytes": model_file.stat().st_size,
-                    "metadata": json.loads(params.get("metadata", "{}")),
-                }],
+                "models": [
+                    {
+                        "id": f"{model_name}-{model_version.version}",
+                        "name": model_name,
+                        "version": model_version.version,
+                        "format": params.get("model_format", "onnx"),
+                        "filename": package_model_file.name,
+                        "sha256": sha256,
+                        "size_bytes": package_model_file.stat().st_size,
+                        "metadata": json.loads(params.get("metadata", "{}")),
+                    }
+                ],
                 "policies": [],
                 "source_registry": self.tracking_uri,
                 "mlflow_run_id": run_id,
+                "metadata": {
+                    "development_only": True,
+                    "production_path": "temms package from-mlflow",
+                    "reason": "created by legacy direct MLflow pull shortcut",
+                },
             }
 
             with open(dest / "manifest.json", "w") as f:
@@ -263,3 +287,16 @@ class MLflowBridge:
         except Exception as e:
             logger.error(f"Failed to pull model from MLflow: {e}")
             return None
+
+
+def _mlflow_timestamp(value: Any) -> str:
+    """Normalize MLflow millisecond timestamps into manifest ISO strings."""
+    if value is None:
+        return datetime.utcnow().isoformat() + "Z"
+    try:
+        timestamp = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if timestamp > 10_000_000_000:
+        timestamp = timestamp / 1000
+    return datetime.utcfromtimestamp(timestamp).isoformat() + "Z"

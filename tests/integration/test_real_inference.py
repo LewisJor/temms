@@ -23,16 +23,18 @@ from temms.core.cache import ModelCache, ModelFormat
 from temms.core.storage import ModelStorage
 from temms.core.loader import ONNXRuntime, ModelLoader, RuntimeType
 from temms.core.package import PackageImporter
+from temms.core.package_catalog import package_source_sha256
+from temms.core.signing import sign_package, validate_package
 from temms.inference.runtime import InferenceRuntime
 from temms.slots.manager import SlotManager, SlotState
 from temms.conditions.store import ConditionStore
 from temms.policy.engine import PolicyEngine
 from temms.policy.schema import SlotPolicy
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def real_onnx_model(tmp_path):
@@ -56,8 +58,13 @@ def real_onnx_model(tmp_path):
 
     graph = helper.make_graph(
         nodes=[
-            helper.make_node("Conv", ["input", "conv_w", "conv_b"], ["conv_out"],
-                             kernel_shape=[3, 3], pads=[1, 1, 1, 1]),
+            helper.make_node(
+                "Conv",
+                ["input", "conv_w", "conv_b"],
+                ["conv_out"],
+                kernel_shape=[3, 3],
+                pads=[1, 1, 1, 1],
+            ),
             helper.make_node("Relu", ["conv_out"], ["relu_out"]),
             helper.make_node("GlobalAveragePool", ["relu_out"], ["gap_out"]),
             helper.make_node("Flatten", ["gap_out"], ["flat_out"], axis=1),
@@ -96,8 +103,13 @@ def two_real_models(tmp_path):
 
         graph = helper.make_graph(
             nodes=[
-                helper.make_node("Conv", ["input", "conv_w", "conv_b"], ["conv_out"],
-                                 kernel_shape=[3, 3], pads=[1, 1, 1, 1]),
+                helper.make_node(
+                    "Conv",
+                    ["input", "conv_w", "conv_b"],
+                    ["conv_out"],
+                    kernel_shape=[3, 3],
+                    pads=[1, 1, 1, 1],
+                ),
                 helper.make_node("Relu", ["conv_out"], ["relu_out"]),
                 helper.make_node("GlobalAveragePool", ["relu_out"], ["gap_out"]),
                 helper.make_node("Flatten", ["gap_out"], ["flat_out"], axis=1),
@@ -152,8 +164,13 @@ def real_package(tmp_path):
 
         graph = helper.make_graph(
             nodes=[
-                helper.make_node("Conv", ["input", "conv_w", "conv_b"], ["conv_out"],
-                                 kernel_shape=[3, 3], pads=[1, 1, 1, 1]),
+                helper.make_node(
+                    "Conv",
+                    ["input", "conv_w", "conv_b"],
+                    ["conv_out"],
+                    kernel_shape=[3, 3],
+                    pads=[1, 1, 1, 1],
+                ),
                 helper.make_node("Relu", ["conv_out"], ["relu_out"]),
                 helper.make_node("GlobalAveragePool", ["relu_out"], ["gap_out"]),
                 helper.make_node("Flatten", ["gap_out"], ["flat_out"], axis=1),
@@ -181,19 +198,21 @@ def real_package(tmp_path):
 
         sha256 = hashlib.sha256(model_bytes).hexdigest()
 
-        model_entries.append({
-            "id": model_id,
-            "name": name,
-            "version": "1.0.0",
-            "format": "onnx",
-            "filename": filename,
-            "sha256": sha256,
-            "size_bytes": len(model_bytes),
-            "metadata": {
-                "input_shape": [1, 3, 32, 32],
-                "classes": 10,
+        model_entries.append(
+            {
+                "id": model_id,
+                "name": name,
+                "version": "1.0.0",
+                "format": "onnx",
+                "filename": filename,
+                "sha256": sha256,
+                "size_bytes": len(model_bytes),
+                "metadata": {
+                    "input_shape": [1, 3, 32, 32],
+                    "classes": 10,
+                },
             }
-        })
+        )
 
     # Write policy
     policy_yaml = """apiVersion: temms/v1
@@ -272,6 +291,7 @@ def system_with_storage(tmp_path):
 # Tests: Direct ONNX Loading
 # ---------------------------------------------------------------------------
 
+
 class TestRealONNXLoading:
     """Test loading real ONNX models directly."""
 
@@ -337,6 +357,7 @@ class TestRealONNXLoading:
 # Tests: InferenceRuntime with Real Models
 # ---------------------------------------------------------------------------
 
+
 class TestRealInferenceRuntime:
     """Test InferenceRuntime with real ONNX models."""
 
@@ -369,14 +390,10 @@ class TestRealInferenceRuntime:
         system = system_with_storage
 
         # Set up model
-        self._setup_model_in_system(
-            system, real_onnx_model, "test-model-001", "test-model"
-        )
+        self._setup_model_in_system(system, real_onnx_model, "test-model-001", "test-model")
 
         # Create slot
-        system["slot_manager"].create_slot(
-            name="vision", description="Vision", required=True
-        )
+        system["slot_manager"].create_slot(name="vision", description="Vision", required=True)
 
         # Load model into slot
         result = await system["inference_runtime"].load_model("vision", "test-model-001")
@@ -387,13 +404,9 @@ class TestRealInferenceRuntime:
         """Test full inference through InferenceRuntime with real model."""
         system = system_with_storage
 
-        self._setup_model_in_system(
-            system, real_onnx_model, "test-model-001", "test-model"
-        )
+        self._setup_model_in_system(system, real_onnx_model, "test-model-001", "test-model")
 
-        system["slot_manager"].create_slot(
-            name="vision", description="Vision", required=True
-        )
+        system["slot_manager"].create_slot(name="vision", description="Vision", required=True)
 
         await system["inference_runtime"].load_model("vision", "test-model-001")
 
@@ -418,16 +431,10 @@ class TestRealInferenceRuntime:
         """Test hot-swapping between two real models."""
         system = system_with_storage
 
-        self._setup_model_in_system(
-            system, two_real_models["model_a"], "model-a-001", "model-a"
-        )
-        self._setup_model_in_system(
-            system, two_real_models["model_b"], "model-b-001", "model-b"
-        )
+        self._setup_model_in_system(system, two_real_models["model_a"], "model-a-001", "model-a")
+        self._setup_model_in_system(system, two_real_models["model_b"], "model-b-001", "model-b")
 
-        system["slot_manager"].create_slot(
-            name="vision", description="Vision", required=True
-        )
+        system["slot_manager"].create_slot(name="vision", description="Vision", required=True)
 
         # Load model A
         await system["inference_runtime"].load_model("vision", "model-a-001")
@@ -456,6 +463,7 @@ class TestRealInferenceRuntime:
 # Tests: Full Pipeline (Import → Policy → Switch → Infer)
 # ---------------------------------------------------------------------------
 
+
 class TestFullPipeline:
     """Test the complete pipeline from import to inference."""
 
@@ -466,7 +474,10 @@ class TestFullPipeline:
 
         # 1. Import package
         importer = PackageImporter(
-            system["cache_dir"], system["model_cache"], system["model_storage"]
+            system["cache_dir"],
+            system["model_cache"],
+            system["model_storage"],
+            require_signature=False,
         )
         result = importer.import_package(real_package, verify=True)
 
@@ -500,18 +511,186 @@ class TestFullPipeline:
         assert len(predictions[0][0]) == 10
 
     @pytest.mark.asyncio
+    async def test_import_is_idempotent_and_activates_policies(
+        self, system_with_storage, real_package, tmp_path
+    ):
+        """Test repeated imports update cache records and promote policies."""
+        system = system_with_storage
+        active_policy_dir = tmp_path / "active-policies"
+
+        importer = PackageImporter(
+            system["cache_dir"],
+            system["model_cache"],
+            system["model_storage"],
+            active_policy_dir=active_policy_dir,
+            require_signature=False,
+        )
+
+        first = importer.import_package(real_package, verify=True)
+        second = importer.import_package(real_package, verify=True)
+
+        assert len(first.models) == 2
+        assert len(second.models) == 2
+        assert len(system["model_cache"].list_models()) == 2
+        assert len(system["model_cache"].list_packages()) == 1
+        audit = second.package.manifest["_temms_import"]
+        assert audit["source_type"] == "directory"
+        assert audit["source_sha256"] == package_source_sha256(real_package)
+        assert audit["directory_sha256"] == audit["source_sha256"]
+        assert audit["archive_sha256"] is None
+        active_policy_path = active_policy_dir / "pkg-test-integration-test-adaptive.yaml"
+        assert active_policy_path.exists()
+
+        manifest_path = real_package / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["policies"] = []
+        manifest_path.write_text(json.dumps(manifest, indent=2))
+        (real_package / "policies" / "test-adaptive.yaml").unlink()
+
+        third = importer.import_package(real_package, verify=True)
+
+        assert third.policies == []
+        assert not active_policy_path.exists()
+        assert list((system["cache_dir"] / "policies" / "pkg-test-integration").iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_failed_policy_promotion_preserves_active_policy(
+        self, system_with_storage, real_package, tmp_path, monkeypatch
+    ):
+        """Test active package policies survive a failed re-import promotion."""
+        system = system_with_storage
+        active_policy_dir = tmp_path / "active-policies"
+
+        importer = PackageImporter(
+            system["cache_dir"],
+            system["model_cache"],
+            system["model_storage"],
+            active_policy_dir=active_policy_dir,
+            require_signature=False,
+        )
+
+        importer.import_package(real_package, verify=True)
+        active_policy_path = active_policy_dir / "pkg-test-integration-test-adaptive.yaml"
+        cached_policy_path = (
+            system["cache_dir"] / "policies" / "pkg-test-integration" / "test-adaptive.yaml"
+        )
+        active_policy_before = active_policy_path.read_text()
+        cached_policy_before = cached_policy_path.read_text()
+
+        source_policy_path = real_package / "policies" / "test-adaptive.yaml"
+        source_policy_path.write_text(active_policy_before + "\n# updated policy\n")
+
+        import temms.core.package as package_module
+
+        original_copy = package_module.shutil.copy
+
+        def fail_active_policy_copy(src, dst, *args, **kwargs):
+            destination = Path(dst)
+            if destination.parent == active_policy_dir and destination.name.startswith(
+                ".pkg-test-integration-test-adaptive.yaml-"
+            ):
+                raise OSError("simulated active policy copy failure")
+            return original_copy(src, dst, *args, **kwargs)
+
+        monkeypatch.setattr(package_module.shutil, "copy", fail_active_policy_copy)
+
+        with pytest.raises(OSError, match="simulated active policy copy failure"):
+            importer.import_package(real_package, verify=True)
+
+        assert active_policy_path.read_text() == active_policy_before
+        assert cached_policy_path.read_text() == cached_policy_before
+        assert list(active_policy_dir.iterdir()) == [active_policy_path]
+
+    @pytest.mark.asyncio
+    async def test_failed_active_policy_replace_restores_cached_policy(
+        self, system_with_storage, real_package, tmp_path, monkeypatch
+    ):
+        """Test cached and active policies survive a late active replace failure."""
+        system = system_with_storage
+        active_policy_dir = tmp_path / "active-policies"
+
+        importer = PackageImporter(
+            system["cache_dir"],
+            system["model_cache"],
+            system["model_storage"],
+            active_policy_dir=active_policy_dir,
+            require_signature=False,
+        )
+
+        importer.import_package(real_package, verify=True)
+        active_policy_path = active_policy_dir / "pkg-test-integration-test-adaptive.yaml"
+        cached_policy_path = (
+            system["cache_dir"] / "policies" / "pkg-test-integration" / "test-adaptive.yaml"
+        )
+        active_policy_before = active_policy_path.read_text()
+        cached_policy_before = cached_policy_path.read_text()
+
+        source_policy_path = real_package / "policies" / "test-adaptive.yaml"
+        source_policy_path.write_text(active_policy_before + "\n# replacement policy\n")
+
+        import temms.core.package as package_module
+
+        original_replace = package_module.Path.replace
+
+        def fail_active_policy_replace(self, target, *args, **kwargs):
+            if self.parent == active_policy_dir and self.name.startswith(
+                ".pkg-test-integration-test-adaptive.yaml-"
+            ):
+                raise OSError("simulated active policy replace failure")
+            return original_replace(self, target, *args, **kwargs)
+
+        monkeypatch.setattr(package_module.Path, "replace", fail_active_policy_replace)
+
+        with pytest.raises(OSError, match="simulated active policy replace failure"):
+            importer.import_package(real_package, verify=True)
+
+        assert active_policy_path.read_text() == active_policy_before
+        assert cached_policy_path.read_text() == cached_policy_before
+        assert list(active_policy_dir.iterdir()) == [active_policy_path]
+
+    @pytest.mark.asyncio
+    async def test_signed_package_validation_and_required_import(
+        self, system_with_storage, real_package
+    ):
+        """Test package signatures can be created, verified, and required."""
+        system = system_with_storage
+        key = "test-signing-key"
+
+        sign_package(real_package, key, signer="test-hub")
+        validation = validate_package(real_package, require_signature=True, signing_key=key)
+
+        assert validation.valid is True
+        assert validation.signature_verified is True
+
+        importer = PackageImporter(
+            system["cache_dir"],
+            system["model_cache"],
+            system["model_storage"],
+            require_signature=True,
+            signing_key=key,
+        )
+        result = importer.import_package(real_package, verify=True)
+
+        assert len(result.models) == 2
+
+    @pytest.mark.asyncio
     async def test_policy_driven_model_switch(self, system_with_storage, real_package):
         """Test complete policy-driven model switching with real models."""
         system = system_with_storage
 
         # 1. Import package (includes policy)
         importer = PackageImporter(
-            system["cache_dir"], system["model_cache"], system["model_storage"]
+            system["cache_dir"],
+            system["model_cache"],
+            system["model_storage"],
+            require_signature=False,
         )
         result = importer.import_package(real_package, verify=True)
 
         # 2. Load policy
-        policy_path = system["cache_dir"] / "policies" / "pkg-test-integration" / "test-adaptive.yaml"
+        policy_path = (
+            system["cache_dir"] / "policies" / "pkg-test-integration" / "test-adaptive.yaml"
+        )
         system["policy_engine"].load_policy_from_file(policy_path)
 
         # 3. Create slot and load default model

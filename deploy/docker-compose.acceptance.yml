@@ -1,0 +1,81 @@
+services:
+  temms-hub:
+    image: temms/agent:local
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        TEMMS_EXTRAS: inference
+    container_name: temms-acceptance-hub
+    environment:
+      TEMMS_API_TOKEN: ${TEMMS_ACCEPTANCE_TOKEN:-change-me}
+      TEMMS_DATA_DIR: /var/lib/temms
+      TEMMS_ROLLOUT_REQUIRE_SIGNATURE: "true"
+      TEMMS_PACKAGE_SIGNING_KEY: ${TEMMS_ACCEPTANCE_SIGNING_KEY:-change-me}
+    ports:
+      - "${TEMMS_ACCEPTANCE_HUB_PORT:-18080}:8080"
+    volumes:
+      - temms-acceptance-hub-data:/var/lib/temms
+      - ${TEMMS_ACCEPTANCE_PACKAGE_DIR:-../dist}:/acceptance-packages:ro
+    networks:
+      - temms-acceptance
+
+  temms-edge-online:
+    image: temms/agent:local
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        TEMMS_EXTRAS: inference
+    container_name: temms-acceptance-edge-online
+    environment:
+      TEMMS_API_TOKEN: ${TEMMS_ACCEPTANCE_TOKEN:-change-me}
+      TEMMS_DATA_DIR: /var/lib/temms
+      TEMMS_HUB_URL: http://temms-hub:8080
+      TEMMS_HUB_TOKEN: ${TEMMS_ACCEPTANCE_TOKEN:-change-me}
+      TEMMS_DEVICE_ID: edge-online
+      TEMMS_DEVICE_PROFILE: x86_64-cpu
+      TEMMS_HUB_AUTO_APPLY: "true"
+      TEMMS_ROLLOUT_REQUIRE_SIGNATURE: "true"
+      TEMMS_PACKAGE_SIGNING_KEY: ${TEMMS_ACCEPTANCE_SIGNING_KEY:-change-me}
+    ports:
+      - "${TEMMS_ACCEPTANCE_ONLINE_PORT:-18081}:8080"
+    volumes:
+      - temms-acceptance-online-data:/var/lib/temms
+    networks:
+      - temms-acceptance
+    depends_on:
+      - temms-hub
+
+  temms-edge-airgap:
+    image: temms/agent:local
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        TEMMS_EXTRAS: inference
+    container_name: temms-acceptance-edge-airgap
+    environment:
+      TEMMS_API_TOKEN: ${TEMMS_ACCEPTANCE_TOKEN:-change-me}
+      TEMMS_DATA_DIR: /var/lib/temms
+      TEMMS_DEVICE_ID: edge-airgap
+      TEMMS_DEVICE_PROFILE: rpi5-tflite
+      TEMMS_ROLLOUT_REQUIRE_SIGNATURE: "true"
+      TEMMS_PACKAGE_SIGNING_KEY: ${TEMMS_ACCEPTANCE_SIGNING_KEY:-change-me}
+    ports:
+      - "${TEMMS_ACCEPTANCE_AIRGAP_PORT:-18082}:8080"
+    volumes:
+      - temms-acceptance-airgap-data:/var/lib/temms
+    networks:
+      - temms-acceptance
+    depends_on:
+      - temms-hub
+
+networks:
+  temms-acceptance:
+    driver: bridge
+
+volumes:
+  temms-acceptance-hub-data:
+  temms-acceptance-online-data:
+  temms-acceptance-airgap-data:

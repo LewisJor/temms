@@ -34,10 +34,18 @@ temms --help
 
 ```bash
 make test
-# Expected: 268 passed, 16 skipped in ~5s
+# Expected: full test suite passes in a few seconds
 ```
 
 If any tests fail, check your Python version (`python --version` — need 3.10+) and that numpy/onnxruntime installed correctly.
+
+To verify the signed Hub Lite edge rollout paths specifically:
+
+```bash
+make mvp-smoke
+```
+
+This runs local central-to-edge flows for both air-gap bundle transfer and online Hub sync with package artifact download, signed apply, and edge activation.
 
 ## Step 3: Start the Docker sim environment
 
@@ -156,6 +164,10 @@ When fog conditions were injected, the policy engine matched the `fog-conditions
 ## Next steps
 
 - [Architecture overview](architecture.md) — how the three tiers fit together
+- [Hub Lite](hub-lite.md) — MVP fleet inventory, rollout state, and air-gap sync
 - [Policy reference](policy-reference.md) — full YAML schema for writing policies
+- [MLflow packaging](mlflow-packaging.md) — build signed edge packages from MLflow
+- [Edge operations](edge-operations.md) — diagnose VMs, benchmark models, and export telemetry
+- [Run on a Linux VM](run-on-linux-vm.md) — repeatable single-agent VM deployment
 - [examples/policies/](../examples/policies/) — real policy files you can study
 - Bring your own ONNX models — drop them in `examples/package-example/models/` and update `manifest.json`

@@ -9,7 +9,8 @@ User=temms
 Group=temms
 WorkingDirectory=/opt/temms
 Environment="PATH=/opt/temms/venv/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/opt/temms/venv/bin/temms daemon start --foreground
+EnvironmentFile=-/etc/temms/temms.env
+ExecStart=/opt/temms/venv/bin/temms daemon start --foreground --config /etc/temms/temms.yaml --host ${TEMMS_HOST} --port ${TEMMS_PORT}
 Restart=on-failure
 RestartSec=5s
 StandardOutput=journal
@@ -19,8 +20,15 @@ StandardError=journal
 LimitNOFILE=65536
 LimitNPROC=4096
 
-# Watchdog
-WatchdogSec=30s
+# Basic hardening. TEMMS still needs write access to /var/lib/temms and /var/log/temms.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/temms /var/log/temms /etc/temms
+
+# Environment:
+# - TEMMS_API_TOKEN protects control, Hub Lite, and Web UI write endpoints.
+# - TEMMS_HUB_URL enables optional online Hub Lite enrollment and heartbeat sync.
 
 [Install]
 WantedBy=multi-user.target

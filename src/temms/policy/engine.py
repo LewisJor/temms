@@ -22,6 +22,7 @@ class PolicyEvalResult:
     preload: List[str] = field(default_factory=list)  # Models to preload
     triggered_by: Optional[str] = None  # Rule name or "default_model"
     is_default: bool = False  # True if returning to default model
+    explanation: Dict[str, Any] = field(default_factory=dict)
 
 
 class PolicyEngine:
@@ -76,9 +77,13 @@ class PolicyEngine:
 
         all_rules.sort(key=lambda x: x[1].priority, reverse=True)
 
+        evaluated_rules: list[dict[str, Any]] = []
+
         # Evaluate rules in priority order
         for policy, rule in all_rules:
-            if self._evaluate_rule(rule):
+            matched, explanation = self._explain_rule(policy, rule)
+            evaluated_rules.append(explanation)
+            if matched:
                 logger.info(
                     f"Policy rule matched: {policy.metadata.name}/{rule.name} "
                     f"-> {rule.action.switch_to}"
@@ -89,6 +94,11 @@ class PolicyEngine:
                     preload=rule.action.preload or [],
                     triggered_by=f"{policy.metadata.name}/{rule.name}",
                     is_default=False,
+                    explanation={
+                        "reason": "rule_matched",
+                        "matched_rule": explanation,
+                        "evaluated_rules": evaluated_rules,
+                    },
                 )
 
         # No rule matched - check for default_model across slot policies
@@ -102,47 +112,132 @@ class PolicyEngine:
                     switch_to=policy.spec.default_model,
                     triggered_by="default_model",
                     is_default=True,
+                    explanation={
+                        "reason": "default_model",
+                        "policy": policy.metadata.name,
+                        "slot": policy.spec.slot,
+                        "default_model": policy.spec.default_model,
+                        "evaluated_rules": evaluated_rules,
+                    },
                 )
 
-        return PolicyEvalResult()
+        return PolicyEvalResult(
+            explanation={
+                "reason": "no_matching_rule",
+                "slot": slot_name,
+                "evaluated_rules": evaluated_rules,
+            }
+        )
 
     def _evaluate_rule(self, rule: PolicyRule) -> bool:
         """Evaluate a single rule."""
-        return self._evaluate_condition_group(rule.conditions)
+        matched, _ = self._explain_condition_group(rule.conditions)
+        return matched
+
+    def _explain_rule(
+        self,
+        policy: SlotPolicy,
+        rule: PolicyRule,
+    ) -> tuple[bool, dict[str, Any]]:
+        """Evaluate a rule and return structured explainability metadata."""
+        matched, condition_group = self._explain_condition_group(rule.conditions)
+        return matched, {
+            "policy": policy.metadata.name,
+            "slot": policy.spec.slot,
+            "rule": rule.name,
+            "priority": rule.priority,
+            "matched": matched,
+            "action": {
+                "switch_to": rule.action.switch_to,
+                "version": rule.action.version,
+                "preload": rule.action.preload or [],
+            },
+            "conditions": condition_group,
+        }
 
     def _evaluate_condition_group(self, group: ConditionGroup) -> bool:
         """Evaluate a condition group (AND/OR logic)."""
+        matched, _ = self._explain_condition_group(group)
+        return matched
+
+    def _explain_condition_group(
+        self,
+        group: ConditionGroup,
+    ) -> tuple[bool, dict[str, Any]]:
+        """Evaluate a condition group and return per-condition evidence."""
         # AND logic (all conditions must match)
         if group.all:
-            return all(self._evaluate_condition(c) for c in group.all)
+            condition_results = [self._explain_condition(c) for c in group.all]
+            return all(c["matched"] for c in condition_results), {
+                "mode": "all",
+                "items": condition_results,
+            }
 
         # OR logic (any condition must match)
         if group.any:
-            return any(self._evaluate_condition(c) for c in group.any)
+            condition_results = [self._explain_condition(c) for c in group.any]
+            return any(c["matched"] for c in condition_results), {
+                "mode": "any",
+                "items": condition_results,
+            }
 
-        return False
+        return False, {"mode": "none", "items": []}
 
     def _evaluate_condition(self, condition: Condition) -> bool:
         """Evaluate a single condition."""
+        return self._explain_condition(condition)["matched"]
+
+    def _explain_condition(self, condition: Condition) -> dict[str, Any]:
+        """Evaluate one condition and return the values used for audit."""
+        evidence: dict[str, Any] = {
+            "metric": condition.metric,
+            "operator": condition.operator,
+            "expected": condition.value,
+            "min_confidence": condition.min_confidence,
+            "actual": None,
+            "source": None,
+            "priority": None,
+            "confidence": None,
+            "updated_at": None,
+            "matched": False,
+            "reason": None,
+        }
+
         # Handle exists/not_exists before value lookup
         if condition.operator == "exists":
-            return self.condition_store.get(condition.metric) is not None
+            cond_value = self.condition_store.get(condition.metric)
+            if cond_value is not None:
+                evidence.update(_condition_value_evidence(cond_value))
+                evidence["matched"] = True
+            else:
+                evidence["reason"] = "missing"
+            return evidence
         if condition.operator == "not_exists":
-            return self.condition_store.get(condition.metric) is None
+            cond_value = self.condition_store.get(condition.metric)
+            if cond_value is None:
+                evidence["matched"] = True
+            else:
+                evidence.update(_condition_value_evidence(cond_value))
+                evidence["reason"] = "present"
+            return evidence
 
         # Get current value from condition store
         cond_value = self.condition_store.get(condition.metric)
 
         if cond_value is None:
             logger.debug(f"Condition metric not found: {condition.metric}")
-            return False
+            evidence["reason"] = "missing"
+            return evidence
+
+        evidence.update(_condition_value_evidence(cond_value))
 
         # Check confidence threshold
         if cond_value.confidence < condition.min_confidence:
             logger.debug(
                 f"Condition confidence too low: {cond_value.confidence} < {condition.min_confidence}"
             )
-            return False
+            evidence["reason"] = "low_confidence"
+            return evidence
 
         # Evaluate operator
         value = cond_value.value
@@ -151,29 +246,35 @@ class PolicyEngine:
 
         try:
             if op == "eq":
-                return value == target
+                matched = value == target
             elif op == "neq":
-                return value != target
+                matched = value != target
             elif op == "gt":
-                return value > target
+                matched = value > target
             elif op == "gte":
-                return value >= target
+                matched = value >= target
             elif op == "lt":
-                return value < target
+                matched = value < target
             elif op == "lte":
-                return value <= target
+                matched = value <= target
             elif op == "in":
-                return value in target
+                matched = value in target
             elif op == "not_in":
-                return value not in target
+                matched = value not in target
             elif op == "matches":
-                return bool(re.search(str(target), str(value)))
+                matched = bool(re.search(str(target), str(value)))
             else:
                 logger.warning(f"Unknown operator: {op}")
-                return False
+                evidence["reason"] = "unknown_operator"
+                return evidence
+            evidence["matched"] = matched
+            if not matched:
+                evidence["reason"] = "operator_mismatch"
+            return evidence
         except Exception as e:
             logger.warning(f"Error evaluating condition: {e}")
-            return False
+            evidence["reason"] = f"evaluation_error: {e}"
+            return evidence
 
     def get_fallback_chain(self, slot_name: str) -> List[str]:
         """Get fallback chain for a slot."""
@@ -185,3 +286,18 @@ class PolicyEngine:
     def list_policies(self) -> List[SlotPolicy]:
         """List all loaded policies."""
         return list(self.loaded_policies.values())
+
+    def clear_policies(self) -> None:
+        """Clear all loaded policies before reloading from the active policy store."""
+        self.loaded_policies.clear()
+
+
+def _condition_value_evidence(cond_value: Any) -> dict[str, Any]:
+    """Return serializable condition value metadata for policy decisions."""
+    return {
+        "actual": cond_value.value,
+        "source": cond_value.source,
+        "priority": cond_value.priority,
+        "confidence": cond_value.confidence,
+        "updated_at": cond_value.updated_at.isoformat(),
+    }

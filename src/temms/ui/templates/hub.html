@@ -1,0 +1,614 @@
+{% extends "base.html" %}
+{% set active_page = "hub" %}
+
+{% block title %}TEMMS - Admin Workbench{% endblock %}
+
+{% block content %}
+<div class="theme-app -mx-4 -my-6 min-h-screen bg-[#050606] text-zinc-100">
+    <div class="mx-auto max-w-7xl px-4 py-6">
+        <div class="border border-zinc-800 bg-[#090a0a]">
+            <div class="flex flex-col gap-5 border-b border-zinc-800 px-5 py-5 lg:flex-row lg:items-end lg:justify-between">
+                <div class="space-y-3">
+                    <div class="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+                        <span class="border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-emerald-300">Admin</span>
+                        <span>Registry</span>
+                        <span>/</span>
+                        <span>Fleet Targeting</span>
+                        <span>/</span>
+                        <span>Evidence</span>
+                    </div>
+                    <div>
+                        <h1 class="text-3xl font-semibold text-zinc-50">Admin Workbench</h1>
+                        <p class="mt-1 max-w-2xl text-sm text-zinc-400">Advanced controls for package catalog, runtime images, fleet targeting, rollback, and air-gap evidence.</p>
+                    </div>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <a href="/ui/" class="border border-emerald-500 bg-emerald-500 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-black hover:bg-emerald-300">
+                        Guided Deploy
+                    </a>
+                    <a href="http://localhost:5000" target="_blank" class="border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-200 hover:border-emerald-400 hover:text-emerald-300">
+                        Open MLflow &#8599;
+                    </a>
+                    <a href="/docs" target="_blank" class="border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-200 hover:border-zinc-400">
+                        API Docs
+                    </a>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 border-b border-zinc-800 md:grid-cols-6">
+                <div class="border-b border-r border-zinc-800 p-4 md:border-b-0">
+                    <div class="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Edge Nodes</div>
+                    <div class="mt-2 text-2xl font-semibold text-zinc-50">{{ devices|length }}</div>
+                </div>
+                <div class="border-b border-zinc-800 p-4 md:border-b-0 md:border-r">
+                    <div class="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Packages</div>
+                    <div class="mt-2 text-2xl font-semibold text-zinc-50">{{ packages|length }}</div>
+                </div>
+                <div class="border-r border-zinc-800 p-4">
+                    <div class="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Rollouts</div>
+                    <div class="mt-2 text-2xl font-semibold text-zinc-50">{{ rollouts|length }}</div>
+                </div>
+                <div class="border-r border-zinc-800 p-4">
+                    <div class="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Runtime Images</div>
+                    <div class="mt-2 text-2xl font-semibold text-zinc-50">{{ runtime_targets|length }}</div>
+                </div>
+                <div class="border-r border-zinc-800 p-4">
+                    <div class="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Benchmarks</div>
+                    <div class="mt-2 text-2xl font-semibold text-zinc-50">{{ benchmarks|length }}</div>
+                </div>
+                <div class="p-4">
+                    <div class="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Registry Link</div>
+                    <div class="mt-2 truncate font-mono text-sm text-emerald-300">{{ default_tracking_uri }}</div>
+                </div>
+            </div>
+
+            <div id="hub-action-result" class="px-5 pt-5"></div>
+
+            <section class="border-b border-zinc-800 bg-[#0d0f0f] px-5 py-4">
+                <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div>
+                        <div class="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Operator guidance</div>
+                        <div class="mt-1 text-sm text-zinc-300">Use Deploy for the normal MLflow-to-edge path. Use this workbench when you need direct control over individual Hub capabilities.</div>
+                    </div>
+                    <a href="/ui/" class="w-fit border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-300 hover:border-emerald-300">Open guided flow</a>
+                </div>
+            </section>
+
+            <div class="grid grid-cols-1 gap-px bg-zinc-800 lg:grid-cols-2 xl:grid-cols-3">
+                <details class="bg-[#0d0f0f] p-5">
+                    <summary class="cursor-pointer list-none">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <h2 class="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-100">Package Model</h2>
+                            <p class="mt-1 text-xs text-zinc-500">Registry model to signed TEMMS artifact.</p>
+                        </div>
+                        <span class="border border-emerald-500/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-300">Build</span>
+                    </div>
+                    </summary>
+                    <form hx-post="/ui/hub/mlflow/package" hx-target="#hub-action-result" class="mt-4 space-y-3">
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Model URI</label>
+                            <input name="model_uri" required placeholder="models:/detector/7"
+                                   class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-emerald-400">
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Slot</label>
+                                <input name="slot" required value="vision"
+                                       class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none focus:border-emerald-400">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Device Profile</label>
+                                <input name="device_profile" placeholder="x86_64-cpu"
+                                       class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-emerald-400">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Tracking URI</label>
+                            <input name="tracking_uri" value="{{ default_tracking_uri }}"
+                                   class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none focus:border-emerald-400">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Output Directory</label>
+                            <input name="output_dir" value="{{ default_package_output_dir }}"
+                                   class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none focus:border-emerald-400">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Model Artifact</label>
+                            <input name="model_artifact" placeholder="optional/path/model.onnx"
+                                   class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-emerald-400">
+                        </div>
+                        <label class="flex items-center gap-2 text-xs text-zinc-400">
+                            <input type="checkbox" name="allow_missing_schema" value="true" class="border-zinc-700 bg-zinc-950 text-emerald-500">
+                            <span>Allow missing schema for lab packages</span>
+                        </label>
+                        <label class="flex items-center gap-2 text-xs text-zinc-400">
+                            <input type="checkbox" name="allow_missing_runtime_constraints" value="true" class="border-zinc-700 bg-zinc-950 text-emerald-500">
+                            <span>Allow missing runtime constraints for lab packages</span>
+                        </label>
+                        <label class="flex items-center gap-2 text-xs text-zinc-400">
+                            <input type="hidden" name="strict_metadata" value="false">
+                            <input type="checkbox" name="strict_metadata" value="true" checked class="border-zinc-700 bg-zinc-950 text-emerald-500">
+                            <span>Strict metadata</span>
+                        </label>
+                        <label class="flex items-center gap-2 text-xs text-zinc-400">
+                            <input type="checkbox" name="register_package" value="true" checked class="border-zinc-700 bg-zinc-950 text-emerald-500">
+                            <span>Register package after build</span>
+                        </label>
+                        <button type="submit" class="w-full border border-emerald-500 bg-emerald-500 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-black hover:bg-emerald-300">
+                            Build & Register
+                        </button>
+                    </form>
+                </details>
+
+                <details class="bg-[#0d0f0f] p-5">
+                    <summary class="cursor-pointer list-none">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <h2 class="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-100">Register Package</h2>
+                            <p class="mt-1 text-xs text-zinc-500">Attach an existing artifact to the catalog.</p>
+                        </div>
+                        <span class="border border-cyan-400/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300">Catalog</span>
+                    </div>
+                    </summary>
+                    <form hx-post="/ui/hub/packages/register" hx-target="#hub-action-result" class="mt-4 space-y-3">
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Package Path</label>
+                            <input name="package_path" required placeholder="/acceptance-packages/pkg-online-x86.temms.tar.zst"
+                                   class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-cyan-300">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Actor</label>
+                            <input name="actor" value="operator:web-ui"
+                                   class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none focus:border-cyan-300">
+                        </div>
+                        <label class="flex items-center gap-2 text-xs text-zinc-400">
+                            <input type="hidden" name="strict_metadata" value="false">
+                            <input type="checkbox" name="strict_metadata" value="true" checked class="border-zinc-700 bg-zinc-950 text-cyan-500">
+                            <span>Strict metadata</span>
+                        </label>
+                        <button type="submit" class="w-full border border-cyan-300 bg-cyan-300 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-black hover:bg-cyan-200">
+                            Register
+                        </button>
+                    </form>
+                </details>
+
+                <details class="bg-[#0d0f0f] p-5">
+                    <summary class="cursor-pointer list-none">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <h2 class="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-100">Runtime Image</h2>
+                            <p class="mt-1 text-xs text-zinc-500">Bring your own image for OS/arch simulation.</p>
+                        </div>
+                        <span class="border border-fuchsia-400/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-fuchsia-300">Image</span>
+                    </div>
+                    </summary>
+                    <form hx-post="/ui/hub/runtime-targets/register" hx-target="#hub-action-result" class="mt-4 space-y-3">
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Target ID</label>
+                                <input name="runtime_target_id" required placeholder="customer-orin"
+                                       class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-fuchsia-300">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Name</label>
+                                <input name="name" placeholder="Customer Orin"
+                                       class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-fuchsia-300">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Image</label>
+                            <input name="image" required placeholder="registry.example.com/edge/orin-runtime:2026.06"
+                                   class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-fuchsia-300">
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">OS</label>
+                                <input name="os_name" value="linux"
+                                       class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none focus:border-fuchsia-300">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Arch</label>
+                                <input name="arch" placeholder="arm64"
+                                       class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-fuchsia-300">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Device Profiles</label>
+                            <input name="device_profiles" placeholder="orin-tensorrt, arm64-jetson"
+                                   class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-fuchsia-300">
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Runtimes</label>
+                                <input name="runtimes" placeholder="onnxruntime, tensorrt"
+                                       class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-fuchsia-300">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Providers</label>
+                                <input name="onnx_providers" placeholder="CUDAExecutionProvider"
+                                       class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-fuchsia-300">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Accelerators</label>
+                            <input name="accelerators" placeholder="nvidia"
+                                   class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-fuchsia-300">
+                        </div>
+                        <button type="submit" class="w-full border border-fuchsia-300 bg-fuchsia-300 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-black hover:bg-fuchsia-200">
+                            Add Runtime Image
+                        </button>
+                    </form>
+                </details>
+
+                <details class="bg-[#0d0f0f] p-5">
+                    <summary class="cursor-pointer list-none">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <h2 class="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-100">Runtime Validation</h2>
+                            <p class="mt-1 text-xs text-zinc-500">Preview or run package checks in a target image.</p>
+                        </div>
+                        <span class="border border-violet-400/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-300">Sim</span>
+                    </div>
+                    </summary>
+                    <form hx-post="/ui/hub/runtime-targets/validate" hx-target="#hub-action-result" class="mt-4 space-y-3">
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Package</label>
+                            <select name="package_id" required class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none focus:border-violet-300">
+                                {% for package in packages %}
+                                <option value="{{ package.package_id }}">{{ package.package_id }} v{{ package.version }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Runtime Image</label>
+                            <select name="runtime_target_id" required class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none focus:border-violet-300">
+                                {% for target in runtime_targets %}
+                                <option value="{{ target.runtime_target_id }}">{{ target.runtime_target_id }} ({{ target.image }})</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Package Path Override</label>
+                            <input name="package_path" placeholder="optional local package path"
+                                   class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-violet-300">
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <label class="flex items-center gap-2 text-xs text-zinc-400">
+                                <input type="hidden" name="dry_run" value="false">
+                                <input type="checkbox" name="dry_run" value="true" checked class="border-zinc-700 bg-zinc-950 text-violet-500">
+                                <span>Dry run</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-xs text-zinc-400">
+                                <input type="checkbox" name="pull_image" value="true" class="border-zinc-700 bg-zinc-950 text-violet-500">
+                                <span>Pull image</span>
+                            </label>
+                        </div>
+                        <label class="flex items-center gap-2 text-xs text-zinc-400">
+                            <input type="hidden" name="allow_unsigned_package" value="false">
+                            <input type="checkbox" name="allow_unsigned_package" value="true" checked class="border-zinc-700 bg-zinc-950 text-violet-500">
+                            <span>Allow unsigned package</span>
+                        </label>
+                        <label class="flex items-center gap-2 text-xs text-zinc-400">
+                            <input type="hidden" name="strict_metadata" value="false">
+                            <input type="checkbox" name="strict_metadata" value="true" checked class="border-zinc-700 bg-zinc-950 text-violet-500">
+                            <span>Strict metadata</span>
+                        </label>
+                        <button type="submit" class="w-full border border-violet-300 bg-violet-300 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-black hover:bg-violet-200">
+                            Preview Or Validate
+                        </button>
+                    </form>
+                </details>
+
+                <details class="bg-[#0d0f0f] p-5">
+                    <summary class="cursor-pointer list-none">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <h2 class="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-100">Assign Rollout</h2>
+                            <p class="mt-1 text-xs text-zinc-500">Target one package to one simulated edge node.</p>
+                        </div>
+                        <span class="border border-amber-400/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-300">Deploy</span>
+                    </div>
+                    </summary>
+                    <form hx-post="/ui/hub/rollouts/assign" hx-target="#hub-action-result" class="mt-4 space-y-3">
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Device</label>
+                            <select name="device_id" required class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none focus:border-amber-300">
+                                {% for device in devices %}
+                                <option value="{{ device.device_id }}">{{ device.device_id }} ({{ device.profile }})</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Package</label>
+                            <select name="package_id" required class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none focus:border-amber-300">
+                                {% for package in packages %}
+                                <option value="{{ package.package_id }}">{{ package.package_id }} v{{ package.version }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Slot</label>
+                                <input name="slot" required value="{{ slots[0].name if slots else 'vision' }}"
+                                       class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none focus:border-amber-300">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Rollout ID</label>
+                                <input name="rollout_id" placeholder="auto"
+                                       class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-amber-300">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Runtime Image</label>
+                            <select name="runtime_target_id" class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none focus:border-amber-300">
+                                <option value="">auto / device inventory</option>
+                                {% for target in runtime_targets %}
+                                <option value="{{ target.runtime_target_id }}">{{ target.runtime_target_id }} ({{ target.image }})</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <label class="flex items-center gap-2 text-xs text-zinc-400">
+                            <input type="hidden" name="require_runtime_validation" value="false">
+                            <input type="checkbox" name="require_runtime_validation" value="true" class="border-zinc-700 bg-zinc-950 text-amber-500">
+                            <span>Require passing runtime validation</span>
+                        </label>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Actor</label>
+                            <input name="actor" value="operator:web-ui"
+                                   class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none focus:border-amber-300">
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <button type="button" hx-post="/ui/hub/compatibility/preview" hx-target="#hub-action-result" hx-include="closest form"
+                                    class="border border-zinc-700 bg-zinc-950 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-200 hover:border-amber-300 hover:text-amber-200">
+                                Preview
+                            </button>
+                            <button type="submit" class="border border-amber-300 bg-amber-300 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-black hover:bg-amber-200">
+                                Assign
+                            </button>
+                        </div>
+                    </form>
+                </details>
+            </div>
+        </div>
+
+        <div class="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <section class="border border-zinc-800 bg-[#090a0a]">
+                <div class="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+                    <h2 class="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-100">Devices</h2>
+                    <span class="font-mono text-xs text-zinc-500">{{ devices|length }} enrolled</span>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full">
+                        <thead>
+                            <tr class="border-b border-zinc-800 bg-[#0d0f0f]">
+                                <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Device</th>
+                                <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Profile</th>
+                                <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Seen</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-zinc-800">
+                            {% for device in devices %}
+                            <tr class="hover:bg-zinc-900/70">
+                                <td class="px-4 py-3 font-mono text-sm text-zinc-100">{{ device.device_id }}</td>
+                                <td class="px-4 py-3 font-mono text-sm text-cyan-300">{{ device.profile }}</td>
+                                <td class="px-4 py-3 font-mono text-xs text-zinc-500">{{ (device.last_seen_at or device.enrolled_at or "")[:19] }}</td>
+                            </tr>
+                            {% endfor %}
+                            {% if not devices %}
+                            <tr><td colspan="3" class="px-4 py-5 text-center text-sm text-zinc-500">No devices enrolled</td></tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="border border-zinc-800 bg-[#090a0a]">
+                <div class="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+                    <h2 class="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-100">Packages</h2>
+                    <span class="font-mono text-xs text-zinc-500">{{ packages|length }} cataloged</span>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full">
+                        <thead>
+                            <tr class="border-b border-zinc-800 bg-[#0d0f0f]">
+                                <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Package</th>
+                                <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Version</th>
+                                <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Profiles</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-zinc-800">
+                            {% for package in packages %}
+                            <tr class="hover:bg-zinc-900/70">
+                                <td class="px-4 py-3 font-mono text-sm text-zinc-100">{{ package.package_id }}</td>
+                                <td class="px-4 py-3 font-mono text-sm text-zinc-300">{{ package.version }}</td>
+                                <td class="px-4 py-3 font-mono text-xs text-cyan-300">{{ package.device_profiles|join(", ") if package.device_profiles else "-" }}</td>
+                            </tr>
+                            {% endfor %}
+                            {% if not packages %}
+                            <tr><td colspan="3" class="px-4 py-5 text-center text-sm text-zinc-500">No packages registered</td></tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+
+        <section class="mt-4 border border-zinc-800 bg-[#090a0a]">
+            <div class="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+                <div>
+                    <h2 class="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-100">Runtime Images</h2>
+                    <p class="mt-1 text-xs text-zinc-500">Container images and runtime inventories available for simulation and edge validation.</p>
+                </div>
+                <span class="font-mono text-xs text-zinc-500">{{ runtime_targets|length }} targets</span>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full">
+                    <thead>
+                        <tr class="border-b border-zinc-800 bg-[#0d0f0f]">
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Target</th>
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Image</th>
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">OS/Arch</th>
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Profiles</th>
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Source</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-zinc-800">
+                        {% for target in runtime_targets %}
+                        <tr class="hover:bg-zinc-900/70">
+                            <td class="px-4 py-3">
+                                <div class="font-mono text-sm text-zinc-100">{{ target.runtime_target_id }}</div>
+                                <div class="mt-1 text-xs text-zinc-500">{{ target.name or "" }}</div>
+                            </td>
+                            <td class="px-4 py-3 font-mono text-xs text-emerald-300">{{ target.image }}</td>
+                            <td class="px-4 py-3 font-mono text-xs text-zinc-300">{{ target.os or "linux" }}/{{ target.arch or "-" }}</td>
+                            <td class="px-4 py-3 font-mono text-xs text-cyan-300">{{ target.device_profiles|join(", ") if target.device_profiles else "any" }}</td>
+                            <td class="px-4 py-3">
+                                <span class="border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-xs text-zinc-300">{{ target.source or "byo" }}</span>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% if not runtime_targets %}
+                        <tr><td colspan="5" class="px-4 py-5 text-center text-sm text-zinc-500">No runtime images registered</td></tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="mt-4 border border-zinc-800 bg-[#090a0a]">
+            <div class="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+                <div>
+                    <h2 class="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-100">Benchmark Evidence</h2>
+                    <p class="mt-1 text-xs text-zinc-500">Hardware-aware performance records published by edge devices.</p>
+                </div>
+                <span class="font-mono text-xs text-zinc-500">{{ benchmarks|length }} recent</span>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full">
+                    <thead>
+                        <tr class="border-b border-zinc-800 bg-[#0d0f0f]">
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Benchmark</th>
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Device</th>
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Package</th>
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Runtime</th>
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Model</th>
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">p95</th>
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Throughput</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-zinc-800">
+                        {% for benchmark in benchmarks %}
+                        {% set result = benchmark.result or {} %}
+                        {% set latency = result.latency_ms or {} %}
+                        {% set throughput = result.throughput or {} %}
+                        <tr class="hover:bg-zinc-900/70">
+                            <td class="px-4 py-3 font-mono text-xs text-zinc-100">{{ benchmark.benchmark_id }}</td>
+                            <td class="px-4 py-3 font-mono text-sm text-zinc-300">{{ benchmark.device_id or "-" }}</td>
+                            <td class="px-4 py-3 font-mono text-sm text-zinc-300">{{ benchmark.package_id or "-" }}</td>
+                            <td class="px-4 py-3 font-mono text-xs text-fuchsia-300">{{ benchmark.runtime_target_id or "auto" }}</td>
+                            <td class="px-4 py-3 font-mono text-sm text-cyan-300">{{ benchmark.model_id or result.model_id or "-" }}</td>
+                            <td class="px-4 py-3 font-mono text-sm text-amber-200">{{ latency.p95 if latency.p95 is not none else "-" }}</td>
+                            <td class="px-4 py-3 font-mono text-sm text-emerald-300">{{ throughput.inferences_per_second if throughput.inferences_per_second is not none else "-" }}</td>
+                        </tr>
+                        {% endfor %}
+                        {% if not benchmarks %}
+                        <tr><td colspan="7" class="px-4 py-5 text-center text-sm text-zinc-500">No benchmark evidence recorded</td></tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="mt-4 border border-zinc-800 bg-[#090a0a]">
+            <div class="flex flex-col gap-3 border-b border-zinc-800 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                    <h2 class="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-100">Rollouts</h2>
+                    <p class="mt-1 text-xs text-zinc-500">Targeted deployments and local edge actions.</p>
+                </div>
+                <form hx-post="/ui/hub/evidence/export" hx-target="#evidence-preview">
+                    <button type="submit" class="border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-200 hover:border-emerald-400 hover:text-emerald-300">Preview Evidence</button>
+                </form>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full">
+                    <thead>
+                        <tr class="border-b border-zinc-800 bg-[#0d0f0f]">
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Rollout</th>
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Device</th>
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Package</th>
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Slot</th>
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Runtime</th>
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">State</th>
+                            <th class="px-4 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-zinc-800">
+                        {% for rollout in rollouts %}
+                        <tr class="hover:bg-zinc-900/70">
+                            <td class="px-4 py-3 font-mono text-sm text-zinc-100">{{ rollout.rollout_id }}</td>
+                            <td class="px-4 py-3 font-mono text-sm text-zinc-300">{{ rollout.device_id }}</td>
+                            <td class="px-4 py-3 font-mono text-sm text-zinc-300">{{ rollout.package_id }}</td>
+                            <td class="px-4 py-3 font-mono text-sm text-cyan-300">{{ rollout.slot or "-" }}</td>
+                            <td class="px-4 py-3 font-mono text-xs text-fuchsia-300">{{ rollout.runtime_target_id or "auto" }}</td>
+                            <td class="px-4 py-3 text-sm">
+                                <span class="border border-amber-400/40 bg-amber-400/10 px-2 py-1 font-mono text-xs text-amber-200">{{ rollout.state }}</span>
+                            </td>
+                            <td class="px-4 py-3 text-sm">
+                                <div class="flex flex-wrap gap-2">
+                                    <form hx-post="/ui/hub/rollouts/{{ rollout.rollout_id }}/apply" hx-target="#hub-action-result">
+                                        <input type="hidden" name="actor" value="operator:web-ui">
+                                        <button type="submit" class="border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-emerald-300 hover:bg-emerald-500 hover:text-black">Apply local</button>
+                                    </form>
+                                    <form hx-post="/ui/hub/rollouts/{{ rollout.rollout_id }}/rollback" hx-target="#hub-action-result">
+                                        <input type="hidden" name="actor" value="operator:web-ui">
+                                        <input type="hidden" name="reason" value="operator requested rollback">
+                                        <button type="submit" class="border border-red-400/50 bg-red-400/10 px-2 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-red-300 hover:bg-red-400 hover:text-black">Rollback local</button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% if not rollouts %}
+                        <tr><td colspan="7" class="px-4 py-5 text-center text-sm text-zinc-500">No rollouts assigned</td></tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <div id="evidence-preview" class="mt-4 overflow-x-auto border border-zinc-800 bg-[#090a0a] text-zinc-200"></div>
+
+        <section class="mt-4 border border-zinc-800 bg-[#090a0a]">
+            <div class="border-b border-zinc-800 px-4 py-3">
+                <h2 class="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-100">Air-gap Bundle</h2>
+                <p class="mt-1 text-xs text-zinc-500">Export portable Hub state for disconnected sites, or import a bundle received from another TEMMS node.</p>
+            </div>
+            <div class="grid grid-cols-1 gap-px bg-zinc-800 lg:grid-cols-2">
+                <div class="bg-[#0d0f0f] p-4">
+                    <form hx-post="/ui/hub/airgap/export" hx-target="#airgap-preview" class="space-y-3">
+                        <label class="flex items-center gap-2 text-xs text-zinc-400">
+                            <input type="checkbox" name="include_packages" value="true" class="border-zinc-700 bg-zinc-950 text-cyan-500">
+                            <span>Include package artifacts</span>
+                        </label>
+                        <button type="submit" class="w-full border border-cyan-300 bg-cyan-300 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-black hover:bg-cyan-200">
+                            Export Bundle
+                        </button>
+                    </form>
+                </div>
+                <div class="bg-[#0d0f0f] p-4">
+                    <form hx-post="/ui/hub/airgap/import" hx-target="#hub-action-result" class="space-y-3">
+                        <textarea name="bundle_json" required rows="5" placeholder='{"schema_version":"temms-hub-lite-bundle/v1",...}'
+                                  class="block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-xs text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-cyan-300"></textarea>
+                        <button type="submit" class="w-full border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-200 hover:border-cyan-300 hover:text-cyan-200">
+                            Import Bundle
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </section>
+
+        <div id="airgap-preview" class="mt-4 overflow-x-auto border border-zinc-800 bg-[#090a0a] text-zinc-200"></div>
+    </div>
+</div>
+{% endblock %}

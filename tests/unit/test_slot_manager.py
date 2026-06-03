@@ -9,6 +9,8 @@ Tests:
 - Decision audit log
 """
 
+import json
+
 import pytest
 import time
 from datetime import datetime, timedelta
@@ -134,12 +136,21 @@ class TestModelActivation:
             trigger_type="startup",
             trigger_detail="default_model",
             conditions={"temp": 50},
+            audit_metadata={
+                "package_id": "pkg-a",
+                "model_version": "1.0.0",
+                "provenance": {"source": "mlflow"},
+            },
         )
 
         decisions = slot_manager.get_decision_log("vision")
         assert len(decisions) == 1
         assert decisions[0]["to_model"] == "model-a"
         assert decisions[0]["trigger_type"] == "startup"
+        audit_metadata = json.loads(decisions[0]["audit_metadata"])
+        assert audit_metadata["package_id"] == "pkg-a"
+        assert audit_metadata["model_version"] == "1.0.0"
+        assert audit_metadata["provenance"]["source"] == "mlflow"
 
     def test_activate_model_from_previous(self, slot_manager):
         """Second activation logs from_model correctly."""

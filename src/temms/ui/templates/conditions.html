@@ -65,7 +65,7 @@
                     </td>
                     <td class="px-4 py-3 text-sm">{{ c.priority }}</td>
                     <td class="px-4 py-3 text-sm">{{ "%.2f"|format(c.confidence) }}</td>
-                    <td class="px-4 py-3 text-sm text-gray-500">{{ c.updated_at[:19] if c.updated_at else "-" }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-500">{{ c.updated_at.strftime("%Y-%m-%dT%H:%M:%S") if c.updated_at else "-" }}</td>
                 </tr>
                 {% endfor %}
                 {% if not conditions %}

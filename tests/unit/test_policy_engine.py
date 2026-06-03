@@ -263,6 +263,67 @@ class TestPolicyEvalResultFields:
         assert "my-policy" in result.triggered_by
         assert "my-rule" in result.triggered_by
 
+    def test_explanation_records_matched_rule_condition_values(
+        self, engine, condition_store
+    ):
+        condition_store.set(
+            "environmental.atmospheric.visibility_m",
+            50,
+            "sensor",
+            100,
+            confidence=0.98,
+        )
+
+        rule = _make_rule(
+            name="fog-rule",
+            switch_to="fog-model",
+            all_conditions=[
+                Condition(
+                    metric="environmental.atmospheric.visibility_m",
+                    operator="lt",
+                    value=100,
+                    min_confidence=0.9,
+                )
+            ],
+        )
+        engine.load_policy(_make_policy(name="weather-policy", rules=[rule]))
+
+        result = engine.evaluate_slot("vision")
+
+        assert result.explanation["reason"] == "rule_matched"
+        matched_rule = result.explanation["matched_rule"]
+        assert matched_rule["policy"] == "weather-policy"
+        assert matched_rule["rule"] == "fog-rule"
+        condition = matched_rule["conditions"]["items"][0]
+        assert condition["metric"] == "environmental.atmospheric.visibility_m"
+        assert condition["operator"] == "lt"
+        assert condition["expected"] == 100
+        assert condition["actual"] == 50
+        assert condition["source"] == "sensor"
+        assert condition["priority"] == 100
+        assert condition["confidence"] == 0.98
+        assert condition["matched"] is True
+
+    def test_explanation_records_non_matching_conditions(self, engine, condition_store):
+        condition_store.set("temp", 50, "sensor", 100)
+
+        rule = _make_rule(
+            name="hot-rule",
+            switch_to="hot-model",
+            all_conditions=[Condition(metric="temp", operator="gte", value=75)],
+        )
+        engine.load_policy(_make_policy(name="thermal-policy", rules=[rule]))
+
+        result = engine.evaluate_slot("vision")
+
+        assert result.switch_to is None
+        assert result.explanation["reason"] == "no_matching_rule"
+        condition = result.explanation["evaluated_rules"][0]["conditions"]["items"][0]
+        assert condition["actual"] == 50
+        assert condition["expected"] == 75
+        assert condition["matched"] is False
+        assert condition["reason"] == "operator_mismatch"
+
 
 # ── Priority ordering ───────────────────────────────────────────────
 

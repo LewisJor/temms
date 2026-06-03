@@ -1,7 +1,8 @@
 .PHONY: help install dev-install sim-install test clean format lint build \
-       docker-up docker-down docker-clean docker-build docker-logs \
+       docker-up docker-down docker-clean docker-build docker-build-runtime docker-buildx docker-logs \
        generate-models sim-weather sim-override sim-visual sim-headless test-e2e \
-       init-local run-daemon
+       mvp-smoke mvp-acceptance docker-acceptance docker-acceptance-up \
+       docker-acceptance-down init-local run-daemon
 
 # ==============================================================================
 #  TEMMS — Makefile
@@ -16,10 +17,16 @@ help:
 	@echo ""
 	@echo "  Getting Started:"
 	@echo "    make dev-install       Install TEMMS + dev dependencies"
-	@echo "    make test              Run all tests (268 tests)"
+	@echo "    make test              Run all tests"
+	@echo "    make mvp-smoke         Run signed Hub Lite air-gap and online rollout smoke tests"
+	@echo "    make mvp-acceptance    Run multi-edge MVP acceptance flow"
 	@echo ""
 	@echo "  Docker Sim Environment:"
 	@echo "    make docker-up         Start everything (MLflow + TEMMS daemon)"
+	@echo "    make docker-build-runtime Build local default runtime target image"
+	@echo "    make docker-buildx     Build multi-arch agent image with buildx bake"
+	@echo "    make docker-acceptance     Run containerized Hub + two edge acceptance"
+	@echo "    make docker-acceptance-up  Start Hub + two edge agent containers"
 	@echo "    make docker-down       Stop all containers"
 	@echo "    make docker-clean      Nuke volumes, start fresh"
 	@echo "    make docker-logs       Tail daemon logs"
@@ -58,6 +65,12 @@ test:
 test-e2e:
 	pytest tests/integration/test_e2e_docker.py -v
 
+mvp-smoke:
+	uv run pytest tests/integration/test_hub_lite_mvp_flow.py tests/integration/test_hub_lite_online_sync.py tests/integration/test_mvp_multi_vm_acceptance.py -q
+
+mvp-acceptance:
+	uv run pytest tests/integration/test_mvp_multi_vm_acceptance.py -q
+
 test-sim:
 	pytest tests/test_sim_weather.py tests/test_sim_scenarios.py -v
 
@@ -85,6 +98,12 @@ build:
 docker-build:
 	docker compose build
 
+docker-build-runtime:
+	docker build --platform linux/amd64 --build-arg TEMMS_EXTRAS=inference -t temms/agent:inference-amd64 .
+
+docker-buildx:
+	docker buildx bake -f docker-bake.hcl
+
 docker-up:
 	docker compose up --build -d
 	@echo ""
@@ -101,6 +120,22 @@ docker-up:
 
 docker-down:
 	docker compose down
+
+docker-acceptance-up:
+	docker compose -f deploy/docker-compose.acceptance.yml up --build -d
+	@echo ""
+	@echo "  Acceptance agents:"
+	@echo "    Hub:         http://localhost:$${TEMMS_ACCEPTANCE_HUB_PORT:-18080}"
+	@echo "    Online edge: http://localhost:$${TEMMS_ACCEPTANCE_ONLINE_PORT:-18081}"
+	@echo "    Airgap edge: http://localhost:$${TEMMS_ACCEPTANCE_AIRGAP_PORT:-18082}"
+	@echo ""
+	@echo "  Run deploy/multi-vm-acceptance.sh connected-lab with package paths under /acceptance-packages."
+
+docker-acceptance-down:
+	docker compose -f deploy/docker-compose.acceptance.yml down
+
+docker-acceptance:
+	deploy/docker-acceptance-run.sh
 
 docker-clean:
 	docker compose down -v
