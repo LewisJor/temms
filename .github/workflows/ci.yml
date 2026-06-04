@@ -77,9 +77,43 @@ jobs:
 
       - name: Run containerized edge acceptance
         env:
+          KEEP_CONTAINERS: "true"
           PYTHON_CMD: uv run python
           WAIT_SECONDS: "120"
         run: make docker-acceptance
+
+      - name: Collect acceptance diagnostics
+        if: always()
+        run: |
+          mkdir -p temms-mvp-acceptance
+          docker compose -f deploy/docker-compose.acceptance.yml ps > temms-mvp-acceptance/docker-compose-ps.txt || true
+          docker compose -f deploy/docker-compose.acceptance.yml logs --no-color > temms-mvp-acceptance/docker-compose.log || true
+          docker exec temms-acceptance-hub sh -lc 'id && ls -la /var/lib/temms && find /var/lib/temms -maxdepth 2 -type d -print -exec ls -ld {} \;' > temms-mvp-acceptance/hub-files.txt 2>&1 || true
+          docker exec temms-acceptance-edge-airgap sh -lc 'id && ls -la /var/lib/temms && find /var/lib/temms -maxdepth 2 -type d -print -exec ls -ld {} \;' > temms-mvp-acceptance/airgap-files.txt 2>&1 || true
+          if [ -f temms-mvp-acceptance/hub-lite-airgap-bundle.json ]; then
+            uv run python - <<'PY' > temms-mvp-acceptance/airgap-bundle-summary.json
+          import json
+          from pathlib import Path
+
+          bundle = json.loads(Path("temms-mvp-acceptance/hub-lite-airgap-bundle.json").read_text())
+          artifacts = bundle.get("package_artifacts") or {}
+          print(json.dumps({
+              "schema_version": bundle.get("schema_version"),
+              "packages": sorted((bundle.get("hub_lite") or {}).get("packages", {}).keys()),
+              "rollouts": sorted((bundle.get("hub_lite") or {}).get("rollouts", {}).keys()),
+              "artifact_count": len(artifacts),
+              "artifacts": {
+                  package_id: {
+                      "filename": artifact.get("filename"),
+                      "sha256": artifact.get("sha256"),
+                      "source_sha256": artifact.get("source_sha256"),
+                      "content_base64_len": len(artifact.get("content_base64") or ""),
+                  }
+                  for package_id, artifact in artifacts.items()
+              },
+          }, indent=2, sort_keys=True))
+          PY
+          fi
 
       - name: Upload acceptance evidence
         if: always()
@@ -88,6 +122,8 @@ jobs:
           name: temms-acceptance-evidence
           path: |
             temms-mvp-acceptance/*.json
+            temms-mvp-acceptance/*.log
+            temms-mvp-acceptance/*.txt
           if-no-files-found: ignore
 
       - name: Clean up acceptance stack

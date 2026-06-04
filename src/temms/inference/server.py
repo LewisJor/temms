@@ -1964,6 +1964,9 @@ async def import_airgap_bundle(
         counts = hub.import_bundle(bundle)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Air-gap bundle import failed")
+        raise HTTPException(status_code=500, detail=f"Air-gap bundle import failed: {e}")
     return {"status": "success", "imported": counts}
 
 

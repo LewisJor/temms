@@ -95,14 +95,26 @@ curl_json() {
     local url="$2"
     local token="$3"
     local data="${4:-}"
-    local args=(-fsS -X "${method}" -H "Content-Type: application/json")
+    local args=(-sS -X "${method}" -H "Content-Type: application/json")
+    local response_file
+    local status
+    response_file="$(mktemp)"
     if [ -n "${token}" ]; then
         args+=(-H "X-TEMMS-Token: ${token}")
     fi
     if [ -n "${data}" ]; then
         args+=(-d "${data}")
     fi
-    curl "${args[@]}" "${url}"
+    status="$(curl "${args[@]}" -w "%{http_code}" -o "${response_file}" "${url}")"
+    if [ "${status}" -lt 200 ] || [ "${status}" -ge 300 ]; then
+        echo "error: ${method} ${url} returned HTTP ${status}" >&2
+        cat "${response_file}" >&2
+        echo >&2
+        rm -f "${response_file}"
+        return 22
+    fi
+    cat "${response_file}"
+    rm -f "${response_file}"
 }
 
 curl_json_file() {
@@ -110,12 +122,24 @@ curl_json_file() {
     local url="$2"
     local token="$3"
     local path="$4"
-    local args=(-fsS -X "${method}" -H "Content-Type: application/json")
+    local args=(-sS -X "${method}" -H "Content-Type: application/json")
+    local response_file
+    local status
+    response_file="$(mktemp)"
     if [ -n "${token}" ]; then
         args+=(-H "X-TEMMS-Token: ${token}")
     fi
     args+=("--data-binary" "@${path}")
-    curl "${args[@]}" "${url}"
+    status="$(curl "${args[@]}" -w "%{http_code}" -o "${response_file}" "${url}")"
+    if [ "${status}" -lt 200 ] || [ "${status}" -ge 300 ]; then
+        echo "error: ${method} ${url} returned HTTP ${status}" >&2
+        cat "${response_file}" >&2
+        echo >&2
+        rm -f "${response_file}"
+        return 22
+    fi
+    cat "${response_file}"
+    rm -f "${response_file}"
 }
 
 json_payload() {

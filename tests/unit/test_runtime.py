@@ -14,6 +14,7 @@ from temms.core.loader import ModelLoader, RuntimeType
 from temms.core.runtime_profiles import (
     RuntimeCapabilities,
     _infer_device_profile,
+    detect_runtime_capabilities,
     known_device_profiles,
     normalize_device_profile,
     package_runtime_constraints,
@@ -453,6 +454,13 @@ class TestRuntimeProfiles:
         )
 
         assert capabilities.to_dict()["arch"] == "arm64"
+
+    def test_detect_runtime_capabilities_honors_device_profile_env(self, monkeypatch):
+        monkeypatch.setenv("TEMMS_DEVICE_PROFILE", "rpi5-tflite")
+
+        capabilities = detect_runtime_capabilities()
+
+        assert capabilities.device_profile == "rpi5-tflite"
 
     def test_infer_device_profile_for_mvp_edge_boards(self):
         assert (

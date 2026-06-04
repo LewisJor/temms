@@ -5,6 +5,7 @@ Runtime and device capability helpers for edge compatibility checks.
 from __future__ import annotations
 
 import importlib.util
+import os
 import platform
 import shutil
 import subprocess
@@ -216,13 +217,15 @@ def detect_runtime_capabilities() -> RuntimeCapabilities:
     accelerators = _detect_accelerators()
     machine = platform.machine() or "unknown"
     board_model = _detect_board_model()
+    device_profile = normalize_device_profile(os.environ.get("TEMMS_DEVICE_PROFILE"))
 
     return RuntimeCapabilities(
         os=platform.platform(),
         machine=machine,
         arch=_normalize_arch(machine),
         python=sys.version.split()[0],
-        device_profile=_infer_device_profile(machine, runtimes, accelerators, board_model),
+        device_profile=device_profile
+        or _infer_device_profile(machine, runtimes, accelerators, board_model),
         board_model=board_model,
         runtimes=runtimes,
         accelerators=accelerators,
