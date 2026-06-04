@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+      - codex-mvp-demo-edge-platform
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python tests and package build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.11"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev --extra inference
+
+      - name: Build package
+        run: uv build
+
+      - name: Run unit and MVP acceptance tests
+        run: |
+          uv run pytest \
+            tests/unit \
+            tests/integration/test_hub_lite_mvp_flow.py \
+            tests/integration/test_hub_lite_online_sync.py \
+            tests/integration/test_mvp_multi_vm_acceptance.py \
+            -q
+
+  docker:
+    name: Docker image and edge acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install host dependencies
+        run: uv sync --locked --extra dev --extra inference
+
+      - name: Build TEMMS Docker image
+        run: docker build --build-arg TEMMS_EXTRAS=inference -t temms/agent:ci .
+
+      - name: Run containerized edge acceptance
+        env:
+          PYTHON_CMD: uv run python
+          WAIT_SECONDS: "120"
+        run: make docker-acceptance
+
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: temms-acceptance-evidence
+          path: |
+            temms-mvp-acceptance/*.json
+          if-no-files-found: ignore
+
+      - name: Clean up acceptance stack
+        if: always()
+        run: make docker-acceptance-down
