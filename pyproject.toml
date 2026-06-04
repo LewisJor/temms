@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "temms"
 version = "0.1.0"
-description = "Tactical Edge Model Management System - Offline-first ML model management for DDIL environments"
+description = "Adaptive inference control and decision evidence for disconnected edge devices"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "TEMMS Team"}
 ]
-keywords = ["ml", "edge", "autonomous", "offline", "model-management"]
+keywords = ["ml", "edge", "autonomous", "offline", "adaptive-inference", "decision-evidence"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -44,6 +44,12 @@ dev = [
     "black>=23.0.0",
     "ruff>=0.1.0",
     "mypy>=1.0.0",
+]
+
+docs = [
+    "sphinx>=8.0.0",
+    "furo>=2024.8.6",
+    "myst-parser>=4.0.0",
 ]
 
 # MLflow for local model registry
@@ -95,10 +101,10 @@ sim-visual = [
 temms = "temms.__main__:app"
 
 [project.urls]
-Homepage = "https://github.com/yourusername/temms"
-Documentation = "https://github.com/yourusername/temms/docs"
-Repository = "https://github.com/yourusername/temms"
-Issues = "https://github.com/yourusername/temms/issues"
+Homepage = "https://github.com/LewisJor/temms"
+Documentation = "https://lewisjor.github.io/temms/"
+Repository = "https://github.com/LewisJor/temms"
+Issues = "https://github.com/LewisJor/temms/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

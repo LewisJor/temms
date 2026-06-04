@@ -100,19 +100,95 @@ class TestDeployArtifacts:
 
         assert 'if [ "$#" -gt 0 ]; then' in entrypoint
         assert 'exec "$@"' in entrypoint
-        assert entrypoint.index('if [ "$#" -gt 0 ]; then') < entrypoint.index("TEMMS Sim Environment")
+        assert entrypoint.index('if [ "$#" -gt 0 ]; then') < entrypoint.index(
+            "TEMMS Sim Environment"
+        )
 
     def test_docker_compose_sim_opts_into_sim_dependencies(self):
         compose = (ROOT / "docker-compose.yml").read_text()
 
         assert "TEMMS_EXTRAS: sim" in compose
+        assert "python:3.11-slim" in compose
+        assert "python:3.10-slim" not in compose
+
+    def test_local_mlflow_setup_uses_python_311_or_newer(self):
+        setup = (ROOT / "scripts" / "setup-local-mlflow.sh").read_text()
+
+        assert "Python 3.11+" in setup
+        assert "python:3.11-slim" in setup
+        assert "Python 3.10" not in setup
+        assert "python:3.10-slim" not in setup
+
+    def test_ci_opts_javascript_actions_into_node24(self):
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+
+        assert 'FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"' in workflow
+        assert workflow.count("actions/checkout@v6") == 3
+        assert workflow.count("actions/setup-python@v6") == 3
+        assert workflow.count("astral-sh/setup-uv@v7") == 3
+        assert "actions/upload-artifact@v6" in workflow
+        assert "actions/checkout@v4" not in workflow
+        assert "actions/setup-python@v5" not in workflow
+        assert "astral-sh/setup-uv@v5" not in workflow
+        assert "actions/upload-artifact@v4" not in workflow
+        assert "ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION" not in workflow
+
+    def test_docs_use_sphinx_furo_and_markdown_sources(self):
+        pyproject = (ROOT / "pyproject.toml").read_text()
+        conf = (ROOT / "docs" / "conf.py").read_text()
+        index = (ROOT / "docs" / "index.md").read_text()
+
+        assert "sphinx>=8.0.0" in pyproject
+        assert "furo>=2024.8.6" in pyproject
+        assert "myst-parser>=4.0.0" in pyproject
+        assert 'html_theme = "furo"' in conf
+        assert '"myst_parser"' in conf
+        assert 'html_baseurl = "https://lewisjor.github.io/temms/"' in conf
+        assert "```{toctree}" in index
+        assert "hub-lite" in index
+        assert "policy-reference" in index
+
+    def test_docs_workflow_builds_on_pr_and_deploys_pages_from_main(self):
+        workflow = (ROOT / ".github" / "workflows" / "docs.yml").read_text()
+
+        assert "name: Docs" in workflow
+        assert "pull_request:" in workflow
+        assert "uv sync --locked --extra docs" in workflow
+        assert "uv run sphinx-build -W -b html docs docs/_build/html" in workflow
+        assert "actions/checkout@v6" in workflow
+        assert "astral-sh/setup-uv@v7" in workflow
+        assert "actions/setup-python@v6" in workflow
+        assert "actions/configure-pages@v6" in workflow
+        assert "actions/upload-pages-artifact@v5" in workflow
+        assert "actions/deploy-pages@v5" in workflow
+        assert "github.ref == 'refs/heads/main'" in workflow
+        assert "pages: write" in workflow
+        assert "id-token: write" in workflow
+        assert "actions/checkout@v4" not in workflow
+        assert "actions/setup-python@v5" not in workflow
+        assert "astral-sh/setup-uv@v5" not in workflow
+        assert "ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION" not in workflow
+
+    def test_ci_compose_smoke_publishes_html_summary(self):
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        report_script = (ROOT / "scripts" / "compose_smoke_report.py").read_text()
+        compose_job = workflow.split("  compose-smoke:", maxsplit=1)[1]
+
+        assert "Publish compose smoke summary" in compose_job
+        assert "uv run python scripts/compose_smoke_report.py || true" in compose_job
+        assert "actions/upload-artifact@v4" not in compose_job
+        assert "temms-compose-smoke" not in compose_job
+        assert "GITHUB_STEP_SUMMARY" in report_script
+        assert "<h2>TEMMS Compose Smoke</h2>" in report_script
+        assert "<details><summary>Services</summary>" in report_script
+        assert "<details><summary>Images</summary>" in report_script
 
     def test_docker_entrypoint_imports_unsigned_seed_package(self):
         entrypoint = (ROOT / "scripts" / "docker-entrypoint.sh").read_text()
 
         assert "temms import /app/examples/package-example/" in entrypoint
         assert "--allow-unsigned-package" in entrypoint
-        assert "--default model-yolov8-daylight-001" in entrypoint
+        assert "--default yolov8-daylight" in entrypoint
         assert "--default-model" not in entrypoint
 
     def test_docker_acceptance_compose_defines_three_agents(self):
@@ -183,7 +259,7 @@ class TestDeployArtifacts:
         entrypoint = (ROOT / "scripts" / "docker-entrypoint.sh").read_text()
 
         assert "temms slot create vision" in entrypoint
-        assert "--default model-yolov8-daylight-001" in entrypoint
+        assert "--default yolov8-daylight" in entrypoint
         assert "--default-model" not in entrypoint
 
     def test_multi_vm_acceptance_harness_documents_real_vm_flow(self):

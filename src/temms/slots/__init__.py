@@ -1,5 +1,5 @@
 """
-Multi-slot model management for autonomous systems.
+Multi-slot model activation control for adaptive inference systems.
 """
 
 from temms.slots.manager import SlotManager, Slot, SlotState

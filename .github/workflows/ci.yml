@@ -15,6 +15,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   python:
     name: Python tests and package build
@@ -23,15 +26,15 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -57,15 +60,15 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -117,7 +120,7 @@ jobs:
 
       - name: Upload acceptance evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: temms-acceptance-evidence
           path: |
@@ -129,3 +132,45 @@ jobs:
       - name: Clean up acceptance stack
         if: always()
         run: make docker-acceptance-down
+
+  compose-smoke:
+    name: Ubuntu 22.04 compose smoke
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install host test dependencies
+        run: uv sync --locked --extra dev --extra inference
+
+      - name: Start TEMMS compose stack
+        env:
+          MLFLOW_HOST_PORT: "5001"
+        run: docker compose up --build -d
+
+      - name: Run compose smoke checks
+        env:
+          TEMMS_COMPOSE_SMOKE: "1"
+          TEMMS_SMOKE_TEMMS_URL: "http://127.0.0.1:8080"
+          TEMMS_SMOKE_MLFLOW_URL: "http://127.0.0.1:5001"
+        run: uv run pytest tests/integration/test_compose_stack_smoke.py -q
+
+      - name: Publish compose smoke summary
+        if: always()
+        run: uv run python scripts/compose_smoke_report.py || true
+
+      - name: Clean up compose stack
+        if: always()
+        run: docker compose down -v

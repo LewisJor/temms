@@ -9,6 +9,8 @@
 #  "make help" shows all targets. "make sim-visual" is the one you want.
 # ==============================================================================
 
+export MLFLOW_HOST_PORT ?= 5001
+
 help:
 	@echo ""
 	@echo "  ╔════════════════════════════════════════════════════════════════╗"
@@ -112,7 +114,7 @@ docker-up:
 	@echo "  │                                         │"
 	@echo "  │  TEMMS UI:    http://localhost:8080/ui/  │"
 	@echo "  │  TEMMS API:   http://localhost:8080/v1/  │"
-	@echo "  │  MLflow UI:   http://localhost:5000      │"
+	@printf "  │  MLflow UI:   http://localhost:%-9s │\n" "$(MLFLOW_HOST_PORT)"
 	@echo "  │  API Docs:    http://localhost:8080/docs │"
 	@echo "  │                                         │"
 	@echo "  │  Next: make sim-headless                │"

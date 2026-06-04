@@ -1,6 +1,9 @@
 # Example TEMMS Package
 
-This is an example package structure for TEMMS. In production, packages would be created by the TEMMS Hub from MLflow models.
+This is an example package structure for TEMMS. Packages can come from TEMMS
+Hub, an existing registry, build pipeline, package/evidence exchange, or air-gap
+export workflow. TEMMS consumes the package locally and decides which candidate
+model should run.
 
 ## Structure
 

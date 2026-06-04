@@ -14,7 +14,7 @@ services:
     restart: unless-stopped
 
   mlflow-server:
-    image: python:3.10-slim
+    image: python:3.11-slim
     container_name: temms-mlflow-server
     depends_on:
       - mlflow-db
@@ -25,7 +25,7 @@ services:
       - mlflow-artifacts:/mlflow/artifacts
       - ./scripts/mlflow-entrypoint.sh:/entrypoint.sh
     ports:
-      - "5000:5000"
+      - "${MLFLOW_HOST_PORT:-5001}:5000"
     networks:
       - temms-local
     restart: unless-stopped

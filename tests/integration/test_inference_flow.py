@@ -8,6 +8,7 @@ to model switching and inference.
 import pytest
 import asyncio
 from pathlib import Path
+from unittest.mock import AsyncMock
 from fastapi.testclient import TestClient
 
 from temms.core.cache import ModelCache, ModelFormat
@@ -18,6 +19,7 @@ from temms.policy.engine import PolicyEngine
 from temms.inference.runtime import InferenceRuntime
 from temms.inference.server import create_app
 from temms.daemon.service import TEMMSDaemon, DaemonConfig
+from temms.daemon.pending_ops import PendingOperationsStore
 
 
 @pytest.fixture
@@ -89,6 +91,57 @@ class TestConditionToPolicyFlow:
         assert condition is not None
         assert condition.value == 80.0
         assert condition.priority == 1000  # Operator priority
+
+    def test_explicit_slot_evaluate_applies_local_decision(
+        self,
+        full_client,
+        full_system,
+        sample_model_file,
+        sample_policy_yaml,
+    ):
+        """Test the explicit local adaptive decision API."""
+        full_system["policy_engine"].load_policy_from_file(sample_policy_yaml)
+        dest_path, sha256, size = full_system["model_storage"].store_model(
+            sample_model_file,
+            "test-model-tiny-v1",
+            verify=True,
+        )
+        full_system["model_cache"].add_cached_model(
+            model_id="test-model-tiny-v1",
+            name="test-model-tiny",
+            version="1.0.0",
+            format=ModelFormat.ONNX,
+            path=dest_path,
+            sha256=sha256,
+            size_bytes=size,
+            package_id="test-package",
+        )
+        full_system["slot_manager"].create_slot(
+            name="vision",
+            description="Vision slot",
+            required=True,
+        )
+        full_system["condition_store"].set(
+            path="platform.compute.cpu_temp_c",
+            value=82.0,
+            source="sensor",
+            priority=100,
+        )
+        full_system["inference_runtime"].load_model = AsyncMock(return_value=True)
+
+        response = full_client.post(
+            "/v1/control/slots/vision/evaluate",
+            json={"apply": True},
+        )
+
+        assert response.status_code == 200
+        decision = response.json()
+        assert decision["status"] == "activated"
+        assert decision["activated_model"] == "test-model-tiny-v1"
+        assert (
+            full_system["slot_manager"].get_slot("vision").active_model_id
+            == "test-model-tiny-v1"
+        )
 
     def test_policy_evaluation_with_matching_condition(
         self, full_client, full_system, sample_policy_yaml
@@ -234,6 +287,76 @@ class TestDecisionLogging:
         assert decisions[0]["to_model"] == "model-b"
         assert decisions[0]["trigger_type"] == "policy"
         assert decisions[0]["trigger_detail"] == "thermal-adaptive"
+
+    def test_evidence_endpoint_exports_decision_bundle(self, full_client, full_system):
+        """Test that the API exports portable decision evidence."""
+        full_system["slot_manager"].create_slot(
+            name="vision",
+            description="Vision",
+            required=True,
+        )
+        full_system["condition_store"].set(
+            path="environmental.visibility_m",
+            value=50,
+            source="operator",
+            priority=1000,
+        )
+        full_system["slot_manager"].activate_model(
+            slot_name="vision",
+            model_id="model-lowlight",
+            trigger_type="policy",
+            trigger_detail="weather-adaptive/fog",
+            conditions=full_system["condition_store"].get_snapshot(),
+        )
+
+        response = full_client.get("/v1/evidence?slot=vision")
+
+        assert response.status_code == 200
+        bundle = response.json()
+        assert bundle["schema_version"] == "temms-evidence-bundle/v1"
+        assert bundle["decisions"][0]["to_model"] == "model-lowlight"
+        assert (
+            bundle["decisions"][0]["conditions_snapshot"]["environmental"]["visibility_m"]
+            == 50
+        )
+        assert bundle["integrity"]["payload_sha256"]
+
+
+class TestOfflineLocalControl:
+    """Test offline control keeps applying locally while buffering for sync."""
+
+    def test_offline_condition_update_applies_locally_and_buffers(
+        self,
+        full_system,
+        temp_dir,
+    ):
+        pending = PendingOperationsStore(temp_dir / "pending_operations.json")
+        app = create_app(
+            slot_manager=full_system["slot_manager"],
+            condition_store=full_system["condition_store"],
+            policy_engine=full_system["policy_engine"],
+            model_cache=full_system["model_cache"],
+            model_storage=full_system["model_storage"],
+            inference_runtime=full_system["inference_runtime"],
+            offline_mode=True,
+            pending_operations=pending,
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/v1/control/conditions",
+            json={"conditions": {"operational.mission.phase": "egress"}},
+        )
+
+        assert response.status_code == 200
+        condition = full_system["condition_store"].get("operational.mission.phase")
+        assert condition is not None
+        assert condition.value == "egress"
+        assert condition.source == "operator_api_offline"
+        entries = pending.read_all()
+        assert len(entries) == 1
+        assert entries[0]["operation"] == "update_conditions"
+        assert entries[0]["payload"]["applied_locally"] is True
 
 
 class TestConditionPriority:

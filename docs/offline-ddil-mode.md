@@ -6,4 +6,7 @@ The runtime continues serving with last-known-good loaded models and current slo
 
 When online mode is restored, buffered operations can be replayed via `/v1/control/sync`.
 
-Future Hub/control-plane responsibilities (out of scope): fleet rollout orchestration, multi-node drift correction, signed remote intent distribution.
+Recommended hardening areas include authenticated local control, Hub-signed
+package verification, signed intent verification, tamper-evident decision logs,
+and evidence export. Fleet rollout orchestration and multi-node drift correction
+can be handled by external control-plane integrations.

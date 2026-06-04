@@ -249,6 +249,104 @@ def status(
 
 
 @app.command()
+def evidence(
+    slot: Optional[str] = typer.Option(
+        None,
+        "--slot",
+        "-s",
+        help="Only include decisions for one slot",
+    ),
+    limit: int = typer.Option(
+        100,
+        "--limit",
+        "-n",
+        help="Maximum number of recent decisions to include",
+    ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Write evidence bundle JSON to this path",
+    ),
+    config_path: Path = typer.Option(
+        Path("/etc/temms/temms.yaml"),
+        "--config",
+        "-c",
+        help="Configuration file path",
+    ),
+):
+    """Export local decision evidence for offline audit/reconstruction."""
+    import json
+
+    from temms.conditions.store import ConditionStore
+    from temms.core.cache import ModelCache
+    from temms.core.config import Config
+    from temms.daemon.deployment_state import DeploymentStateStore
+    from temms.daemon.pending_ops import PendingOperationsStore
+    from temms.evidence import EvidenceBundleBuilder
+    from temms.policy.engine import PolicyEngine
+    from temms.slots.manager import SlotManager
+
+    if not config_path.exists():
+        console.print("[red]Error: TEMMS not initialized. Run 'temms init' first.[/red]")
+        raise typer.Exit(1)
+
+    config = Config.load(config_path)
+    model_cache = ModelCache(config.database.path)
+    slot_manager = SlotManager(config.database.path)
+    condition_store = ConditionStore(config.database.path)
+    policy_engine = PolicyEngine(condition_store)
+
+    policy_dir = config.policy.policy_dir
+    if policy_dir.exists():
+        policy_files = sorted(
+            list(policy_dir.glob("*.yaml")) + list(policy_dir.glob("*.yml"))
+        )
+        for policy_file in policy_files:
+            try:
+                policy_engine.load_policy_from_file(policy_file)
+            except Exception as exc:
+                console.print(f"[yellow]Skipping invalid policy {policy_file}: {exc}[/yellow]")
+
+    data_dir = config.database.path.parent
+    pending_path = data_dir / "pending_operations.json"
+    deployment_path = data_dir / "deployment_state.json"
+
+    pending_operations = []
+    if pending_path.exists():
+        pending_operations = PendingOperationsStore(pending_path).read_all()
+
+    deployment_state = None
+    if deployment_path.exists():
+        deployment_state = DeploymentStateStore(deployment_path)._read()
+
+    bundle = EvidenceBundleBuilder(
+        slot_manager=slot_manager,
+        condition_store=condition_store,
+        policy_engine=policy_engine,
+        model_cache=model_cache,
+    ).build(
+        slot_name=slot,
+        limit=limit,
+        offline_mode=bool(
+            deployment_state and deployment_state.get("state") == "OFFLINE"
+        ),
+        pending_operations=pending_operations,
+        deployment_state=deployment_state,
+    )
+
+    rendered = json.dumps(bundle, indent=2)
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered + "\n", encoding="utf-8")
+        console.print(f"[green]Evidence bundle exported:[/green] {output}")
+        console.print(f"Decisions: {len(bundle['decisions'])}")
+        console.print(f"SHA256: {bundle['integrity']['payload_sha256']}")
+    else:
+        console.print(rendered)
+
+
+@app.command()
 def version():
     """Show TEMMS version."""
     console.print(f"TEMMS v{__version__}")
