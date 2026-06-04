@@ -7,7 +7,7 @@ This guide is the minimum repeatable path for running one TEMMS edge agent on on
 Requirements:
 
 - Linux with systemd
-- Python 3.10+
+- Python 3.11+
 - 4 GB RAM recommended
 - Network access for install, unless you pre-stage wheels and model packages
 

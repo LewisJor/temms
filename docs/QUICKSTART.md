@@ -4,7 +4,7 @@ This gets you from zero to watching TEMMS switch models in under 5 minutes.
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.11+
 - Docker and Docker Compose (for sim environment)
 - ~2GB disk space (Docker images + ONNX models)
 
@@ -37,7 +37,7 @@ make test
 # Expected: full test suite passes in a few seconds
 ```
 
-If any tests fail, check your Python version (`python --version` — need 3.10+) and that numpy/onnxruntime installed correctly.
+If any tests fail, check your Python version (`python --version` — need 3.11+) and that numpy/onnxruntime installed correctly.
 
 To verify the signed Hub Lite edge rollout paths specifically:
 
