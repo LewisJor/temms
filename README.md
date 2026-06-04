@@ -33,7 +33,7 @@ Existing tools (AWS Greengrass, Azure IoT Edge) assume your device is online. TE
 ```bash
 git clone https://github.com/yourusername/temms.git && cd temms
 pip install -e ".[dev,sim]"
-make test  # 268 tests, should all pass
+make test  # 403 passed, 16 skipped as of the MVP acceptance pass
 ```
 
 ### Run the visual simulation
@@ -85,8 +85,8 @@ TEMMS has three concepts: **slots**, **conditions**, and **policies**.
 A slot is a named inference endpoint. An autonomous robot might have a `vision` slot, a `targeting` slot, and a `navigation` slot — each running a different model, each switchable independently.
 
 ```bash
-temms slot create vision --required --default-model yolov8-daylight
-temms slot create targeting --default-model rgb-tracker-v1
+temms slot create vision --description "Primary vision slot" --required --default yolov8-daylight
+temms slot create targeting --description "Target tracking slot" --default rgb-tracker-v1
 temms slot list
 ```
 
@@ -159,14 +159,14 @@ Three-tier design. You only need Tier 3 to get started.
 Tier 1: MLflow ──────── Model registry (versioning, experiments, UI)
                 │        Standard MLflow. Not modified.
                 │
-Tier 2: Hub ────────── DDIL packaging layer (delta updates, fleet sync)
-                │        Packages models for edge consumption.
+Tier 2: Hub Lite ───── DDIL packaging and fleet layer (rollouts, air-gap sync)
+                │        Distributes signed TEMMS packages for edge use.
                 │
 Tier 3: TEMMS Daemon ── Edge runtime (this repo)
                          Policy engine, inference, offline-first.
 ```
 
-**Tier 3 (TEMMS Daemon)** runs completely offline. It receives pre-packaged models from the Hub (or from a USB drive), manages a local model cache, and makes all switching decisions locally.
+**Tier 3 (TEMMS Daemon)** runs completely offline. It receives signed TEMMS packages from Hub Lite, online sync, or an air-gapped bundle, manages a local model cache, and makes all switching decisions locally.
 
 See [docs/architecture.md](docs/architecture.md) for the full design.
 
@@ -202,7 +202,7 @@ temms status                             # System health check
 temms daemon start --foreground          # Start daemon
 
 # Models
-temms import ./path/to/package/          # Import model package
+temms import ./path/to/package/ --signing-key-file ./hub-signing.key  # Import signed package
 temms model list                         # List cached models
 
 # Slots
@@ -219,10 +219,13 @@ temms condition snapshot                 # Nested condition view
 # Policies
 temms policy load ./policy.yaml          # Load a policy
 
-# MLflow (optional)
+# MLflow packaging (production edge path)
+temms package from-mlflow models:/detector/7 --slot vision --output ./dist --archive
+
+# MLflow bridge (local development only)
 temms mlflow list                        # List MLflow models
 temms mlflow register                    # Push cached models to MLflow
-temms mlflow pull <model> <version>      # Pull from MLflow
+temms mlflow pull <model> --version 7 --allow-dev-pull  # Local dev import shortcut
 ```
 
 ## API Endpoints
@@ -287,7 +290,7 @@ my-package/
 
 ```bash
 # Import a package
-temms import ./my-package/
+temms import ./my-package/ --signing-key-file ./hub-signing.key
 
 # Generate example models (real ONNX, ~8KB each)
 python scripts/generate_real_models.py
@@ -333,7 +336,7 @@ make lint                  # ruff + mypy
 - [x] **Phase 1**: Core infrastructure — cache, slots, conditions, policy engine, CLI
 - [x] **Phase 2**: Runtime — inference server, model loader, daemon, operator overrides
 - [x] **Phase 3**: Sim environment — Docker, real ONNX models, Web UI, MLflow bridge, visual sim
-- [ ] **Phase 4**: Hub — MLflow packaging, delta updates, fleet sync, air-gap export
+- [x] **Phase 4**: Hub Lite MVP — MLflow packaging, signed rollouts, fleet sync, air-gap export
 - [ ] **Phase 5**: Advanced — model ensembles, predictive preloading, swarm condition sharing
 
 ## Why TEMMS?

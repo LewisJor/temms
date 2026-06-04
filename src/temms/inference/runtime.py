@@ -20,6 +20,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 from temms.core.loader import ModelLoader, RuntimeType, ModelRuntime
 from temms.core.cache import ModelCache, CachedModel, ModelFormat
+from temms.core.runtime_profiles import (
+    RuntimeCapabilities,
+    detect_runtime_capabilities,
+    runtime_constraints_satisfied,
+    runtime_defaults_for_profile,
+)
 from temms.core.storage import ModelStorage
 
 logger = logging.getLogger(__name__)
@@ -32,6 +38,8 @@ class LoadedModel:
     runtime: ModelRuntime
     model_info: CachedModel
     loaded_at: datetime
+    runtime_type: RuntimeType
+    runtime_options: Dict[str, Any] = field(default_factory=dict)
     inference_count: int = 0
     last_inference: Optional[datetime] = None
 
@@ -149,13 +157,16 @@ class InferenceRuntime:
                     # Create loader and load model OUTSIDE the lock
                     loader = ModelLoader()
                     runtime_type = self._format_to_runtime_type(model_info.format)
-                    runtime = loader.load_model(model_path, runtime_type)
+                    runtime_options = self._runtime_options_for_model(model_info)
+                    runtime = loader.load_model(model_path, runtime_type, runtime_options)
 
                     new_loaded = LoadedModel(
                         model_id=model_id,
                         runtime=runtime,
                         model_info=model_info,
                         loaded_at=datetime.now(),
+                        runtime_type=runtime_type,
+                        runtime_options=runtime_options,
                     )
 
                 # Brief lock for atomic swap
@@ -210,6 +221,83 @@ class InferenceRuntime:
 
         return None
 
+    def _runtime_options_for_model(self, model_info: CachedModel) -> Dict[str, Any]:
+        """Build runtime-specific loader options from package metadata."""
+        constraints = model_info.metadata.get("runtime_constraints", {}) or {}
+        runtime_options = model_info.metadata.get("runtime_options", {}) or {}
+        options: Dict[str, Any] = {}
+        capabilities = detect_runtime_capabilities()
+        capability_dict = self._capabilities_to_dict(capabilities)
+        defaults = runtime_defaults_for_profile(
+            capability_dict.get("device_profile"),
+            capability_dict,
+        )
+
+        constraints_ok, reasons = runtime_constraints_satisfied(
+            constraints,
+            capability_dict,
+        )
+        if not constraints_ok:
+            raise RuntimeError(
+                "Runtime constraints are not satisfied for "
+                f"{model_info.id}: {'; '.join(reasons)}"
+            )
+
+        if model_info.format == ModelFormat.ONNX:
+            providers = (
+                runtime_options.get("providers")
+                or constraints.get("provider_order")
+                or constraints.get("preferred_providers")
+                or constraints.get("providers")
+                or defaults.get("onnx_providers")
+            )
+            if providers:
+                available = capability_dict.get("runtimes", {}).get("onnxruntime", {}).get(
+                    "providers", []
+                )
+                selected = [provider for provider in providers if provider in available]
+                if not selected:
+                    raise RuntimeError(
+                        "No requested ONNX providers are available for "
+                        f"{model_info.id}: {providers}"
+                    )
+                options["providers"] = selected
+
+        if model_info.format == ModelFormat.TFLITE:
+            num_threads = (
+                runtime_options.get("num_threads")
+                or constraints.get("num_threads")
+                or defaults.get("tflite_num_threads")
+            )
+            if num_threads:
+                options["num_threads"] = int(num_threads)
+
+        if model_info.format == ModelFormat.TENSORRT:
+            tensorrt_status = capability_dict.get("runtimes", {}).get("tensorrt", {})
+            if not tensorrt_status.get("available", False):
+                raise RuntimeError(
+                    "TensorRT runtime is not available for "
+                    f"{model_info.id}. Install NVIDIA TensorRT bindings or deploy "
+                    "the package to a TensorRT-capable runtime target."
+                )
+
+        return options
+
+    def _capabilities_to_dict(
+        self,
+        capabilities: RuntimeCapabilities | Dict[str, Any] | Any,
+    ) -> Dict[str, Any]:
+        """Return runtime capability data as a plain dict for compatibility checks."""
+        if isinstance(capabilities, RuntimeCapabilities):
+            return capabilities.to_dict()
+        if isinstance(capabilities, dict):
+            return capabilities
+        return {
+            "device_profile": getattr(capabilities, "device_profile", None),
+            "runtimes": getattr(capabilities, "runtimes", {}),
+            "accelerators": getattr(capabilities, "accelerators", {}),
+        }
+
     async def infer(
         self,
         slot_name: str,
@@ -256,7 +344,10 @@ class InferenceRuntime:
             input_name = self._get_model_input_name(loaded.runtime)
 
             processed_input = self._preprocess_input(
-                input_data, content_type, loaded.model_info, input_name=input_name
+                input_data,
+                content_type,
+                loaded.model_info,
+                input_name=input_name,
             )
 
             outputs = loaded.runtime.infer(processed_input)
@@ -334,25 +425,52 @@ class InferenceRuntime:
                 # Normalize to [0, 1]
                 arr = arr / 255.0
 
-                # HWC -> CHW
-                if len(arr.shape) == 3:
+                # ONNX/Torch models commonly use NCHW; TFLite commonly uses NHWC.
+                input_layout = model_info.metadata.get("input_layout")
+                use_nchw = input_layout == "NCHW" or (
+                    input_layout is None and model_info.format != ModelFormat.TFLITE
+                )
+                if use_nchw and len(arr.shape) == 3:
                     arr = np.transpose(arr, (2, 0, 1))
 
                 # Add batch dimension
                 arr = np.expand_dims(arr, 0)
 
-                return {input_name: arr.astype(np.float32)}
+                return self._format_processed_input(
+                    arr.astype(np.float32),
+                    model_info,
+                    input_name,
+                )
 
             except ImportError:
                 logger.warning("PIL not available, using raw bytes")
-                return {input_name: np.frombuffer(input_data, dtype=np.float32).reshape(input_shape)}
+                arr = np.frombuffer(input_data, dtype=np.float32).reshape(input_shape)
+                return self._format_processed_input(arr, model_info, input_name)
 
         else:
             # Generic binary data - assume numpy array
             arr = np.frombuffer(input_data, dtype=np.float32)
             if input_shape:
                 arr = arr.reshape(input_shape)
-            return {input_name: arr}
+            return self._format_processed_input(arr, model_info, input_name)
+
+    def _format_processed_input(
+        self,
+        array: Any,
+        model_info: CachedModel,
+        input_name: str,
+    ) -> Any:
+        """Adapt a numpy array to the selected runtime's expected input shape."""
+        if model_info.format == ModelFormat.ONNX:
+            return {input_name: array}
+        if model_info.format == ModelFormat.TORCHSCRIPT:
+            try:
+                import torch
+
+                return torch.from_numpy(array)
+            except ImportError:
+                return array
+        return array
 
     def _postprocess_output(self, outputs: Any) -> List[Any]:
         """
@@ -479,13 +597,16 @@ class InferenceRuntime:
         def _preload():
             loader = ModelLoader()
             runtime_type = self._format_to_runtime_type(model_info.format)
-            runtime = loader.load_model(model_path, runtime_type)
+            runtime_options = self._runtime_options_for_model(model_info)
+            runtime = loader.load_model(model_path, runtime_type, runtime_options)
 
             loaded = LoadedModel(
                 model_id=model_id,
                 runtime=runtime,
                 model_info=model_info,
                 loaded_at=datetime.now(),
+                runtime_type=runtime_type,
+                runtime_options=runtime_options,
             )
 
             self._preloaded[model_id] = loaded
@@ -538,6 +659,8 @@ class InferenceRuntime:
                 "model_id": loaded.model_id if loaded else None,
                 "model_name": loaded.model_info.name if loaded else None,
                 "loaded_at": loaded.loaded_at.isoformat() if loaded else None,
+                "runtime_type": loaded.runtime_type.value if loaded else None,
+                "runtime_options": loaded.runtime_options if loaded else {},
                 "inference_count": loaded.inference_count if loaded else 0,
                 "last_inference": loaded.last_inference.isoformat() if loaded and loaded.last_inference else None,
                 "loading_model": slot_runtime.loading_model,

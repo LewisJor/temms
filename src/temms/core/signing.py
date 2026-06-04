@@ -1,0 +1,571 @@
+"""
+Package validation and signing utilities.
+
+The MVP signer uses HMAC-SHA256 so it works without native crypto dependencies.
+Hub can later swap this envelope to an asymmetric algorithm while keeping the
+same signature.json contract.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+SIGNATURE_FILE = "signature.json"
+SIGNATURE_ALGORITHM = "HMAC-SHA256"
+KEY_FINGERPRINT_PREFIX = "sha256:"
+
+
+@dataclass
+class ValidationResult:
+    """Result from package validation."""
+
+    valid: bool
+    errors: list[str]
+    warnings: list[str]
+    manifest: dict[str, Any] | None = None
+    signature_verified: bool = False
+    signature_metadata: dict[str, Any] | None = None
+
+
+def read_signing_key(value: str | None = None, key_file: Path | None = None) -> str | None:
+    """Read a signing key from an inline value or file."""
+    if value:
+        return value
+    if key_file:
+        return key_file.read_text(encoding="utf-8").strip()
+    return None
+
+
+def signing_key_fingerprint(key: str) -> str:
+    """Return a stable non-secret fingerprint for audit logs."""
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return f"{KEY_FINGERPRINT_PREFIX}{digest[:16]}"
+
+
+def package_file_hashes(package_path: Path) -> dict[str, str]:
+    """Return SHA256 hashes for all package files covered by the signature."""
+    _ensure_safe_package_tree(package_path)
+    hashes: dict[str, str] = {}
+    for path in sorted(package_path.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(package_path).as_posix()
+        if rel == SIGNATURE_FILE:
+            continue
+        hashes[rel] = sha256_file(path)
+    return hashes
+
+
+def sign_package(package_path: Path, key: str, signer: str = "temms") -> Path:
+    """Create or replace signature.json for a package directory."""
+    if not (package_path / "manifest.json").exists():
+        raise ValueError(f"Missing manifest.json in package: {package_path}")
+    _ensure_safe_package_tree(package_path)
+
+    payload = {
+        "schema_version": "temms-signature/v1",
+        "algorithm": SIGNATURE_ALGORITHM,
+        "signed_at": datetime.utcnow().isoformat() + "Z",
+        "signer": signer,
+        "key_fingerprint": signing_key_fingerprint(key),
+        "manifest_sha256": sha256_file(package_path / "manifest.json"),
+        "files": package_file_hashes(package_path),
+    }
+    payload["signature"] = _signature_for_payload(payload, key)
+
+    signature_path = package_path / SIGNATURE_FILE
+    signature_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return signature_path
+
+
+def verify_package_signature(package_path: Path, key: str) -> dict[str, Any]:
+    """Verify signature.json and all covered file hashes."""
+    signature_path = package_path / SIGNATURE_FILE
+    if not signature_path.exists():
+        raise ValueError(f"Missing {SIGNATURE_FILE}")
+
+    signature = json.loads(signature_path.read_text(encoding="utf-8"))
+    algorithm = signature.get("algorithm")
+    if algorithm != SIGNATURE_ALGORITHM:
+        raise ValueError(f"Unsupported signature algorithm: {algorithm}")
+
+    expected_signature = signature.get("signature")
+    computed_signature = _signature_for_payload(signature, key)
+    if not hmac.compare_digest(str(expected_signature), computed_signature):
+        raise ValueError("Package signature mismatch")
+
+    key_fingerprint = signing_key_fingerprint(key)
+    declared_fingerprint = signature.get("key_fingerprint")
+    if declared_fingerprint and declared_fingerprint != key_fingerprint:
+        raise ValueError("Signing key fingerprint mismatch")
+
+    manifest_hash = sha256_file(package_path / "manifest.json")
+    if manifest_hash != signature.get("manifest_sha256"):
+        raise ValueError("Manifest hash does not match package signature")
+
+    expected_files = signature.get("files", {})
+    current_files = package_file_hashes(package_path)
+    if expected_files != current_files:
+        raise ValueError("Package file hashes do not match signature")
+
+    return {
+        "schema_version": signature.get("schema_version"),
+        "algorithm": signature.get("algorithm"),
+        "signed_at": signature.get("signed_at"),
+        "signer": signature.get("signer"),
+        "key_fingerprint": declared_fingerprint or key_fingerprint,
+        "key_fingerprint_verified": bool(declared_fingerprint),
+        "manifest_sha256": signature.get("manifest_sha256"),
+    }
+
+
+def validate_package(
+    package_path: Path,
+    require_signature: bool = False,
+    signing_key: str | None = None,
+    device_profile: str | None = None,
+    check_runtime_constraints: bool = False,
+    strict_metadata: bool = False,
+    runtime_capabilities: Any | None = None,
+    model_id: str | None = None,
+) -> ValidationResult:
+    """Validate package structure, manifest hashes, and optional signature."""
+    from temms.core.package_archive import package_directory
+
+    try:
+        with package_directory(package_path) as package_dir:
+            return _validate_package_dir(
+                package_dir,
+                require_signature=require_signature,
+                signing_key=signing_key,
+                device_profile=device_profile,
+                check_runtime_constraints=check_runtime_constraints,
+                strict_metadata=strict_metadata,
+                runtime_capabilities=runtime_capabilities,
+                model_id=model_id,
+            )
+    except Exception as exc:
+        return ValidationResult(False, [str(exc)], [])
+
+
+def _validate_package_dir(
+    package_path: Path,
+    require_signature: bool = False,
+    signing_key: str | None = None,
+    device_profile: str | None = None,
+    check_runtime_constraints: bool = False,
+    strict_metadata: bool = False,
+    runtime_capabilities: Any | None = None,
+    model_id: str | None = None,
+) -> ValidationResult:
+    """Validate a directory package."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    manifest: dict[str, Any] | None = None
+    signature_verified = False
+    signature_metadata = None
+
+    manifest_path = package_path / "manifest.json"
+    if not manifest_path.exists():
+        return ValidationResult(False, [f"Missing manifest.json: {package_path}"], warnings)
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return ValidationResult(False, [f"Invalid manifest JSON: {exc}"], warnings)
+
+    if not isinstance(manifest, dict):
+        return ValidationResult(False, ["Manifest JSON must be an object"], warnings)
+
+    _reject_unsafe_package_tree(package_path, errors)
+
+    if manifest.get("schema_version") != "v1":
+        errors.append(f"Unsupported package schema_version: {manifest.get('schema_version')}")
+
+    _validate_package_posture(manifest, strict_metadata, errors, warnings)
+
+    try:
+        from temms.core.cache import ModelFormat
+        from temms.core.package import PackageManifest
+
+        PackageManifest.model_validate(manifest)
+        supported_formats = {item.value for item in ModelFormat}
+    except Exception as exc:
+        errors.append(f"Invalid package manifest: {exc}")
+        supported_formats = set()
+
+    models_dir = package_path / "models"
+    policies_dir = package_path / "policies"
+    models = [model for model in manifest.get("models", []) if isinstance(model, dict)]
+    policies = [policy for policy in manifest.get("policies", []) if isinstance(policy, dict)]
+
+    _reject_duplicate_manifest_values(
+        (model.get("id") for model in models),
+        "model id",
+        errors,
+    )
+    _reject_duplicate_manifest_values(
+        (model.get("filename") for model in models),
+        "model filename",
+        errors,
+    )
+    _reject_duplicate_manifest_values(
+        (policy.get("name") for policy in policies),
+        "policy name",
+        errors,
+    )
+    _reject_duplicate_manifest_values(
+        (policy.get("filename") for policy in policies),
+        "policy filename",
+        errors,
+    )
+    _reject_unsafe_manifest_component(manifest.get("package_id"), "package_id", errors)
+    for model in models:
+        _reject_unsafe_manifest_component(model.get("id"), "model id", errors)
+
+    declared_model_files: set[Path] = set()
+    declared_policy_files: set[Path] = set()
+
+    for model in models:
+        filename = model.get("filename")
+        expected_sha = model.get("sha256")
+        expected_size = model.get("size_bytes")
+        model_format = model.get("format")
+        if supported_formats and model_format not in supported_formats:
+            errors.append(f"Unsupported model format for models/{filename}: {model_format}")
+        if not filename:
+            errors.append("Model entry missing filename")
+            continue
+        model_path = _manifest_file_path(models_dir, filename, "model", errors)
+        if model_path is None:
+            continue
+        declared_model_files.add(model_path)
+        if not model_path.exists():
+            errors.append(f"Missing model file: models/{filename}")
+            continue
+        if not model_path.is_file():
+            errors.append(f"Model path is not a regular file: models/{filename}")
+            continue
+        actual_sha = sha256_file(model_path)
+        if expected_sha and actual_sha != expected_sha:
+            errors.append(f"Hash mismatch for models/{filename}")
+        if expected_size is None:
+            errors.append(f"Model entry missing size_bytes: models/{filename}")
+        elif not isinstance(expected_size, int) or expected_size < 0:
+            errors.append(f"Invalid size_bytes for models/{filename}: {expected_size}")
+        elif model_path.stat().st_size != expected_size:
+            errors.append(
+                f"Size mismatch for models/{filename}: "
+                f"expected {expected_size}, got {model_path.stat().st_size}"
+            )
+        _validate_model_metadata(model, filename, strict_metadata, errors, warnings)
+
+    for policy in policies:
+        filename = policy.get("filename")
+        if filename:
+            policy_path = _manifest_file_path(
+                policies_dir,
+                filename,
+                "policy",
+                errors,
+                basename_only=True,
+            )
+            if policy_path is None:
+                continue
+            declared_policy_files.add(policy_path)
+            if not policy_path.exists():
+                errors.append(f"Missing policy file: policies/{filename}")
+            elif not policy_path.is_file():
+                errors.append(f"Policy path is not a regular file: policies/{filename}")
+            else:
+                _validate_policy_file(policy_path, filename, policy, errors)
+
+    _reject_undeclared_files(models_dir, declared_model_files, "model", errors)
+    _reject_undeclared_files(policies_dir, declared_policy_files, "policy", errors)
+
+    if device_profile:
+        from temms.core.runtime_profiles import normalize_device_profile
+
+        checked_profile = normalize_device_profile(device_profile)
+        allowed_profiles = {
+            profile
+            for profile in (
+                normalize_device_profile(profile)
+                for profile in manifest.get("compatibility", {}).get("device_profiles", [])
+            )
+            if profile
+        }
+        for model in manifest.get("models", []):
+            allowed_profiles.update(
+                profile
+                for profile in (
+                    normalize_device_profile(profile)
+                    for profile in model.get("runtime_constraints", {}).get("device_profiles", [])
+                )
+                if profile
+            )
+        if allowed_profiles and checked_profile not in allowed_profiles:
+            errors.append(
+                f"Package is not compatible with device profile {checked_profile}; "
+                f"allowed profiles: {sorted(allowed_profiles)}"
+            )
+
+    if check_runtime_constraints and manifest is not None:
+        from temms.core.runtime_profiles import (
+            detect_runtime_capabilities,
+            normalize_device_profile,
+            package_runtime_constraints,
+            runtime_constraints_satisfied,
+        )
+
+        capabilities = runtime_capabilities or detect_runtime_capabilities()
+        if hasattr(capabilities, "to_dict"):
+            capabilities = capabilities.to_dict()
+        else:
+            capabilities = dict(capabilities or {})
+        if device_profile:
+            capabilities["device_profile"] = normalize_device_profile(device_profile)
+
+        for constrained_model_id, constraints in package_runtime_constraints(
+            manifest,
+            model_id=model_id,
+        ):
+            satisfied, reasons = runtime_constraints_satisfied(
+                constraints,
+                capabilities,
+            )
+            if not satisfied:
+                errors.extend(
+                    "Runtime constraints are not satisfied for " f"{constrained_model_id}: {reason}"
+                    for reason in reasons
+                )
+
+    signature_path = package_path / SIGNATURE_FILE
+    if require_signature or signature_path.exists():
+        if signing_key is None:
+            errors.append("Signature verification requires a signing key")
+        else:
+            try:
+                signature_metadata = verify_package_signature(package_path, signing_key)
+                signature_verified = True
+            except Exception as exc:
+                errors.append(str(exc))
+    else:
+        warnings.append("Package is unsigned")
+
+    return ValidationResult(
+        valid=not errors,
+        errors=errors,
+        warnings=warnings,
+        manifest=manifest,
+        signature_verified=signature_verified,
+        signature_metadata=signature_metadata,
+    )
+
+
+def _validate_package_posture(
+    manifest: dict[str, Any],
+    strict_metadata: bool,
+    errors: list[str],
+    warnings: list[str],
+) -> None:
+    """Surface package-level posture markers such as local-development shortcuts."""
+    metadata = manifest.get("metadata")
+    if not isinstance(metadata, dict) or not metadata.get("development_only"):
+        return
+
+    message = (
+        "Package is marked development-only; rebuild with "
+        "`temms package from-mlflow` for production edge deployment"
+    )
+    if strict_metadata:
+        errors.append(message)
+    else:
+        warnings.append(message)
+
+
+def _validate_model_metadata(
+    model: dict[str, Any],
+    filename: Any,
+    strict_metadata: bool,
+    errors: list[str],
+    warnings: list[str],
+) -> None:
+    """Validate production metadata that makes a package auditable at the edge."""
+    issues: list[str] = []
+    input_schema = model.get("input_schema")
+    output_schema = model.get("output_schema")
+    provenance = model.get("provenance")
+    runtime_constraints = model.get("runtime_constraints")
+    benchmark = model.get("benchmark")
+
+    if not isinstance(input_schema, dict) or not input_schema:
+        issues.append("input_schema")
+    if not isinstance(output_schema, dict) or not output_schema:
+        issues.append("output_schema")
+    if not isinstance(runtime_constraints, dict) or not runtime_constraints:
+        issues.append("runtime_constraints")
+    if not isinstance(benchmark, dict) or not benchmark:
+        issues.append("benchmark")
+    if not isinstance(provenance, dict) or not provenance:
+        issues.append("provenance")
+    else:
+        required_provenance = ("source", "run_id", "artifact_sha256")
+        missing_provenance = [key for key in required_provenance if not provenance.get(key)]
+        if missing_provenance:
+            issues.append("provenance." + ",".join(missing_provenance))
+
+    if not issues:
+        return
+
+    message = (
+        f"Model metadata incomplete for models/{filename}: "
+        + ", ".join(str(issue) for issue in issues)
+    )
+    if strict_metadata:
+        errors.append(message)
+    else:
+        warnings.append(message)
+
+
+def _validate_policy_file(
+    policy_path: Path,
+    filename: str,
+    manifest_policy: dict[str, Any],
+    errors: list[str],
+) -> None:
+    """Validate that packaged policy YAML can be loaded by the edge policy engine."""
+    try:
+        from temms.policy.schema import SlotPolicy
+
+        policy = SlotPolicy.from_yaml(policy_path)
+    except Exception as exc:
+        errors.append(f"Invalid policy file: policies/{filename}: {exc}")
+        return
+
+    manifest_slot = manifest_policy.get("slot")
+    if manifest_slot and policy.spec.slot != manifest_slot:
+        errors.append(
+            f"Policy slot mismatch for policies/{filename}: "
+            f"manifest declares {manifest_slot}, policy declares {policy.spec.slot}"
+        )
+
+
+def sha256_file(path: Path) -> str:
+    """Compute SHA256 for a file."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as file:
+        while chunk := file.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _manifest_file_path(
+    base_dir: Path,
+    filename: Any,
+    kind: str,
+    errors: list[str],
+    basename_only: bool = False,
+) -> Path | None:
+    """Resolve a manifest filename only if it stays within the package subdir."""
+    if not isinstance(filename, str) or not filename.strip():
+        errors.append(f"{kind.title()} filename must be a non-empty string")
+        return None
+
+    relative_path = Path(filename)
+    if relative_path.is_absolute():
+        errors.append(f"Unsafe {kind} filename: {filename} is absolute")
+        return None
+    if any(part in ("", ".", "..") for part in relative_path.parts):
+        errors.append(f"Unsafe {kind} filename: {filename} contains path traversal")
+        return None
+    if basename_only and len(relative_path.parts) != 1:
+        errors.append(f"Unsafe {kind} filename: {filename} must be a file name, not a path")
+        return None
+
+    candidate = base_dir / relative_path
+    try:
+        candidate.resolve().relative_to(base_dir.resolve())
+    except ValueError:
+        errors.append(f"Unsafe {kind} filename: {filename} escapes {base_dir.name}/")
+        return None
+    return candidate
+
+
+def _reject_unsafe_manifest_component(value: Any, label: str, errors: list[str]) -> None:
+    """Reject manifest identifiers that are unsafe as filesystem components."""
+    if not isinstance(value, str) or not value.strip():
+        errors.append(f"{label} must be a non-empty string")
+        return
+    component = Path(value)
+    if component.is_absolute() or len(component.parts) != 1 or component.name in {".", ".."}:
+        errors.append(f"Unsafe {label}: {value}")
+
+
+def _reject_duplicate_manifest_values(
+    values: Any,
+    label: str,
+    errors: list[str],
+) -> None:
+    """Reject repeated non-empty manifest values that would make imports ambiguous."""
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for value in values:
+        if not isinstance(value, str) or not value:
+            continue
+        if value in seen:
+            duplicates.add(value)
+        seen.add(value)
+    for value in sorted(duplicates):
+        errors.append(f"Duplicate {label} in manifest: {value}")
+
+
+def _reject_undeclared_files(
+    base_dir: Path,
+    declared_files: set[Path],
+    kind: str,
+    errors: list[str],
+) -> None:
+    """Reject files in package artifact directories that the manifest does not declare."""
+    if not base_dir.exists():
+        return
+    declared = {path.resolve() for path in declared_files}
+    for path in sorted(base_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.resolve() in declared:
+            continue
+        rel = path.relative_to(base_dir).as_posix()
+        errors.append(f"Undeclared {kind} file in package: {base_dir.name}/{rel}")
+
+
+def _ensure_safe_package_tree(package_path: Path) -> None:
+    """Raise if a directory package contains links or special files."""
+    errors: list[str] = []
+    _reject_unsafe_package_tree(package_path, errors)
+    if errors:
+        raise ValueError("; ".join(errors))
+
+
+def _reject_unsafe_package_tree(package_path: Path, errors: list[str]) -> None:
+    """Reject links and special files in directory packages."""
+    for path in sorted(package_path.rglob("*")):
+        rel = path.relative_to(package_path).as_posix()
+        if path.is_symlink():
+            errors.append(f"Package links are not allowed: {rel}")
+            continue
+        if path.is_dir() or path.is_file():
+            continue
+        errors.append(f"Package path must be a regular file or directory: {rel}")
+
+
+def _signature_for_payload(payload: dict[str, Any], key: str) -> str:
+    unsigned = {k: v for k, v in payload.items() if k != "signature"}
+    canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hmac.new(key.encode("utf-8"), canonical, hashlib.sha256).hexdigest()

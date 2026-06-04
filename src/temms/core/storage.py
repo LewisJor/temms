@@ -3,7 +3,9 @@ Model file storage with SHA256 verification.
 """
 
 import hashlib
+import os
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -16,7 +18,9 @@ class ModelStorage:
         self.model_dir = model_dir
         self.model_dir.mkdir(parents=True, exist_ok=True)
 
-    def store_model(self, source_path: Path, model_id: str, verify: bool = True) -> tuple[Path, str, int]:
+    def store_model(
+        self, source_path: Path, model_id: str, verify: bool = True
+    ) -> tuple[Path, str, int]:
         """
         Store a model file.
 
@@ -31,23 +35,40 @@ class ModelStorage:
         if not source_path.exists():
             raise FileNotFoundError(f"Source model not found: {source_path}")
 
+        safe_model_id = _safe_storage_component(model_id, "model_id")
+
         # Create model-specific directory
-        model_storage_dir = self.model_dir / model_id
+        model_storage_dir = self.model_dir / safe_model_id
         model_storage_dir.mkdir(parents=True, exist_ok=True)
 
         # Determine destination path
         dest_path = model_storage_dir / source_path.name
 
-        # Compute hash while copying
+        # Compute hash while copying to a temp file first; replace only after
+        # the copy completes so failed imports do not corrupt a cached model.
         sha256_hash = hashlib.sha256()
         size_bytes = 0
 
-        with open(source_path, "rb") as src, open(dest_path, "wb") as dst:
-            while chunk := src.read(8192):
-                size_bytes += len(chunk)
-                if verify:
-                    sha256_hash.update(chunk)
-                dst.write(chunk)
+        temp_fd, temp_name = tempfile.mkstemp(
+            prefix=f".{dest_path.name}-",
+            dir=model_storage_dir,
+        )
+        temp_path = Path(temp_name)
+        try:
+            with open(source_path, "rb") as src, os.fdopen(temp_fd, "wb") as dst:
+                while chunk := src.read(8192):
+                    size_bytes += len(chunk)
+                    if verify:
+                        sha256_hash.update(chunk)
+                    dst.write(chunk)
+            temp_path.replace(dest_path)
+        except Exception:
+            try:
+                os.close(temp_fd)
+            except OSError:
+                pass
+            temp_path.unlink(missing_ok=True)
+            raise
 
         hash_value = sha256_hash.hexdigest() if verify else ""
 
@@ -84,7 +105,8 @@ class ModelStorage:
         Returns:
             True if deleted, False if not found
         """
-        model_dir = self.model_dir / model_id
+        safe_model_id = _safe_storage_component(model_id, "model_id")
+        model_dir = self.model_dir / safe_model_id
         if model_dir.exists():
             shutil.rmtree(model_dir)
             return True
@@ -100,7 +122,8 @@ class ModelStorage:
         Returns:
             Path to model directory or None if not found
         """
-        model_dir = self.model_dir / model_id
+        safe_model_id = _safe_storage_component(model_id, "model_id")
+        model_dir = self.model_dir / safe_model_id
         return model_dir if model_dir.exists() else None
 
     def get_storage_stats(self) -> dict:
@@ -125,3 +148,13 @@ class ModelStorage:
             "model_count": model_count,
             "storage_path": str(self.model_dir),
         }
+
+
+def _safe_storage_component(value: str, label: str) -> str:
+    """Return a safe single path component for storage IDs."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} must be a non-empty string")
+    component = Path(value)
+    if component.is_absolute() or len(component.parts) != 1 or component.name in {".", ".."}:
+        raise ValueError(f"Unsafe {label}: {value}")
+    return value

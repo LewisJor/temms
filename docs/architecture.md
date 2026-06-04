@@ -10,14 +10,14 @@ TEMMS uses a three-tier architecture. Each tier can run independently and offlin
 │  Standard model registry. Not modified. Can be local or  │
 │  cloud. Data scientists use the UI they already know.    │
 └──────────────────────┬───────────────────────────────────┘
-                       │ Pull models via MLflow API
+                       │ Build signed TEMMS packages from registry artifacts
                        ▼
 ┌──────────────────────────────────────────────────────────┐
-│  Tier 2: TEMMS Hub (future)                              │
-│  Packages models for edge consumption. Delta updates,    │
-│  fleet management, air-gap export to USB.                │
+│  Tier 2: TEMMS Hub Lite                                  │
+│  Packages models for edge consumption. Tracks inventory, │
+│  coordinates rollouts, and exports air-gap bundles.      │
 └──────────────────────┬───────────────────────────────────┘
-                       │ Push packages (network, USB, SD card)
+                       │ Sync/apply signed packages (network, USB, SD card)
                        ▼
 ┌──────────────────────────────────────────────────────────┐
 │  Tier 3: TEMMS Daemon (this repo)                        │
@@ -27,7 +27,7 @@ TEMMS uses a three-tier architecture. Each tier can run independently and offlin
 └──────────────────────────────────────────────────────────┘
 ```
 
-You only need Tier 3 to get started. Tier 1 (MLflow) is optional for local development. Tier 2 (Hub) is planned.
+You only need Tier 3 to get started. Tier 1 (MLflow) is optional for local development. Tier 2 (Hub Lite) is the MVP fleet path for signed package rollouts and air-gapped transfers.
 
 ## TEMMS Daemon Internals
 

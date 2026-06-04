@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e
 
+if [ "$#" -gt 0 ]; then
+    exec "$@"
+fi
+
 echo "==============================="
 echo "  TEMMS Sim Environment"
 echo "==============================="
@@ -24,7 +28,7 @@ temms init --config /etc/temms/temms.yaml --data-dir /var/lib/temms 2>&1 || true
 # 3. Import example model package (skip hash verify since we just generated them)
 echo ""
 echo "[3/5] Importing model package..."
-temms import /app/examples/package-example/ --config /etc/temms/temms.yaml --no-verify 2>&1 || echo "  (package may already be imported)"
+temms import /app/examples/package-example/ --config /etc/temms/temms.yaml --no-verify --allow-unsigned-package 2>&1 || echo "  (package may already be imported)"
 
 # 4. Create vision slot
 echo ""
@@ -32,7 +36,7 @@ echo "[4/5] Creating vision slot..."
 temms slot create vision \
     --description "Primary vision model" \
     --required \
-    --default-model model-yolov8-daylight-001 \
+    --default model-yolov8-daylight-001 \
     --config /etc/temms/temms.yaml 2>&1 || echo "  (slot may already exist)"
 
 # 5. Copy policies to config directory

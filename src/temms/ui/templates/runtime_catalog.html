@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% set active_page = "runtimes" %}
+
+{% block title %}TEMMS - Target Environments{% endblock %}
+
+{% block content %}
+<div class="theme-app -mx-4 -my-6 min-h-screen bg-[#050606] text-zinc-100">
+    <div class="mx-auto max-w-7xl px-4 py-6">
+        <div class="border border-zinc-800 bg-[#090a0a]">
+            <div class="flex flex-col gap-5 border-b border-zinc-800 px-5 py-5 lg:flex-row lg:items-end lg:justify-between">
+                <div>
+                    <div class="mb-3 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+                        <span class="border border-fuchsia-400/40 bg-fuchsia-400/10 px-2 py-1 text-fuchsia-300">Target Environments</span>
+                        <span>Runtime Images</span>
+                        <span>/</span>
+                        <span>OS / Arch</span>
+                        <span>/</span>
+                        <span>Simulation</span>
+                    </div>
+                    <h1 class="text-3xl font-semibold text-zinc-50">Target Runtime Environments</h1>
+                    <p class="mt-1 max-w-2xl text-sm text-zinc-400">Register default or customer-provided container images, then validate model packages against the OS, architecture, and runtime stack they will meet at the edge.</p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <a href="/ui/" class="border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-200 hover:border-emerald-300 hover:text-emerald-200">Deploy</a>
+                    <a href="/ui/hub" class="border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-200 hover:border-cyan-300 hover:text-cyan-200">Admin Workbench</a>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 border-b border-zinc-800 md:grid-cols-4">
+                <div class="border-b border-r border-zinc-800 p-4 md:border-b-0">
+                    <div class="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Runtime Images</div>
+                    <div class="mt-2 text-2xl font-semibold text-zinc-50">{{ runtime_targets|length }}</div>
+                </div>
+                <div class="border-b border-r border-zinc-800 p-4 md:border-b-0">
+                    <div class="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Edge Profiles</div>
+                    <div class="mt-2 text-2xl font-semibold text-zinc-50">{{ runtime_targets|map(attribute="device_profiles")|list|length }}</div>
+                </div>
+                <div class="border-r border-zinc-800 p-4">
+                    <div class="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Packages</div>
+                    <div class="mt-2 text-2xl font-semibold text-zinc-50">{{ packages|length }}</div>
+                </div>
+                <div class="p-4">
+                    <div class="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Benchmarks</div>
+                    <div class="mt-2 text-2xl font-semibold text-zinc-50">{{ benchmarks|length }}</div>
+                </div>
+            </div>
+
+            <div id="runtime-action-result" class="px-5 pt-5"></div>
+
+            <section class="grid grid-cols-1 gap-px bg-zinc-800 lg:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)]">
+                <div class="bg-[#0d0f0f] p-5">
+                    <div class="mb-4 flex items-start justify-between gap-4">
+                        <div>
+                            <h2 class="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-100">Target Environments</h2>
+                            <p class="mt-1 text-xs text-zinc-500">Default and BYO runtime images available for simulation, validation, and rollout targeting.</p>
+                        </div>
+                        <span class="border border-fuchsia-400/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-fuchsia-300">Default + BYO</span>
+                    </div>
+
+                    <div class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                        {% for target in runtime_targets %}
+                        <article class="border border-zinc-800 bg-[#090a0a] p-4">
+                            <div class="flex items-start justify-between gap-3">
+                                <div class="min-w-0">
+                                    <h3 class="truncate text-sm font-semibold text-zinc-100">{{ target.name or target.runtime_target_id }}</h3>
+                                    <p class="mt-1 truncate font-mono text-xs text-emerald-300">{{ target.image }}</p>
+                                </div>
+                                <span class="shrink-0 border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-zinc-300">{{ target.source or "byo" }}</span>
+                            </div>
+
+                            <div class="mt-4 grid grid-cols-2 gap-2 text-xs">
+                                <div class="border border-zinc-800 bg-[#050606] p-2">
+                                    <div class="font-semibold uppercase tracking-[0.12em] text-zinc-500">OS / Arch</div>
+                                    <div class="mt-1 font-mono text-zinc-200">{{ target.os or "linux" }} / {{ target.arch or "-" }}</div>
+                                </div>
+                                <div class="border border-zinc-800 bg-[#050606] p-2">
+                                    <div class="font-semibold uppercase tracking-[0.12em] text-zinc-500">Profiles</div>
+                                    <div class="mt-1 font-mono text-cyan-300">{{ target.device_profiles|join(", ") if target.device_profiles else "any" }}</div>
+                                </div>
+                            </div>
+
+                            <details class="mt-3 border border-zinc-800 bg-[#050606] px-3 py-2 text-xs">
+                                <summary class="cursor-pointer font-semibold uppercase tracking-[0.12em] text-zinc-400">Runtime inventory</summary>
+                                <div class="mt-3 space-y-2">
+                                    <div>
+                                        <div class="font-semibold uppercase tracking-[0.12em] text-zinc-500">Runtimes</div>
+                                        <div class="mt-1 flex flex-wrap gap-1">
+                                        {% for runtime_name, runtime in (target.runtimes or {}).items() %}
+                                            <span class="border border-zinc-700 bg-zinc-950 px-2 py-1 font-mono text-zinc-200">{{ runtime_name }}</span>
+                                        {% endfor %}
+                                        {% if not target.runtimes %}
+                                            <span class="font-mono text-zinc-500">not declared</span>
+                                        {% endif %}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div class="font-semibold uppercase tracking-[0.12em] text-zinc-500">Accelerators</div>
+                                        <div class="mt-1 flex flex-wrap gap-1">
+                                        {% for accelerator, config in (target.accelerators or {}).items() %}
+                                            <span class="border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 font-mono text-emerald-300">{{ accelerator }}</span>
+                                        {% endfor %}
+                                        {% if not target.accelerators %}
+                                            <span class="font-mono text-zinc-500">none</span>
+                                        {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <form hx-post="/ui/hub/runtime-targets/validate" hx-target="#runtime-action-result" class="mt-4 grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
+                                <input type="hidden" name="runtime_target_id" value="{{ target.runtime_target_id }}">
+                                <input type="hidden" name="dry_run" value="true">
+                                <input type="hidden" name="allow_unsigned_package" value="false">
+                                <input type="hidden" name="strict_metadata" value="true">
+                                <select name="package_id" required {% if not packages %}disabled{% endif %} class="block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-xs text-zinc-100 outline-none focus:border-fuchsia-300 disabled:cursor-not-allowed disabled:opacity-50">
+                                    {% if not packages %}
+                                    <option value="">Build a package first</option>
+                                    {% endif %}
+                                    {% for package in packages %}
+                                    <option value="{{ package.package_id }}">{{ package.package_id }} v{{ package.version }}</option>
+                                    {% endfor %}
+                                </select>
+                                <button type="submit" {% if not packages %}disabled{% endif %} class="border border-fuchsia-300 bg-fuchsia-300 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-black hover:bg-fuchsia-200 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:bg-zinc-800 disabled:text-zinc-500">
+                                    Preview Command
+                                </button>
+                            </form>
+                        </article>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <aside class="bg-[#090a0a] p-5">
+                    <div class="mb-4">
+                        <h2 class="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-100">Register Runtime Image</h2>
+                        <p class="mt-1 text-xs text-zinc-500">Add a default demo image or a customer OS/runtime container for validation.</p>
+                    </div>
+
+                    <form hx-post="/ui/hub/runtime-targets/register" hx-target="#runtime-action-result" class="space-y-3">
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Target ID</label>
+                            <input name="runtime_target_id" required placeholder="customer-orin"
+                                   class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-fuchsia-300">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Container Image</label>
+                            <input name="image" required placeholder="registry.example.com/edge/orin-runtime:2026.06"
+                                   class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-fuchsia-300">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Device Profiles</label>
+                            <input name="device_profiles" placeholder="orin-tensorrt, arm64-jetson"
+                                   class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-fuchsia-300">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Runtimes</label>
+                            <input name="runtimes" placeholder="onnxruntime, tensorrt"
+                                   class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-fuchsia-300">
+                        </div>
+                        <details class="border border-zinc-800 bg-[#050606] px-3 py-2">
+                            <summary class="cursor-pointer text-xs font-semibold uppercase tracking-[0.12em] text-zinc-400">OS, architecture, and accelerator details</summary>
+                            <div class="mt-3 space-y-3">
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">OS</label>
+                                        <input name="os_name" value="linux"
+                                               class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none focus:border-fuchsia-300">
+                                    </div>
+                                    <div>
+                                        <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Arch</label>
+                                        <input name="arch" placeholder="arm64"
+                                               class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-fuchsia-300">
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Providers</label>
+                                    <input name="onnx_providers" placeholder="TensorrtExecutionProvider, CUDAExecutionProvider"
+                                           class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-fuchsia-300">
+                                </div>
+                                <div>
+                                    <label class="block text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Accelerators</label>
+                                    <input name="accelerators" placeholder="nvidia"
+                                           class="mt-1 block w-full border border-zinc-700 bg-[#050606] p-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-fuchsia-300">
+                                </div>
+                            </div>
+                        </details>
+                        <button type="submit" class="w-full border border-fuchsia-300 bg-fuchsia-300 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-black hover:bg-fuchsia-200">
+                            Register Runtime Image
+                        </button>
+                    </form>
+
+                    <div class="mt-5 border border-zinc-800 bg-[#0d0f0f] p-3">
+                        <div class="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500">Why this matters</div>
+                        <div class="mt-2 text-xs text-zinc-400">Runtime targets let customers bring their own OS/container stack while TEMMS keeps model compatibility, validation evidence, and rollout decisions tied to the exact edge environment.</div>
+                    </div>
+                </aside>
+            </section>
+        </div>
+    </div>
+</div>
+{% endblock %}

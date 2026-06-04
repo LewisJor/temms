@@ -24,6 +24,43 @@
         ],
         "classes": 80,
         "description": "YOLOv8n optimized for daylight conditions"
+      },
+      "input_schema": {
+        "shape": [
+          1,
+          3,
+          224,
+          224
+        ],
+        "dtype": "float32",
+        "source": "example-package"
+      },
+      "output_schema": {
+        "shape": [
+          1,
+          1000
+        ],
+        "dtype": "float32",
+        "source": "example-package"
+      },
+      "runtime_constraints": {
+        "device_profiles": [
+          "x86_64-cpu",
+          "arm64-cpu"
+        ],
+        "runtimes": [
+          "onnxruntime"
+        ]
+      },
+      "benchmark": {
+        "available": false,
+        "reason": "example package fixture",
+        "source": "example-package"
+      },
+      "provenance": {
+        "source": "example-package",
+        "run_id": "abc123def456",
+        "artifact_sha256": "724183bb2f97cdbef6fe3c3e60783cc6d36d44cb98d945e301c25a7a05e8282c"
       }
     },
     {
@@ -43,6 +80,43 @@
         ],
         "classes": 80,
         "description": "YOLOv8n optimized for low-light conditions"
+      },
+      "input_schema": {
+        "shape": [
+          1,
+          3,
+          224,
+          224
+        ],
+        "dtype": "float32",
+        "source": "example-package"
+      },
+      "output_schema": {
+        "shape": [
+          1,
+          1000
+        ],
+        "dtype": "float32",
+        "source": "example-package"
+      },
+      "runtime_constraints": {
+        "device_profiles": [
+          "x86_64-cpu",
+          "arm64-cpu"
+        ],
+        "runtimes": [
+          "onnxruntime"
+        ]
+      },
+      "benchmark": {
+        "available": false,
+        "reason": "example package fixture",
+        "source": "example-package"
+      },
+      "provenance": {
+        "source": "example-package",
+        "run_id": "abc123def456",
+        "artifact_sha256": "e41c275782c3ccff1e5da947aad448458239a7e1ffd1508300e863546525a52c"
       }
     },
     {
@@ -62,6 +136,44 @@
         ],
         "classes": 80,
         "description": "MobileNetV2 for low-power fallback"
+      },
+      "input_schema": {
+        "shape": [
+          1,
+          3,
+          224,
+          224
+        ],
+        "dtype": "float32",
+        "source": "example-package"
+      },
+      "output_schema": {
+        "shape": [
+          1,
+          1000
+        ],
+        "dtype": "float32",
+        "source": "example-package"
+      },
+      "runtime_constraints": {
+        "device_profiles": [
+          "x86_64-cpu",
+          "arm64-cpu",
+          "rpi5-tflite"
+        ],
+        "runtimes": [
+          "onnxruntime"
+        ]
+      },
+      "benchmark": {
+        "available": false,
+        "reason": "example package fixture",
+        "source": "example-package"
+      },
+      "provenance": {
+        "source": "example-package",
+        "run_id": "abc123def456",
+        "artifact_sha256": "8d10027b2afd2c7d5a3e30af674724e4048d39a5c46c2e0ebd227fc896c1001e"
       }
     }
   ],

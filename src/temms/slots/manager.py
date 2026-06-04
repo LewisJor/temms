@@ -107,9 +107,13 @@ class SlotManager(Database):
                 trigger_type TEXT,
                 trigger_detail TEXT,
                 conditions_snapshot JSON,
+                audit_metadata JSON,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        columns = {row["name"] for row in self.fetchall("PRAGMA table_info(slot_decisions)")}
+        if "audit_metadata" not in columns:
+            self.execute("ALTER TABLE slot_decisions ADD COLUMN audit_metadata JSON")
 
         self.conn.commit()
 
@@ -207,6 +211,7 @@ class SlotManager(Database):
         trigger_type: str,
         trigger_detail: str,
         conditions: Optional[Dict[str, Any]] = None,
+        audit_metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Activate a model in a slot.
@@ -217,6 +222,7 @@ class SlotManager(Database):
             trigger_type: policy, operator, fallback, startup
             trigger_detail: Policy name or operator ID
             conditions: Current condition snapshot
+            audit_metadata: Model/package/provenance details for evidence exports
         """
         slot = self.get_slot(slot_name)
         if not slot:
@@ -225,6 +231,7 @@ class SlotManager(Database):
         from_model = slot.active_model_id
         updated_at = datetime.now()
         conditions = conditions or {}
+        audit_metadata = audit_metadata or {}
 
         # Update slot
         self.execute(
@@ -240,8 +247,8 @@ class SlotManager(Database):
         self.execute(
             """
             INSERT INTO slot_decisions
-            (slot, from_model, to_model, trigger_type, trigger_detail, conditions_snapshot)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (slot, from_model, to_model, trigger_type, trigger_detail, conditions_snapshot, audit_metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 slot_name,
@@ -250,6 +257,7 @@ class SlotManager(Database):
                 trigger_type,
                 trigger_detail,
                 json.dumps(conditions),
+                json.dumps(audit_metadata),
             ),
         )
 

@@ -163,6 +163,15 @@ def set(
         model_id=model.id,
         trigger_type="operator",
         trigger_detail=reason,
+        audit_metadata={
+            "model_id": model.id,
+            "model_name": model.name,
+            "model_version": model.version,
+            "model_format": model.format.value,
+            "model_sha256": model.sha256,
+            "package_id": model.package_id,
+            "provenance": model.metadata.get("provenance", {}),
+        },
     )
 
     console.print(f"[green]✓ Activated {model_name} in slot '{slot_name}'[/green]")

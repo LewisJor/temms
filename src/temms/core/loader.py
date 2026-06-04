@@ -37,15 +37,31 @@ class ModelRuntime(Protocol):
 class ONNXRuntime:
     """ONNX Runtime wrapper."""
 
-    def __init__(self):
+    def __init__(self, providers: Optional[list[str]] = None):
         self.session: Optional[Any] = None
+        self.providers = providers
 
     def load(self, model_path: Path) -> Any:
         """Load ONNX model."""
         try:
             import onnxruntime as ort
-            self.session = ort.InferenceSession(str(model_path))
-            logger.info(f"Loaded ONNX model from {model_path}")
+            kwargs = {}
+            if self.providers:
+                available = set(ort.get_available_providers())
+                selected = [provider for provider in self.providers if provider in available]
+                if selected:
+                    kwargs["providers"] = selected
+                else:
+                    raise RuntimeError(
+                        "None of the requested ONNX providers are available: "
+                        + ", ".join(self.providers)
+                    )
+            self.session = ort.InferenceSession(str(model_path), **kwargs)
+            logger.info(
+                "Loaded ONNX model from %s providers=%s",
+                model_path,
+                getattr(self.session, "get_providers", lambda: [])(),
+            )
             return self.session
         except ImportError:
             raise RuntimeError("onnxruntime not installed. Install with: pip install onnxruntime")
@@ -67,19 +83,34 @@ class ONNXRuntime:
 class TFLiteRuntime:
     """TensorFlow Lite runtime wrapper."""
 
-    def __init__(self):
+    def __init__(self, num_threads: Optional[int] = None):
         self.interpreter: Optional[Any] = None
+        self.num_threads = num_threads
 
     def load(self, model_path: Path) -> Any:
         """Load TFLite model."""
         try:
-            import tensorflow as tf
-            self.interpreter = tf.lite.Interpreter(model_path=str(model_path))
+            try:
+                from tflite_runtime.interpreter import Interpreter
+            except ImportError:
+                import tensorflow as tf
+
+                Interpreter = tf.lite.Interpreter
+            kwargs = {"model_path": str(model_path)}
+            if self.num_threads:
+                kwargs["num_threads"] = self.num_threads
+            self.interpreter = Interpreter(**kwargs)
             self.interpreter.allocate_tensors()
-            logger.info(f"Loaded TFLite model from {model_path}")
+            logger.info(
+                "Loaded TFLite model from %s num_threads=%s",
+                model_path,
+                self.num_threads,
+            )
             return self.interpreter
         except ImportError:
-            raise RuntimeError("tensorflow not installed. Install with: pip install tensorflow")
+            raise RuntimeError(
+                "TFLite runtime not installed. Install tensorflow or tflite_runtime."
+            )
 
     def infer(self, input_data: Any) -> Any:
         """Run TFLite inference."""
@@ -134,6 +165,43 @@ class TorchScriptRuntime:
         logger.info("Unloaded TorchScript model")
 
 
+class TensorRTRuntime:
+    """TensorRT serialized engine runtime wrapper."""
+
+    def __init__(self):
+        self.engine: Optional[Any] = None
+        self.context: Optional[Any] = None
+
+    def load(self, model_path: Path) -> Any:
+        """Load a serialized TensorRT engine."""
+        try:
+            import tensorrt as trt
+
+            logger_obj = trt.Logger(trt.Logger.WARNING)
+            with trt.Runtime(logger_obj) as runtime:
+                self.engine = runtime.deserialize_cuda_engine(model_path.read_bytes())
+            if self.engine is None:
+                raise RuntimeError(f"Could not deserialize TensorRT engine: {model_path}")
+            self.context = self.engine.create_execution_context()
+            logger.info("Loaded TensorRT engine from %s", model_path)
+            return self.context
+        except ImportError:
+            raise RuntimeError("tensorrt not installed. Install NVIDIA TensorRT bindings.")
+
+    def infer(self, input_data: Any) -> Any:
+        """Run TensorRT inference."""
+        raise RuntimeError(
+            "Generic TensorRT inference requires deployment-specific I/O bindings. "
+            "Load the engine through a TEMMS runtime plugin for this device profile."
+        )
+
+    def unload(self) -> None:
+        """Unload TensorRT engine."""
+        self.context = None
+        self.engine = None
+        logger.info("Unloaded TensorRT engine")
+
+
 class ModelLoader:
     """Unified model loader with hot-swap support."""
 
@@ -142,13 +210,19 @@ class ModelLoader:
         self.current_runtime_type: Optional[RuntimeType] = None
         self.current_path: Optional[Path] = None
 
-    def load_model(self, model_path: Path, runtime_type: RuntimeType) -> ModelRuntime:
+    def load_model(
+        self,
+        model_path: Path,
+        runtime_type: RuntimeType,
+        runtime_options: Optional[dict[str, Any]] = None,
+    ) -> ModelRuntime:
         """
         Load a model with specified runtime.
 
         Args:
             model_path: Path to model file
             runtime_type: Runtime type to use
+            runtime_options: Runtime-specific options such as ONNX providers
 
         Returns:
             Loaded model runtime
@@ -162,13 +236,15 @@ class ModelLoader:
             RuntimeType.ONNX: ONNXRuntime,
             RuntimeType.TFLITE: TFLiteRuntime,
             RuntimeType.TORCHSCRIPT: TorchScriptRuntime,
+            RuntimeType.TENSORRT: TensorRTRuntime,
         }
 
         runtime_class = runtime_map.get(runtime_type)
         if runtime_class is None:
             raise ValueError(f"Unsupported runtime type: {runtime_type}")
 
-        runtime = runtime_class()
+        runtime_options = runtime_options or {}
+        runtime = runtime_class(**runtime_options)
         runtime.load(model_path)
 
         self.current_model = runtime

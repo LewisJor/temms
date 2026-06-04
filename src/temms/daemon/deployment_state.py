@@ -7,6 +7,8 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
+from temms.core.atomic import write_json_atomic
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,7 +41,7 @@ class DeploymentStateStore:
             "reason": reason,
             "updated_at": datetime.now().isoformat(),
         }
-        self.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        write_json_atomic(self.path, payload, indent=2)
         logger.info("Deployment state transition -> %s (%s)", normalized, reason)
 
     def _read(self) -> dict:
