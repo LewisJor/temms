@@ -58,7 +58,7 @@ class InferenceRuntime:
     Manages model inference across multiple slots.
 
     Features:
-    - Per-slot model management
+    - Per-slot model activation control
     - Hot-swap: load new model while old serves requests
     - Thread-safe inference with copy-on-read locking
     - Fallback chain execution on load failure

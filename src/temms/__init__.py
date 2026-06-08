@@ -1,13 +1,15 @@
 """
 TEMMS - Tactical Edge Model Management System
 
-An offline-first ML model management system for edge devices operating in DDIL
-(Denied, Degraded, Intermittent, Limited connectivity) environments.
+Adaptive inference control and decision evidence for disconnected edge devices.
 
-Three-tier architecture:
-- MLflow (Cloud): Standard registry, not modified
-- TEMMS Hub: DDIL sync layer, packages models
-- TEMMS Daemon: Edge runtime, policy-driven switching
+TEMMS runs beside an edge inference stack, chooses among already-packaged
+candidate models from local conditions and policy, and records why each model
+activation happened.
+
+Hub-and-daemon architecture:
+- TEMMS Hub: model inventory, packaging, signing, and targeted container tests
+- TEMMS Daemon: local runtime, policy evaluation, hot-swap, fallback, evidence
 """
 
 __version__ = "0.1.0"

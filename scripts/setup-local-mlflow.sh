@@ -19,7 +19,7 @@ echo ""
 
 # Check Python
 if ! command -v python3 &> /dev/null; then
-    echo "Error: Python 3 not found. Please install Python 3.10+"
+    echo "Error: Python 3 not found. Please install Python 3.11+"
     exit 1
 fi
 
@@ -104,7 +104,7 @@ services:
     restart: unless-stopped
 
   mlflow:
-    image: python:3.10-slim
+    image: python:3.11-slim
     container_name: mlflow-server
     depends_on:
       - postgres

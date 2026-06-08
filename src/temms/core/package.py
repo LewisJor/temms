@@ -59,7 +59,7 @@ class PackageManifest(BaseModel):
     version: str
     description: Optional[str] = None
     created_at: str
-    created_by: Optional[str] = None  # MLflow user, Hub identifier, etc.
+    created_by: Optional[str] = None  # MLflow user, package pipeline identifier, etc.
 
     models: List[ModelArtifact] = Field(default_factory=list)
     policies: List[PolicyArtifact] = Field(default_factory=list)

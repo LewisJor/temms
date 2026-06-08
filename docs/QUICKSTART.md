@@ -11,7 +11,7 @@ This gets you from zero to watching TEMMS switch models in under 5 minutes.
 ## Step 1: Clone and install
 
 ```bash
-git clone https://github.com/yourusername/temms.git
+git clone https://github.com/LewisJor/temms.git
 cd temms
 
 # Create a virtualenv (recommended)
@@ -34,18 +34,10 @@ temms --help
 
 ```bash
 make test
-# Expected: full test suite passes in a few seconds
+# Expected: local unit/integration tests should pass; Docker E2E tests skip unless the daemon is running.
 ```
 
 If any tests fail, check your Python version (`python --version` — need 3.11+) and that numpy/onnxruntime installed correctly.
-
-To verify the signed Hub Lite edge rollout paths specifically:
-
-```bash
-make mvp-smoke
-```
-
-This runs local central-to-edge flows for both air-gap bundle transfer and online Hub sync with package artifact download, signed apply, and edge activation.
 
 ## Step 3: Start the Docker sim environment
 
@@ -54,7 +46,7 @@ This launches two containers:
 | Service | URL | What it does |
 |---------|-----|-------------|
 | TEMMS Daemon | http://localhost:8080 | Edge runtime + inference server |
-| MLflow | http://localhost:5000 | Model registry UI |
+| MLflow | http://localhost:5001 | Model registry UI |
 
 ```bash
 make docker-up
@@ -69,7 +61,13 @@ curl http://localhost:8080/v1/health
 
 Open the TEMMS dashboard: http://localhost:8080/ui/
 
-Open the MLflow UI: http://localhost:5000
+Open the MLflow UI: http://localhost:5001
+
+If that port is already in use, choose another host port:
+
+```bash
+MLFLOW_HOST_PORT=5050 make docker-up
+```
 
 ## Step 4: See model switching in action
 
@@ -164,10 +162,6 @@ When fog conditions were injected, the policy engine matched the `fog-conditions
 ## Next steps
 
 - [Architecture overview](architecture.md) — how the three tiers fit together
-- [Hub Lite](hub-lite.md) — MVP fleet inventory, rollout state, and air-gap sync
 - [Policy reference](policy-reference.md) — full YAML schema for writing policies
-- [MLflow packaging](mlflow-packaging.md) — build signed edge packages from MLflow
-- [Edge operations](edge-operations.md) — diagnose VMs, benchmark models, and export telemetry
-- [Run on a Linux VM](run-on-linux-vm.md) — repeatable single-agent VM deployment
-- [examples/policies/](../examples/policies/) — real policy files you can study
+- [examples/policies/](https://github.com/LewisJor/temms/tree/main/examples/policies) — real policy files you can study
 - Bring your own ONNX models — drop them in `examples/package-example/models/` and update `manifest.json`

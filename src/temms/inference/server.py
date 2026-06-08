@@ -22,6 +22,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Request, 
 from prometheus_client import make_asgi_app
 from pydantic import BaseModel, Field
 
+from temms.controller import AdaptiveInferenceController
 from temms.slots.manager import SlotManager, SlotState
 from temms.conditions.store import ConditionStore
 from temms.policy.engine import PolicyEngine
@@ -88,6 +89,12 @@ class ConditionUpdateRequest(BaseModel):
     """Request to update conditions."""
 
     conditions: Dict[str, Any]  # path -> value
+
+
+class SlotEvaluateRequest(BaseModel):
+    """Request to evaluate local adaptive selection for one slot."""
+
+    apply: bool = True
 
 
 class ConditionUpdateResponse(BaseModel):
@@ -318,6 +325,13 @@ class AppState:
         self.api_token = None
         self.hub_lite = None
         self.telemetry = None
+        self.controller = AdaptiveInferenceController(
+            slot_manager=slot_manager,
+            condition_store=condition_store,
+            policy_engine=policy_engine,
+            model_cache=model_cache,
+            inference_runtime=inference_runtime,
+        )
 
 
 # Global state - set during app creation
@@ -776,6 +790,22 @@ async def system_status(state: AppState = Depends(get_state)) -> SystemStatusRes
     )
 
 
+@status_router.get("/evidence")
+async def export_edge_evidence(
+    limit: int = 100,
+    state: AppState = Depends(get_state),
+) -> Dict[str, Any]:
+    """Export local decision evidence from the edge runtime state."""
+    from temms.evidence import build_evidence_bundle
+
+    return build_evidence_bundle(
+        state,
+        telemetry_limit=limit,
+        decision_limit=limit,
+        include_benchmarks=True,
+    )
+
+
 # ----- Control Endpoints -----
 
 
@@ -790,21 +820,6 @@ async def override_model(
 
     This bypasses policy evaluation until cleared.
     """
-    if state.offline_mode and state.pending_operations is not None:
-        state.pending_operations.enqueue(
-            "override_model",
-            {
-                "slot_name": slot_name,
-                "request": request.model_dump(),
-            },
-        )
-        return {
-            "status": "buffered",
-            "slot": slot_name,
-            "offline": True,
-            "timestamp": datetime.now().isoformat(),
-        }
-
     # Validate slot exists
     slot = state.slot_manager.get_slot(slot_name)
     if slot is None:
@@ -854,13 +869,38 @@ async def override_model(
 
     logger.info(f"Operator override: slot={slot_name}, model={model.id}, reason={request.reason}")
 
+    if state.offline_mode and state.pending_operations is not None:
+        state.pending_operations.enqueue(
+            "override_model",
+            {
+                "slot_name": slot_name,
+                "request": request.model_dump(),
+                "applied_locally": True,
+            },
+        )
+
     return {
-        "status": "success",
+        "status": "buffered" if state.offline_mode else "success",
         "slot": slot_name,
         "model": model.id,
         "reason": request.reason,
+        "offline": state.offline_mode,
+        "applied_locally": True,
         "timestamp": datetime.now().isoformat(),
     }
+
+
+@control_router.post("/slots/{slot_name}/evaluate")
+async def evaluate_slot_control(
+    slot_name: str,
+    request: SlotEvaluateRequest,
+    state: AppState = Depends(get_state),
+) -> Dict[str, Any]:
+    """Evaluate local adaptive model selection for a slot."""
+    decision = await state.controller.evaluate_slot(slot_name, apply=request.apply)
+    if decision.status == "slot_not_found":
+        raise HTTPException(status_code=404, detail=decision.reason)
+    return decision.to_dict()
 
 
 @control_router.post("/slots/{slot_name}/rollback")
@@ -978,23 +1018,14 @@ async def update_conditions(
 
     These are set with operator priority (1000) to override sensor data.
     """
-    if state.offline_mode and state.pending_operations is not None:
-        state.pending_operations.enqueue(
-            "update_conditions",
-            {"conditions": request.conditions},
-        )
-        return ConditionUpdateResponse(
-            updated=list(request.conditions.keys()),
-            timestamp=datetime.now().isoformat(),
-        )
-
     updated = []
+    source = "operator_api_offline" if state.offline_mode else "operator_api"
 
     for path, value in request.conditions.items():
         state.condition_store.set(
             path=path,
             value=value,
-            source="operator_api",
+            source=source,
             priority=1000,  # Operator override priority
             confidence=1.0,
         )
@@ -1008,9 +1039,18 @@ async def update_conditions(
         {
             "updated": updated,
             "count": len(updated),
-            "source": "operator_api",
+            "source": source,
         },
     )
+
+    if state.offline_mode and state.pending_operations is not None:
+        state.pending_operations.enqueue(
+            "update_conditions",
+            {
+                "conditions": request.conditions,
+                "applied_locally": True,
+            },
+        )
 
     return ConditionUpdateResponse(
         updated=updated,

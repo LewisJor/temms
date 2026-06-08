@@ -36,7 +36,7 @@ echo "[4/5] Creating vision slot..."
 temms slot create vision \
     --description "Primary vision model" \
     --required \
-    --default model-yolov8-daylight-001 \
+    --default yolov8-daylight \
     --config /etc/temms/temms.yaml 2>&1 || echo "  (slot may already exist)"
 
 # 5. Copy policies to config directory

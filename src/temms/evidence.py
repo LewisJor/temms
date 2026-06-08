@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import socket
 import tempfile
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -30,7 +31,7 @@ def build_evidence_bundle(
     hub_benchmarks = hub_benchmark_timeline(state, limit=decision_limit)
     package_imports = package_import_timeline(state, limit=decision_limit)
 
-    return {
+    payload = {
         "schema_version": "temms-evidence-bundle/v1",
         "exported_at": datetime.utcnow().isoformat() + "Z",
         "hub_lite": (
@@ -67,6 +68,21 @@ def build_evidence_bundle(
             package_imports,
         ),
     }
+    payload["integrity"] = {
+        "payload_sha256": _canonical_hash(payload),
+        "algorithm": "sha256/json-canonical-v1",
+    }
+    return payload
+
+
+def _canonical_hash(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def decision_timeline(state: Any, limit: int = 100) -> list[dict[str, Any]]:
@@ -342,6 +358,120 @@ def _package_to_dict(package: Any) -> dict[str, Any]:
         "imported_at": package.imported_at.isoformat(),
         "manifest": package.manifest,
     }
+
+
+def _safe_json_loads(value: Any, default: Any) -> Any:
+    if value is None:
+        return default
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return default
+
+
+def _model_dict(model: Any | None) -> dict[str, Any] | None:
+    return model.to_dict() if model is not None else None
+
+
+class EvidenceBundleBuilder:
+    """Build portable evidence directly from local stores."""
+
+    def __init__(
+        self,
+        slot_manager: Any,
+        condition_store: Any,
+        policy_engine: Any,
+        model_cache: Any,
+    ):
+        self.slot_manager = slot_manager
+        self.condition_store = condition_store
+        self.policy_engine = policy_engine
+        self.model_cache = model_cache
+
+    def build(
+        self,
+        slot_name: str | None = None,
+        limit: int = 100,
+        runtime_slots: dict[str, dict[str, Any]] | None = None,
+        offline_mode: bool = False,
+        pending_operations: list[dict[str, Any]] | None = None,
+        deployment_state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        models = {model.id: model for model in self.model_cache.list_models()}
+        packages = {package.id: package for package in self.model_cache.list_packages()}
+        decisions = self.slot_manager.get_decision_log(slot_name=slot_name, limit=limit)
+        enriched_decisions = [
+            self._decision_evidence(decision, models, packages)
+            for decision in decisions
+        ]
+        policies = [
+            policy.model_dump(mode="json", exclude_none=True)
+            for policy in self.policy_engine.list_policies()
+        ]
+        conditions = self.condition_store.get_all()
+
+        payload: dict[str, Any] = {
+            "schema_version": "temms-evidence-bundle/v1",
+            "exported_at": datetime.utcnow().isoformat() + "Z",
+            "scope": {
+                "slot": slot_name,
+                "decision_limit": limit,
+            },
+            "runtime": {
+                "offline_mode": offline_mode,
+                "deployment_state": deployment_state,
+                "pending_operations": pending_operations or [],
+                "runtime_slots": runtime_slots or {},
+            },
+            "slots": [_slot_to_dict(slot) for slot in self.slot_manager.list_slots()],
+            "conditions": {
+                "snapshot": self.condition_store.get_snapshot(),
+                "values": {
+                    path: value.to_dict()
+                    for path, value in sorted(conditions.items())
+                },
+            },
+            "policies": policies,
+            "models": [_model_dict(model) for model in models.values()],
+            "packages": [_package_to_dict(package) for package in packages.values()],
+            "decisions": enriched_decisions,
+        }
+        payload["integrity"] = {
+            "payload_sha256": _canonical_hash(payload),
+            "algorithm": "sha256/json-canonical-v1",
+        }
+        return payload
+
+    def _decision_evidence(
+        self,
+        decision: dict[str, Any],
+        models: dict[str, Any],
+        packages: dict[str, Any],
+    ) -> dict[str, Any]:
+        to_model = models.get(decision.get("to_model"))
+        from_model = models.get(decision.get("from_model"))
+        package = packages.get(to_model.package_id) if to_model is not None else None
+
+        return {
+            "id": decision.get("id"),
+            "slot": decision.get("slot"),
+            "from_model": decision.get("from_model"),
+            "to_model": decision.get("to_model"),
+            "trigger_type": decision.get("trigger_type"),
+            "trigger_detail": decision.get("trigger_detail"),
+            "created_at": decision.get("created_at"),
+            "conditions_snapshot": _safe_json_loads(
+                decision.get("conditions_snapshot"),
+                {},
+            ),
+            "model_evidence": {
+                "from_model": _model_dict(from_model),
+                "to_model": _model_dict(to_model),
+                "to_package": _package_to_dict(package) if package is not None else None,
+            },
+        }
 
 
 def _package_import_slot(manifest: dict[str, Any]) -> str | None:

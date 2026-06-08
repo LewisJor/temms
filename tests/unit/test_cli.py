@@ -131,6 +131,58 @@ class TestStatusCommand:
         assert "Cached models" in result.output
 
 
+# ── evidence ────────────────────────────────────────────────────────
+
+
+class TestEvidenceCommand:
+    """Test 'temms evidence' command."""
+
+    def test_evidence_exports_local_bundle(self, temms_env):
+        from temms.conditions.store import ConditionStore
+        from temms.slots.manager import SlotManager
+
+        slot_manager = SlotManager(temms_env["data_dir"] / "temms.db")
+        condition_store = ConditionStore(temms_env["data_dir"] / "temms.db")
+        slot_manager.create_slot(
+            name="vision",
+            description="Vision",
+            required=True,
+        )
+        condition_store.set(
+            path="platform.battery.percent",
+            value=18,
+            source="operator",
+            priority=1000,
+        )
+        slot_manager.activate_model(
+            slot_name="vision",
+            model_id="tiny-v1",
+            trigger_type="policy",
+            trigger_detail="battery-adaptive/low-power",
+            conditions=condition_store.get_snapshot(),
+        )
+
+        output = temms_env["data_dir"] / "evidence.json"
+        result = runner.invoke(
+            app,
+            [
+                "evidence",
+                "--slot", "vision",
+                "--output", str(output),
+                "--config", str(temms_env["config_path"]),
+            ],
+        )
+
+        assert result.exit_code == 0
+        bundle = json.loads(output.read_text())
+        assert bundle["schema_version"] == "temms-evidence-bundle/v1"
+        assert bundle["decisions"][0]["to_model"] == "tiny-v1"
+        assert (
+            bundle["decisions"][0]["conditions_snapshot"]["platform"]["battery"]["percent"]
+            == 18
+        )
+
+
 # ── daemon ───────────────────────────────────────────────────────────
 
 

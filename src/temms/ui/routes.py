@@ -23,6 +23,11 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
+def _template_response(request: Request, name: str, context: Dict[str, Any]) -> HTMLResponse:
+    context.setdefault("request", request)
+    return templates.TemplateResponse(request, name, context)
+
+
 def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
     """
     Create the UI router with state dependency injection.
@@ -49,13 +54,13 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         agent installs keep the legacy technical dashboard as their root view.
         """
         if getattr(state, "hub_lite", None) is not None:
-            return templates.TemplateResponse("operate.html", _operate_ui_context(request, state))
-        return templates.TemplateResponse("dashboard.html", _dashboard_ui_context(request, state))
+            return _template_response(request, "operate.html", _operate_ui_context(request, state))
+        return _template_response(request, "dashboard.html", _dashboard_ui_context(request, state))
 
     @router.get("/dashboard", response_class=HTMLResponse)
     async def dashboard_page(request: Request, state=Depends(get_state_func)):
         """Technical dashboard with system overview."""
-        return templates.TemplateResponse("dashboard.html", _dashboard_ui_context(request, state))
+        return _template_response(request, "dashboard.html", _dashboard_ui_context(request, state))
 
     # ---- Slots ----
 
@@ -63,7 +68,8 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
     async def slots_page(request: Request, state=Depends(get_state_func)):
         """List all slots."""
         slots = state.slot_manager.list_slots()
-        return templates.TemplateResponse(
+        return _template_response(
+            request,
             "slots.html",
             {
                 "request": request,
@@ -91,7 +97,8 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         # Get recent decisions for this slot
         decisions = state.slot_manager.get_decision_log(slot_name, limit=10)
 
-        return templates.TemplateResponse(
+        return _template_response(
+            request,
             "slot_detail.html",
             {
                 "request": request,
@@ -176,7 +183,8 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
     async def conditions_page(request: Request, state=Depends(get_state_func)):
         """List all conditions with injection form."""
         conditions = list(state.condition_store.get_all().values())
-        return templates.TemplateResponse(
+        return _template_response(
+            request,
             "conditions.html",
             {
                 "request": request,
@@ -254,7 +262,8 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
 
         slots = state.slot_manager.list_slots()
 
-        return templates.TemplateResponse(
+        return _template_response(
+            request,
             "decisions.html",
             {
                 "request": request,
@@ -270,7 +279,8 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
     async def models_page(request: Request, state=Depends(get_state_func)):
         """List cached models."""
         models = state.model_cache.list_models()
-        return templates.TemplateResponse(
+        return _template_response(
+            request,
             "models.html",
             {
                 "request": request,
@@ -284,7 +294,8 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
     async def import_page(request: Request, state=Depends(get_state_func)):
         """Package import page."""
         packages = state.model_cache.list_packages()
-        return templates.TemplateResponse(
+        return _template_response(
+            request,
             "import_page.html",
             {
                 "request": request,
@@ -356,7 +367,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         if hub is None:
             raise HTTPException(status_code=404, detail="Hub Lite is not configured")
 
-        return templates.TemplateResponse("operate.html", _operate_ui_context(request, state))
+        return _template_response(request, "operate.html", _operate_ui_context(request, state))
 
     @router.get("/runtimes", response_class=HTMLResponse)
     async def runtime_catalog_page(request: Request, state=Depends(get_state_func)):
@@ -365,7 +376,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         if hub is None:
             raise HTTPException(status_code=404, detail="Hub Lite is not configured")
 
-        return templates.TemplateResponse("runtime_catalog.html", _hub_ui_context(request, state))
+        return _template_response(request, "runtime_catalog.html", _hub_ui_context(request, state))
 
     # ---- Hub Lite Operator Console ----
 
@@ -376,7 +387,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         if hub is None:
             raise HTTPException(status_code=404, detail="Hub Lite is not configured")
 
-        return templates.TemplateResponse("hub.html", _hub_ui_context(request, state))
+        return _template_response(request, "hub.html", _hub_ui_context(request, state))
 
     @router.post(
         "/hub/devices/enroll",

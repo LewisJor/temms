@@ -1,37 +1,51 @@
 # Architecture
 
-## Three-Tier Design
+## System Context
 
-TEMMS uses a three-tier architecture. Each tier can run independently and offline.
+TEMMS has a hub-and-daemon architecture. The daemon runs on the edge node. Hub
+is the upstream tool for managing candidate models, packaging them with policy
+metadata, signing artifacts, and running targeted container tests for the
+runtimes or device profiles that will consume them.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  Tier 1: MLflow                                          │
-│  Standard model registry. Not modified. Can be local or  │
-│  cloud. Data scientists use the UI they already know.    │
+│  Model sources                                           │
+│  Local files, registry exports, training pipelines,      │
+│  agent-generated models, or external build systems.      │
 └──────────────────────┬───────────────────────────────────┘
-                       │ Build signed TEMMS packages from registry artifacts
+                       │ Candidate models and metadata
                        ▼
 ┌──────────────────────────────────────────────────────────┐
-│  Tier 2: TEMMS Hub Lite                                  │
-│  Packages models for edge consumption. Tracks inventory, │
-│  coordinates rollouts, and exports air-gap bundles.      │
+│  TEMMS Hub                                               │
+│  Model inventory, package assembly, artifact signing,    │
+│  targeted container tests, compatibility evidence.       │
 └──────────────────────┬───────────────────────────────────┘
-                       │ Sync/apply signed packages (network, USB, SD card)
+                       │ Signed packages and policies
+                       │ over network or removable media
                        ▼
 ┌──────────────────────────────────────────────────────────┐
-│  Tier 3: TEMMS Daemon (this repo)                        │
-│  Edge runtime. Receives packages, manages local cache,   │
-│  evaluates policies, switches models, serves inference.  │
-│  Runs with ZERO network dependencies.                    │
+│  TEMMS daemon                                            │
+│  Imports packages, manages the local model cache,        │
+│  evaluates policies, switches models, serves inference,  │
+│  and records decision evidence.                          │
 └──────────────────────────────────────────────────────────┘
 ```
 
-You only need Tier 3 to get started. Tier 1 (MLflow) is optional for local development. Tier 2 (Hub Lite) is the MVP fleet path for signed package rollouts and air-gapped transfers.
+The daemon does not require Hub or upstream connectivity to evaluate policies or
+serve inference once packages and policies are available locally. Hub improves
+the artifact handoff before deployment; it is not required for local model
+selection after a package is imported.
+
+TEMMS does not implement model training, labeling, experiment tracking, or
+general fleet orchestration. Hub owns package preparation and validation;
+the daemon owns the edge-node runtime: conditions, policies, model activation,
+fallback, operator override, and decision evidence.
 
 ## TEMMS Daemon Internals
 
-The daemon is a single async Python process. No microservices, no Kubernetes — edge devices need simplicity.
+The daemon is a single async Python process. It avoids external service
+dependencies so it can run on small edge devices and continue operating while
+disconnected.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -197,7 +211,8 @@ For each running slot:
 
 ## Key Design Decisions
 
-**Single process, no microservices.** Edge devices have 4GB RAM. We can't afford Docker-in-Docker or K3s overhead. One Python process does everything.
+**Single process.** One Python process manages local state, policy evaluation,
+model activation, inference serving, and the control API.
 
 **SQLite, not Postgres.** Zero dependencies, embedded, works offline. WAL mode for concurrent reads during inference.
 
@@ -205,6 +220,9 @@ For each running slot:
 
 **Hot-swap, not restart.** Restarting a model loader takes seconds and drops requests. Hot-swap takes milliseconds and drops nothing.
 
-**Operator override is king.** In safety-critical systems, the human must be able to override any automated decision. TEMMS enforces this at the architecture level — operator commands have priority 1000, policy decisions have priority ≤ 999.
+**Operator override has highest priority.** Operator-provided conditions and
+manual model selections are represented with higher priority than collector or
+policy-driven updates.
 
-**Log everything.** Every model switch is logged with the full condition snapshot. This enables post-mission analysis: "Why did the system switch to thermal at 14:32?" Answer: visibility was 15m, mission priority was critical, fog-conditions rule matched.
+**Log model decisions.** Every model switch is logged with the condition
+snapshot and trigger details so the active model can be reconstructed later.
