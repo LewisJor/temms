@@ -161,6 +161,7 @@ class TestDeployArtifacts:
         assert "actions/configure-pages@v6" in workflow
         assert "actions/upload-pages-artifact@v5" in workflow
         assert "actions/deploy-pages@v5" in workflow
+        assert "github.event_name == 'workflow_dispatch'" in workflow
         assert "github.ref == 'refs/heads/main'" in workflow
         assert "pages: write" in workflow
         assert "id-token: write" in workflow
