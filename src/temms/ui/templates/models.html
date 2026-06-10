@@ -4,47 +4,290 @@
 {% block title %}TEMMS - Models{% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <h1 class="text-2xl font-bold text-gray-800">Cached Models</h1>
+{% set check_classes = {
+    "pass": "border-emerald-200 bg-emerald-50 text-emerald-700",
+    "warn": "border-amber-200 bg-amber-50 text-amber-800",
+    "unknown": "border-slate-200 bg-slate-50 text-slate-500",
+    "fail": "border-red-200 bg-red-50 text-red-700"
+} %}
+{% set state_classes = {
+    "green": "text-emerald-700",
+    "blue": "text-blue-700",
+    "amber": "text-amber-800",
+    "slate": "text-slate-600"
+} %}
+{% set state_dot_classes = {
+    "green": "bg-emerald-500",
+    "blue": "bg-blue-500",
+    "amber": "bg-amber-500",
+    "slate": "bg-slate-400"
+} %}
 
-    <div class="bg-white rounded-lg shadow overflow-hidden">
-        <table class="min-w-full divide-y divide-gray-200">
-            <thead class="bg-gray-50">
-                <tr>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Version</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Format</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Size</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
-                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Imported</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-200">
-                {% for m in models %}
-                <tr>
-                    <td class="px-4 py-3 text-sm font-medium text-gray-900">{{ m.name }}</td>
-                    <td class="px-4 py-3 text-sm">{{ m.version }}</td>
-                    <td class="px-4 py-3">
-                        <span class="px-2 py-0.5 rounded text-xs bg-blue-100 text-blue-800">{{ m.format.value }}</span>
-                    </td>
-                    <td class="px-4 py-3 text-sm text-gray-500">
-                        {% if m.size_bytes > 1048576 %}
-                        {{ "%.1f"|format(m.size_bytes / 1048576) }} MB
-                        {% elif m.size_bytes > 1024 %}
-                        {{ "%.1f"|format(m.size_bytes / 1024) }} KB
-                        {% else %}
-                        {{ m.size_bytes }} B
-                        {% endif %}
-                    </td>
-                    <td class="px-4 py-3 text-sm font-mono text-gray-400">{{ m.id }}</td>
-                    <td class="px-4 py-3 text-sm text-gray-500">{{ m.imported_at[:19] if m.imported_at else "-" }}</td>
-                </tr>
-                {% endfor %}
-                {% if not models %}
-                <tr><td colspan="6" class="px-4 py-3 text-sm text-gray-500 text-center">No models cached. Import a package first.</td></tr>
+<div class="space-y-5">
+    <header class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Model -> Package -> Target -> Deploy Edge/SIM</p>
+            <h1 class="text-2xl font-bold text-slate-950">Models</h1>
+        </div>
+
+        <div class="flex flex-wrap gap-2 text-xs">
+            {% if registry_status.available %}
+            <span class="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 font-medium text-emerald-700">
+                <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
+                Registry online
+            </span>
+            {% else %}
+            <span class="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 font-medium text-amber-800">
+                <span class="h-2 w-2 rounded-full bg-amber-500"></span>
+                {{ registry_status.message or "Registry offline" }}
+            </span>
+            {% endif %}
+            <span class="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600">{{ catalog_summary.registry_only }} registry</span>
+            <span class="rounded-full border border-amber-200 bg-white px-3 py-1 text-amber-800">{{ catalog_summary.needs_evidence }} needs evidence</span>
+            <span class="rounded-full border border-blue-200 bg-white px-3 py-1 text-blue-700">{{ catalog_summary.ready }} ready</span>
+            <span class="rounded-full border border-emerald-200 bg-white px-3 py-1 text-emerald-700">{{ catalog_summary.deployed }} deployed</span>
+        </div>
+    </header>
+
+    <section class="overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <div class="grid divide-y divide-slate-200 md:grid-cols-4 md:divide-x md:divide-y-0">
+            <div class="px-4 py-3">
+                <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">1 Model</div>
+                <div class="mt-1 text-sm font-medium text-slate-950">{{ catalog_summary.total }} available</div>
+            </div>
+            <div class="px-4 py-3">
+                <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">2 Package</div>
+                <div class="mt-2 flex flex-wrap gap-1.5">
+                    {% for label in required_evidence %}
+                    <span class="inline-flex rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700">{{ label }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="px-4 py-3">
+                <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">3 Target</div>
+                <div class="mt-1 text-sm font-medium text-slate-950">Edge / edge-sim target</div>
+            </div>
+            <div class="px-4 py-3">
+                <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">4 Deploy Edge/SIM</div>
+                <div class="mt-1 text-sm font-medium text-slate-950">{{ catalog_summary.ready + catalog_summary.deployed }} eligible</div>
+            </div>
+        </div>
+    </section>
+
+    <div id="hub-result"></div>
+
+    <section class="space-y-3">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+                <h2 class="text-lg font-semibold text-slate-950">Model List</h2>
+                {% if registry_status.tracking_uri %}
+                <div class="mt-1 text-xs text-slate-500">
+                    Registry source <span class="font-mono">{{ registry_status.tracking_uri }}</span>
+                </div>
                 {% endif %}
-            </tbody>
-        </table>
-    </div>
+            </div>
+        </div>
+
+        <div class="overflow-hidden rounded-lg border border-slate-200 bg-white">
+            <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-3 bg-slate-50 px-4 py-3 md:hidden">
+                <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Model list</div>
+                <div class="text-xs font-medium text-slate-500">{{ catalog_summary.total }} total</div>
+            </div>
+            <div class="hidden bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500 md:grid md:grid-cols-[minmax(160px,1.3fr)_minmax(190px,1.05fr)_minmax(130px,0.75fr)_minmax(150px,0.8fr)]">
+                <div>Model</div>
+                <div>Package</div>
+                <div>Target</div>
+                <div class="text-right">Deploy Edge/SIM</div>
+            </div>
+
+            {% for row in catalog_models %}
+            <article class="border-t border-slate-200 px-4 py-4 md:grid md:grid-cols-[minmax(160px,1.3fr)_minmax(190px,1.05fr)_minmax(130px,0.75fr)_minmax(150px,0.8fr)] md:items-center md:gap-4">
+                <div class="min-w-0">
+                    <div class="mb-2 flex items-center gap-2">
+                        <span class="h-2.5 w-2.5 rounded-full {{ state_dot_classes.get(row.state_tone, state_dot_classes.slate) }}"></span>
+                        <span class="text-xs font-medium {{ state_classes.get(row.state_tone, state_classes.slate) }}">{{ row.state_label }}</span>
+                    </div>
+                    <div class="truncate text-sm font-semibold text-slate-950">{{ row.name }}</div>
+                    <div class="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs text-slate-500">
+                        <span>v{{ row.version }}</span>
+                        <span>{{ row.format|upper }}</span>
+                        <span>{{ row.source }}</span>
+                        {% if row.aliases %}
+                        <span>{{ row.aliases|join(", ") }}</span>
+                        {% endif %}
+                    </div>
+                    {% if row.run_label %}
+                    <div class="mt-1 text-xs text-slate-500">
+                        Run <span class="font-mono">{{ row.run_label }}</span>
+                        {% if row.stage %}
+                        <span class="ml-2">{{ row.stage }}</span>
+                        {% endif %}
+                    </div>
+                    {% else %}
+                    <div class="mt-1 text-xs text-slate-500">{{ row.stage or "Available model" }}</div>
+                    {% endif %}
+                    {% if row.registry_model_url or row.registry_source_url or row.registry_run_url %}
+                    <div class="mt-2 flex flex-wrap gap-2 text-xs">
+                        {% if row.registry_model_url %}
+                        <a href="{{ row.registry_model_url }}" target="_blank" rel="noopener" title="{{ row.registry_link_source }}" class="font-medium text-blue-600 hover:underline">Registry</a>
+                        {% elif row.registry_source_url %}
+                        <a href="{{ row.registry_source_url }}" target="_blank" rel="noopener" title="{{ row.registry_link_source }}" class="font-medium text-blue-600 hover:underline">Registry</a>
+                        {% endif %}
+                        {% if row.registry_run_url %}
+                        <a href="{{ row.registry_run_url }}" target="_blank" rel="noopener" title="{{ row.run_id }}" class="font-medium text-blue-600 hover:underline">Run</a>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+
+                <div class="mt-3 md:mt-0">
+                    <div class="text-xs font-semibold uppercase tracking-wide text-slate-500 md:hidden">Package</div>
+                    {% if row.package_id %}
+                    <div class="mt-1 truncate text-sm font-medium text-slate-900">{{ row.package_name or row.package_id }}</div>
+                    <div class="mt-1 truncate text-xs text-slate-500">
+                        <span class="font-mono">{{ row.package_id }}</span>
+                    </div>
+                    {% elif row.state_label == "Registry only" %}
+                    <div class="mt-1 text-sm font-medium text-slate-900">Not packaged</div>
+                    <div class="mt-1 text-xs text-slate-500">Package from registry before deploy</div>
+                    {% else %}
+                    <div class="mt-1 text-sm font-medium text-slate-900">Package metadata missing</div>
+                    {% endif %}
+                    <div class="mt-2 flex flex-wrap gap-1.5">
+                        {% for check in row.trust_checks %}
+                        <span title="{{ check.detail }}" class="inline-flex rounded-md border px-2 py-1 text-xs font-medium {{ check_classes.get(check.state, check_classes.unknown) }}">
+                            {{ check.label }}
+                        </span>
+                        {% endfor %}
+                    </div>
+
+                    {% if row.deploy_gate.missing_required %}
+                    {% if row.state_label == "Registry only" %}
+                    <div class="mt-2 text-xs text-slate-500">Next: import to validate hash</div>
+                    {% else %}
+                    <div class="mt-2 text-xs font-medium text-amber-700">{{ row.deploy_gate.detail }}</div>
+                    {% endif %}
+                    {% elif row.deploy_gate.missing_advisory %}
+                    <div class="mt-2 text-xs text-slate-500">
+                        Advisory: {{ row.deploy_gate.missing_advisory|join(", ") }}
+                    </div>
+                    {% endif %}
+
+                    {% if row.metrics_count %}
+                    <div class="mt-1 text-xs text-slate-500">{{ row.metrics_count }} registry metrics</div>
+                    {% endif %}
+                </div>
+
+                <div class="mt-3 md:mt-0">
+                    <div class="text-xs font-semibold uppercase tracking-wide text-slate-500 md:hidden">Target</div>
+                    {% if row.deployed_slots %}
+                    <div class="mt-1 text-sm font-medium text-emerald-700">{{ row.deployed_slots|join(", ") }}</div>
+                    <div class="mt-1 text-xs text-slate-500">Active edge/sim</div>
+                    {% elif row.slot_options %}
+                    <div class="mt-1 text-sm font-medium text-slate-900">{{ row.slot_options|map(attribute="name")|join(", ") }}</div>
+                    <div class="mt-1 text-xs text-slate-500">Compatible target</div>
+                    {% elif row.blocked_slots %}
+                    <div class="mt-1 text-sm font-medium text-amber-700">No matching slot</div>
+                    <div class="mt-1 text-xs text-slate-500">Candidate list excludes this model</div>
+                    {% else %}
+                    <div class="mt-1 text-sm text-slate-500">No target</div>
+                    {% endif %}
+                </div>
+
+                <div class="mt-3 flex flex-wrap items-center gap-2 md:mt-0 md:justify-end">
+                    {% if row.state_label == "Registry only" %}
+                    <form hx-post="/ui/models/import-mlflow" hx-target="#hub-result">
+                        <input type="hidden" name="model_name" value="{{ row.registry_model_name or row.name }}">
+                        <input type="hidden" name="model_version" value="{{ row.registry_version or row.version }}">
+                        <button type="submit" class="inline-flex min-w-24 justify-center rounded-md bg-slate-950 px-3 py-2 text-xs font-medium text-white hover:bg-slate-700">
+                            Package
+                        </button>
+                    </form>
+                    {% elif row.slot_options and row.deploy_gate.allowed %}
+                    <form hx-post="/ui/models/deploy" hx-target="#hub-result" class="flex flex-wrap items-center gap-2 md:justify-end">
+                        <input type="hidden" name="model_id" value="{{ row.model_id }}">
+                        <input type="hidden" name="reason" value="Models operator deployment">
+                        <select name="slot_name" class="rounded-md border border-slate-300 bg-white p-2 text-xs">
+                            {% for slot in row.slot_options %}
+                            <option value="{{ slot.name }}" {% if slot.is_active %}selected{% endif %}>{{ slot.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <button type="submit" class="inline-flex min-w-24 justify-center rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700">
+                            Deploy
+                        </button>
+                    </form>
+                    {% elif row.slot_options %}
+                    <button type="button" disabled class="inline-flex min-w-28 justify-center rounded-md bg-slate-200 px-3 py-2 text-xs font-medium text-slate-500">
+                        Evidence needed
+                    </button>
+                    {% else %}
+                    <span class="text-xs text-slate-400">Unavailable</span>
+                    {% endif %}
+                </div>
+            </article>
+            {% endfor %}
+
+            {% if not catalog_models %}
+            <div class="border-t border-slate-200 px-4 py-8 text-center">
+                <div class="text-sm font-medium text-slate-900">No models found</div>
+                <div class="text-sm text-slate-500">
+                    Import a package or connect a registry to populate the model list.
+                </div>
+                {% if registry_status.detail %}
+                <div class="mx-auto mt-2 max-w-3xl text-xs text-slate-400">
+                    {{ registry_status.detail }}
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </section>
+
+    <details class="overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <summary class="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-900">Import package</summary>
+        <div class="border-t border-slate-200 p-4">
+            <form hx-post="/ui/import" hx-target="#hub-result" class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                <div>
+                    <label class="block text-sm font-medium text-slate-700">Package path</label>
+                    <input type="text" name="package_path"
+                           placeholder="/app/examples/package-example"
+                           class="mt-1 block w-full rounded-md border border-slate-300 p-2 text-sm shadow-sm"
+                           required>
+                </div>
+                <button type="submit" class="rounded-md bg-slate-950 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">
+                    Import package
+                </button>
+            </form>
+
+            <div class="mt-4 overflow-x-auto">
+                <table class="min-w-full divide-y divide-slate-200 text-left">
+                    <thead>
+                        <tr>
+                            <th class="py-2 pr-3 text-xs font-medium uppercase text-slate-500">Package</th>
+                            <th class="px-3 py-2 text-xs font-medium uppercase text-slate-500">Version</th>
+                            <th class="px-3 py-2 text-xs font-medium uppercase text-slate-500">Imported</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-200">
+                        {% for package in packages %}
+                        <tr>
+                            <td class="py-2 pr-3">
+                                <div class="text-sm font-medium text-slate-900">{{ package.name }}</div>
+                                <div class="font-mono text-xs text-slate-400">{{ package.id }}</div>
+                            </td>
+                            <td class="px-3 py-2 text-sm text-slate-700">{{ package.version }}</td>
+                            <td class="px-3 py-2 text-sm text-slate-500">{{ package.imported_at.isoformat()[:19] }}</td>
+                        </tr>
+                        {% endfor %}
+                        {% if not packages %}
+                        <tr>
+                            <td colspan="3" class="py-3 text-center text-sm text-slate-500">No packages imported yet.</td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </details>
 </div>
 {% endblock %}

@@ -2,11 +2,11 @@
 Unit tests for the TEMMS daemon service.
 """
 
-import pytest
-from unittest.mock import Mock, patch, AsyncMock
 from pathlib import Path
 
-from temms.daemon.service import TEMMSDaemon, DaemonConfig
+import pytest
+
+from temms.daemon.service import DaemonConfig, TEMMSDaemon
 
 
 class TestDaemonConfig:
@@ -30,6 +30,8 @@ class TestDaemonConfig:
         assert config.db_path == Path("/var/lib/temms/temms.db")
         assert config.model_dir == Path("/var/lib/temms/models")
         assert config.policy_dir == Path("/etc/temms/policies")
+        assert config.deployment_state_path == Path("/var/lib/temms/deployment_state.json")
+        assert config.pending_operations_path == Path("/var/lib/temms/pending_operations.json")
 
     def test_custom_paths(self, temp_dir):
         """Test custom path configuration."""
@@ -42,6 +44,8 @@ class TestDaemonConfig:
         assert config.db_path == temp_dir / "custom.db"
         assert config.model_dir == temp_dir / "custom_models"
         assert config.policy_dir == temp_dir / "custom_policies"
+        assert config.deployment_state_path == temp_dir / "deployment_state.json"
+        assert config.pending_operations_path == temp_dir / "pending_operations.json"
 
 
 class TestTEMMSDaemon:
@@ -73,6 +77,14 @@ class TestTEMMSDaemon:
         assert daemon.condition_store == condition_store
         assert daemon.policy_engine == policy_engine
         assert daemon._running is False
+        assert (
+            daemon.config.deployment_state_path ==
+            model_storage.model_dir.parent / "deployment_state.json"
+        )
+        assert (
+            daemon.config.pending_operations_path ==
+            model_storage.model_dir.parent / "pending_operations.json"
+        )
 
     def test_from_config(self, temp_dir):
         """Test creating daemon from configuration."""
@@ -87,6 +99,8 @@ class TestTEMMSDaemon:
         assert daemon is not None
         assert daemon.config == config
         assert len(daemon.collectors) > 0  # Should have default collectors
+        assert config.deployment_state_path == temp_dir / "deployment_state.json"
+        assert config.pending_operations_path == temp_dir / "pending_operations.json"
 
 
 @pytest.mark.asyncio

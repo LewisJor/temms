@@ -57,13 +57,12 @@ No webcam needed. No GPU needed. Runs on any laptop.
 
 ### Docker sim environment
 
-If you just want the daemon running in Docker with MLflow:
+If you just want the daemon running in Docker with MLflow-backed Hub import:
 
 ```bash
 make docker-up
 # TEMMS UI:   http://localhost:8080/ui/
 # TEMMS API:  http://localhost:8080/v1/health
-# MLflow UI:  http://localhost:5000
 # API Docs:   http://localhost:8080/docs
 
 # Run headless sim scenario
@@ -219,10 +218,9 @@ temms condition snapshot                 # Nested condition view
 # Policies
 temms policy load ./policy.yaml          # Load a policy
 
-# MLflow (optional)
-temms mlflow list                        # List MLflow models
-temms mlflow register                    # Push cached models to MLflow
-temms mlflow pull <model> <version>      # Pull from MLflow
+# MLflow registry bridge (optional)
+temms mlflow list                        # List upstream registry models
+temms mlflow pull <model> <version>      # Pull from MLflow into a package
 ```
 
 ## API Endpoints
@@ -241,8 +239,8 @@ GET  /ui/                                # Dashboard
 GET  /ui/slots                           # Slot management
 GET  /ui/conditions                      # Condition viewer + injection
 GET  /ui/decisions                       # Decision audit log
-GET  /ui/models                          # Model cache browser
-GET  /ui/import                          # Package import
+GET  /ui/models                          # Hub registry, import, deploy flow
+GET  /ui/import                          # Compatibility alias for Hub import
 ```
 
 Interactive API docs at `http://localhost:8080/docs` (Swagger UI).
@@ -284,6 +282,69 @@ my-package/
 └── policies/
     └── weather-adaptive.yaml
 ```
+
+Hub uses the package manifest as the operator evidence contract. Import always
+records hash validation; model builders can add evidence fields for signed,
+simulated, and tested status:
+
+```json
+{
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "builder-key",
+    "signature": "base64-ed25519-signature"
+  },
+  "validation": {
+    "sim_passed": true,
+    "sim_evidence": {
+      "source": "temms-sim",
+      "scenario": "fog-regression",
+      "run_id": "sim-42"
+    },
+    "tests_passed": true,
+    "test_evidence": {
+      "source": "pytest",
+      "suite": "unit-readiness",
+      "run_id": "ci-99"
+    }
+  }
+}
+```
+
+For signature verification, sign the canonical JSON manifest with top-level
+`signature` and `signatures` fields omitted. Trust keys are local operator
+configuration, not package-provided trust. Set
+`TEMMS_TRUSTED_SIGNATURE_KEYS='{"builder-key":"base64-ed25519-public-key"}'`
+or point `TEMMS_TRUSTED_SIGNATURE_KEYS_FILE` at the same JSON object. Hub only
+marks `Signed` as passed after import verifies the signature against one of
+those trusted keys. Signature verification uses Python `cryptography`; the
+Docker/sim install path includes it through the MLflow stack. If it is not
+available, signed packages remain unverified rather than being trusted.
+When the manifest is signed, Sim/Test evidence details are covered by that
+signature too, so Hub can show where the evidence came from without making the
+main operator table noisy.
+
+```bash
+# Builder/admin setup
+temms package keygen \
+  --key-id builder-key \
+  --private-key ./builder.key \
+  --trusted-keys ./trusted-keys.json
+
+# Sign a package before Hub import
+temms package sign ./my-package/ \
+  --key-id builder-key \
+  --private-key ./builder.key
+
+# Operator-side trust config for Hub/daemon imports
+export TEMMS_TRUSTED_SIGNATURE_KEYS_FILE=./trusted-keys.json
+```
+
+If evidence is missing, Hub shows that state as unknown or needing attention
+instead of implying a model is ready. By default, Hub requires every readiness
+check before a model can move to an edge/sim slot:
+`Signed`, `Sim`, `Test`, and `Val`. For local smoke tests, set
+`TEMMS_HUB_REQUIRED_EVIDENCE=val` to permit hash-validated-only deployment.
 
 ```bash
 # Import a package

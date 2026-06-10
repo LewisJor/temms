@@ -13,15 +13,14 @@ Tests:
 - temms policy (load, list)
 """
 
-import pytest
 import json
-from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from typer.testing import CliRunner
 
 from temms.cli.main import app
-from temms.core.config import Config, DatabaseConfig, StorageConfig, PolicyConfig
+from temms.core.config import Config, DatabaseConfig, PolicyConfig, StorageConfig
 
 runner = CliRunner()
 
@@ -124,6 +123,98 @@ class TestStatusCommand:
 
         assert result.exit_code == 0
         assert "Cached models" in result.output
+
+
+# ── package signing ─────────────────────────────────────────────────
+
+
+class TestPackageSigningCommands:
+    """Test package signing helper commands."""
+
+    def test_keygen_sign_and_import_verified_package(
+        self,
+        temp_dir,
+        model_cache,
+        model_storage,
+    ):
+        pytest.importorskip("cryptography")
+
+        package_dir = temp_dir / "signed-package"
+        models_dir = package_dir / "models"
+        models_dir.mkdir(parents=True)
+        model_file = models_dir / "detector.onnx"
+        model_file.write_bytes(b"fake model bytes")
+
+        import hashlib
+        sha256 = hashlib.sha256(model_file.read_bytes()).hexdigest()
+        manifest = {
+            "schema_version": "v1",
+            "package_id": "signed-package",
+            "name": "detector",
+            "version": "1.0.0",
+            "created_at": "2026-06-09T00:00:00Z",
+            "models": [{
+                "id": "detector-v1",
+                "name": "detector",
+                "version": "1.0.0",
+                "format": "onnx",
+                "filename": model_file.name,
+                "sha256": sha256,
+                "size_bytes": model_file.stat().st_size,
+                "metadata": {},
+            }],
+            "policies": [],
+            "validation": {
+                "sim_passed": True,
+                "tests_passed": True,
+            },
+        }
+        (package_dir / "manifest.json").write_text(json.dumps(manifest))
+
+        private_key = temp_dir / "builder.key"
+        trusted_keys = temp_dir / "trusted-keys.json"
+        keygen_result = runner.invoke(
+            app,
+            [
+                "package", "keygen",
+                "--key-id", "builder-key",
+                "--private-key", str(private_key),
+                "--trusted-keys", str(trusted_keys),
+            ],
+        )
+
+        assert keygen_result.exit_code == 0
+        assert private_key.exists()
+        assert json.loads(trusted_keys.read_text())["builder-key"]
+
+        sign_result = runner.invoke(
+            app,
+            [
+                "package", "sign",
+                str(package_dir),
+                "--key-id", "builder-key",
+                "--private-key", str(private_key),
+            ],
+        )
+
+        assert sign_result.exit_code == 0
+        signed_manifest = json.loads((package_dir / "manifest.json").read_text())
+        assert signed_manifest["signature"]["key_id"] == "builder-key"
+
+        from temms.core.package import PackageImporter
+        importer = PackageImporter(temp_dir / "cache", model_cache, model_storage)
+        with patch.dict(
+            "os.environ",
+            {"TEMMS_TRUSTED_SIGNATURE_KEYS_FILE": str(trusted_keys)},
+            clear=False,
+        ):
+            result = importer.import_package(package_dir, verify=True)
+
+        validation = result.manifest.validation
+        assert validation["signature_verified"] is True
+        assert validation["sim_passed"] is True
+        assert validation["tests_passed"] is True
+        assert validation["hash_verified"] is True
 
 
 # ── slot create ──────────────────────────────────────────────────────

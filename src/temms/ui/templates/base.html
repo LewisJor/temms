@@ -15,19 +15,17 @@
     <!-- Navigation -->
     <nav class="bg-gray-900 text-white shadow-lg">
         <div class="max-w-7xl mx-auto px-4">
-            <div class="flex items-center justify-between h-16">
-                <div class="flex items-center space-x-4">
+            <div class="flex flex-col gap-3 py-3 md:flex-row md:items-center md:justify-between">
+                <div class="flex shrink-0 items-center space-x-4">
                     <a href="/ui/" class="text-xl font-bold text-green-400">TEMMS</a>
-                    <span class="text-gray-400 text-sm">Edge Model Manager</span>
+                    <span class="hidden text-gray-400 text-sm sm:inline">Offline Edge Deployment</span>
                 </div>
-                <div class="flex space-x-4">
-                    <a href="/ui/" class="px-3 py-2 rounded text-sm hover:bg-gray-700 {% if active_page == 'dashboard' %}bg-gray-700{% endif %}">Dashboard</a>
-                    <a href="/ui/slots" class="px-3 py-2 rounded text-sm hover:bg-gray-700 {% if active_page == 'slots' %}bg-gray-700{% endif %}">Slots</a>
-                    <a href="/ui/conditions" class="px-3 py-2 rounded text-sm hover:bg-gray-700 {% if active_page == 'conditions' %}bg-gray-700{% endif %}">Conditions</a>
-                    <a href="/ui/decisions" class="px-3 py-2 rounded text-sm hover:bg-gray-700 {% if active_page == 'decisions' %}bg-gray-700{% endif %}">Decisions</a>
-                    <a href="/ui/models" class="px-3 py-2 rounded text-sm hover:bg-gray-700 {% if active_page == 'models' %}bg-gray-700{% endif %}">Models</a>
-                    <a href="/ui/import" class="px-3 py-2 rounded text-sm hover:bg-gray-700 {% if active_page == 'import' %}bg-gray-700{% endif %}">Import</a>
-                    <a href="http://localhost:5000" target="_blank" class="px-3 py-2 rounded text-sm hover:bg-gray-700 text-blue-300">MLflow &#8599;</a>
+                <div class="flex max-w-full gap-2 overflow-x-auto pb-1 md:pb-0">
+                    <a href="/ui/" class="shrink-0 px-3 py-2 rounded text-sm hover:bg-gray-700 {% if active_page == 'dashboard' %}bg-gray-700{% endif %}">Operations</a>
+                    <a href="/ui/models" class="shrink-0 px-3 py-2 rounded text-sm hover:bg-gray-700 {% if active_page == 'models' %}bg-gray-700{% endif %}">Models</a>
+                    <a href="/ui/slots" class="shrink-0 px-3 py-2 rounded text-sm hover:bg-gray-700 {% if active_page == 'slots' %}bg-gray-700{% endif %}">Targets</a>
+                    <a href="/ui/conditions" class="shrink-0 px-3 py-2 rounded text-sm hover:bg-gray-700 {% if active_page == 'conditions' %}bg-gray-700{% endif %}">Conditions</a>
+                    <a href="/ui/decisions" class="shrink-0 px-3 py-2 rounded text-sm hover:bg-gray-700 {% if active_page == 'decisions' %}bg-gray-700{% endif %}">Decisions</a>
                 </div>
             </div>
         </div>
@@ -41,7 +39,7 @@
     <!-- Footer -->
     <footer class="bg-gray-100 border-t mt-8">
         <div class="max-w-7xl mx-auto px-4 py-3 text-sm text-gray-500">
-            TEMMS v0.1.0 | API: <a href="/v1/health" class="text-blue-500">/v1/health</a> |
+            TEMMS v0.1.0 | Model -> Package -> Target -> Edge/SIM | API: <a href="/v1/health" class="text-blue-500">/v1/health</a> |
             <a href="/docs" class="text-blue-500">API Docs</a>
         </div>
     </footer>

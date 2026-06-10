@@ -2,14 +2,14 @@
 Main TEMMS CLI application using Typer.
 """
 
-import typer
 from pathlib import Path
-from typing import Optional
+
+import typer
 from rich.console import Console
 from rich.table import Table
 
 from temms import __version__
-from temms.cli import slot, condition
+from temms.cli import condition, package, slot
 
 app = typer.Typer(
     name="temms",
@@ -22,6 +22,7 @@ console = Console()
 # Add subcommands
 app.add_typer(slot.app, name="slot", help="Manage model slots")
 app.add_typer(condition.app, name="condition", help="Manage runtime conditions")
+app.add_typer(package.app, name="package", help="Manage package signing")
 
 
 @app.command()
@@ -42,7 +43,7 @@ def init(
     """Initialize TEMMS configuration and directories."""
     from temms.core.config import Config
 
-    console.print(f"[bold green]Initializing TEMMS...[/bold green]")
+    console.print("[bold green]Initializing TEMMS...[/bold green]")
 
     # Create directories
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -55,7 +56,7 @@ def init(
     (config_path.parent / "slots").mkdir(exist_ok=True)
 
     # Create config with actual data directory paths
-    from temms.core.config import DatabaseConfig, StorageConfig, PolicyConfig
+    from temms.core.config import DatabaseConfig, PolicyConfig, StorageConfig
     config = Config(
         database=DatabaseConfig(path=data_dir / "temms.db"),
         storage=StorageConfig(
@@ -68,7 +69,7 @@ def init(
 
     console.print(f"✓ Created configuration: {config_path}")
     console.print(f"✓ Created data directory: {data_dir}")
-    console.print(f"\n[bold]Next steps:[/bold]")
+    console.print("\n[bold]Next steps:[/bold]")
     console.print("  1. Import a package: temms import <package_dir>")
     console.print("  2. Configure slots: temms slot create <name>")
     console.print("  3. Load a policy: temms policy load <policy.yaml>")
@@ -87,10 +88,10 @@ def import_package(
     ),
 ):
     """Import a TEMMS package (models + policies)."""
-    from temms.core.config import Config
     from temms.core.cache import ModelCache
-    from temms.core.storage import ModelStorage
+    from temms.core.config import Config
     from temms.core.package import PackageImporter
+    from temms.core.storage import ModelStorage
 
     if not package_path.exists():
         console.print(f"[red]Error: Package not found: {package_path}[/red]")
@@ -107,7 +108,7 @@ def import_package(
         with console.status("[bold green]Importing package..."):
             result = importer.import_package(package_path, verify=verify)
 
-        console.print(f"[green]✓ Package imported successfully[/green]")
+        console.print("[green]✓ Package imported successfully[/green]")
         console.print(f"\nPackage: {result.manifest.name} v{result.manifest.version}")
         console.print(f"Models imported: {len(result.models)}")
         for model in result.models:
@@ -148,8 +149,8 @@ def status(
     ),
 ):
     """Show TEMMS system status."""
-    from temms.core.config import Config
     from temms.core.cache import ModelCache
+    from temms.core.config import Config
     from temms.slots.manager import SlotManager
 
     if not config_path.exists():
@@ -173,9 +174,9 @@ def status(
     # Slots
     slots = slot_manager.list_slots()
     console.print(f"\nSlots: {len(slots)}")
-    for slot in slots:
-        status_icon = "✓" if slot.state.value == "running" else "○"
-        console.print(f"  {status_icon} {slot.name}: {slot.state.value}")
+    for slot_row in slots:
+        status_icon = "✓" if slot_row.state.value == "running" else "○"
+        console.print(f"  {status_icon} {slot_row.name}: {slot_row.state.value}")
 
 
 @app.command()
@@ -205,8 +206,8 @@ def daemon(
     import signal
 
     if action == "start":
-        from temms.daemon.service import TEMMSDaemon, DaemonConfig
         from temms.core.config import Config
+        from temms.daemon.service import DaemonConfig, TEMMSDaemon
 
         # Load config if exists
         if config_path.exists():
@@ -225,7 +226,7 @@ def daemon(
             )
 
         if foreground:
-            console.print(f"[bold green]Starting TEMMS daemon in foreground...[/bold green]")
+            console.print("[bold green]Starting TEMMS daemon in foreground...[/bold green]")
             console.print(f"  Host: {host}")
             console.print(f"  Port: {port}")
             console.print(f"  Config: {config_path}")
@@ -238,7 +239,7 @@ def daemon(
                 console.print("\n[yellow]Daemon stopped by user[/yellow]")
         else:
             # Fork to background
-            console.print(f"[bold green]Starting TEMMS daemon...[/bold green]")
+            console.print("[bold green]Starting TEMMS daemon...[/bold green]")
             pid_file = Path("/var/run/temms.pid")
 
             # Check if already running
@@ -269,7 +270,7 @@ def daemon(
                 pid = os.fork()
                 if pid > 0:
                     os._exit(0)
-            except OSError as e:
+            except OSError:
                 os._exit(1)
 
             # Write PID file
@@ -330,7 +331,7 @@ def daemon(
             with httpx.Client() as client:
                 response = client.get(f"http://{host}:{port}/v1/health", timeout=2)
                 if response.status_code == 200:
-                    console.print(f"[green]API healthy[/green]")
+                    console.print("[green]API healthy[/green]")
 
                 # Get system status
                 status_response = client.get(f"http://{host}:{port}/v1/status", timeout=2)
@@ -353,7 +354,7 @@ def daemon(
 @app.command()
 def policy(
     action: str = typer.Argument(..., help="Action: load, list, status"),
-    policy_file: Optional[Path] = typer.Argument(None, help="Policy file path"),
+    policy_file: Path | None = typer.Argument(None, help="Policy file path"),
     config_path: Path = typer.Option(
         Path("/etc/temms/temms.yaml"),
         "--config",
@@ -362,8 +363,8 @@ def policy(
     ),
 ):
     """Manage policies."""
-    from temms.core.config import Config
     from temms.conditions.store import ConditionStore
+    from temms.core.config import Config
     from temms.policy.engine import PolicyEngine
 
     if not config_path.exists():
@@ -429,7 +430,7 @@ def policy(
                     str(len(loaded.spec.rules)),
                     pf.name,
                 )
-            except Exception as e:
+            except Exception:
                 table.add_row(pf.stem, "[red]Error[/red]", "-", pf.name)
 
         console.print(table)
@@ -443,7 +444,10 @@ def policy(
                 response = client.get("http://localhost:8080/v1/status", timeout=2)
                 if response.status_code == 200:
                     data = response.json()
-                    console.print(f"[green]Policies loaded in daemon: {data['policies_count']}[/green]")
+                    console.print(
+                        f"[green]Policies loaded in daemon: "
+                        f"{data['policies_count']}[/green]"
+                    )
                 else:
                     console.print("[yellow]Could not get policy status from daemon[/yellow]")
         except Exception:
@@ -459,9 +463,9 @@ def policy(
 @app.command()
 def mlflow(
     action: str = typer.Argument(..., help="Action: list, register, pull"),
-    model_name: Optional[str] = typer.Argument(None, help="Model name (for pull)"),
-    model_version: Optional[str] = typer.Option(None, "--version", "-v", help="Model version"),
-    tracking_uri: Optional[str] = typer.Option(
+    model_name: str | None = typer.Argument(None, help="Model name (for pull)"),
+    model_version: str | None = typer.Option(None, "--version", "-v", help="Model version"),
+    tracking_uri: str | None = typer.Option(
         None, "--tracking-uri", help="MLflow tracking URI"
     ),
     config_path: Path = typer.Option(
@@ -512,8 +516,8 @@ def mlflow(
         console.print(table)
 
     elif action == "register":
-        from temms.core.config import Config
         from temms.core.cache import ModelCache
+        from temms.core.config import Config
 
         if not config_path.exists():
             console.print("[red]TEMMS not initialized. Run 'temms init' first.[/red]")

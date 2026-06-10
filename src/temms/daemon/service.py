@@ -11,24 +11,21 @@ Responsibilities:
 """
 
 import asyncio
-import signal
 import logging
+import signal
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Dict, Any
-from dataclasses import dataclass, field
-from datetime import datetime
+from typing import Any
 
-from temms.slots.manager import SlotManager, SlotState
-from temms.conditions.store import ConditionStore
 from temms.conditions.collectors import ConditionCollector, collect_all_async
-from temms.policy.engine import PolicyEngine, PolicyEvalResult
+from temms.conditions.store import ConditionStore
 from temms.core.cache import ModelCache
 from temms.core.storage import ModelStorage
+from temms.daemon.deployment_state import DeploymentState, DeploymentStateStore
+from temms.daemon.pending_ops import PendingOperationsStore
 from temms.inference.runtime import InferenceRuntime
 from temms.inference.server import create_app
-from temms.daemon.deployment_state import DeploymentStateStore, DeploymentState
-from temms.daemon.pending_ops import PendingOperationsStore
 from temms.observability import (
     condition_update_count,
     policy_decision_count,
@@ -36,8 +33,14 @@ from temms.observability import (
     set_deployment_state,
     uptime_gauge,
 )
+from temms.policy.engine import PolicyEngine
+from temms.slots.manager import SlotManager, SlotState
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_DATA_DIR = Path("/var/lib/temms")
+_DEFAULT_DEPLOYMENT_STATE_PATH = _DEFAULT_DATA_DIR / "deployment_state.json"
+_DEFAULT_PENDING_OPERATIONS_PATH = _DEFAULT_DATA_DIR / "pending_operations.json"
 
 
 @dataclass
@@ -52,20 +55,21 @@ class DaemonConfig:
     inference_port: int = 8080
 
     # Data paths
-    db_path: Optional[Path] = None
-    model_dir: Optional[Path] = None
-    policy_dir: Optional[Path] = None
+    db_path: Path | None = None
+    model_dir: Path | None = None
+    policy_dir: Path | None = None
 
     # Behavior
     auto_start_slots: bool = True          # Start slots with default models
     max_inference_workers: int = 4
-    deployment_state_path: Optional[Path] = None
-    pending_operations_path: Optional[Path] = None
+    deployment_state_path: Path | None = None
+    pending_operations_path: Path | None = None
     offline_mode: bool = False
 
     def __post_init__(self):
         """Set default paths if not provided."""
-        base_dir = Path("/var/lib/temms")
+        explicit_db_path = self.db_path is not None
+        base_dir = _DEFAULT_DATA_DIR
 
         if self.db_path is None:
             self.db_path = base_dir / "temms.db"
@@ -73,10 +77,11 @@ class DaemonConfig:
             self.model_dir = base_dir / "models"
         if self.policy_dir is None:
             self.policy_dir = Path("/etc/temms/policies")
+        state_dir = self.db_path.parent if explicit_db_path else base_dir
         if self.deployment_state_path is None:
-            self.deployment_state_path = base_dir / "deployment_state.json"
+            self.deployment_state_path = state_dir / "deployment_state.json"
         if self.pending_operations_path is None:
-            self.pending_operations_path = base_dir / "pending_operations.json"
+            self.pending_operations_path = state_dir / "pending_operations.json"
 
 
 class TEMMSDaemon:
@@ -99,7 +104,7 @@ class TEMMSDaemon:
         policy_engine: PolicyEngine,
         model_cache: ModelCache,
         model_storage: ModelStorage,
-        collectors: Optional[List[ConditionCollector]] = None,
+        collectors: list[ConditionCollector] | None = None,
     ):
         self.config = config
         self.slot_manager = slot_manager
@@ -121,11 +126,67 @@ class TEMMSDaemon:
         self._shutdown_event = asyncio.Event()
         self._conditions_changed = asyncio.Event()  # Issue #3: event coordination
         self._server = None
-        self._tasks: List[asyncio.Task] = []
+        self._tasks: list[asyncio.Task] = []
         self._started_at = time.time()
 
-        self.deployment_state = DeploymentStateStore(config.deployment_state_path)
-        self.pending_operations = PendingOperationsStore(config.pending_operations_path)
+        self.deployment_state = self._init_deployment_state_store()
+        self.pending_operations = self._init_pending_operations_store()
+
+    def _local_state_dir(self) -> Path:
+        """Fallback state directory for embedded/local daemon construction."""
+        return Path(self.model_storage.model_dir).parent
+
+    def _uses_embedded_state_root(self) -> bool:
+        """Whether injected components point at a non-service data root."""
+        return self._local_state_dir() != _DEFAULT_DATA_DIR
+
+    def _init_deployment_state_store(self) -> DeploymentStateStore:
+        """Initialize deployment state, falling back for non-root local runs."""
+        if (
+            self.config.deployment_state_path == _DEFAULT_DEPLOYMENT_STATE_PATH
+            and self._uses_embedded_state_root()
+        ):
+            fallback = self._local_state_dir() / "deployment_state.json"
+            self.config.deployment_state_path = fallback
+            return DeploymentStateStore(fallback)
+
+        try:
+            return DeploymentStateStore(self.config.deployment_state_path)
+        except PermissionError:
+            if self.config.deployment_state_path != _DEFAULT_DEPLOYMENT_STATE_PATH:
+                raise
+            fallback = self._local_state_dir() / "deployment_state.json"
+            logger.warning(
+                "Deployment state path %s is not writable; using %s",
+                self.config.deployment_state_path,
+                fallback,
+            )
+            self.config.deployment_state_path = fallback
+            return DeploymentStateStore(fallback)
+
+    def _init_pending_operations_store(self) -> PendingOperationsStore:
+        """Initialize pending operations, falling back for non-root local runs."""
+        if (
+            self.config.pending_operations_path == _DEFAULT_PENDING_OPERATIONS_PATH
+            and self._uses_embedded_state_root()
+        ):
+            fallback = self._local_state_dir() / "pending_operations.json"
+            self.config.pending_operations_path = fallback
+            return PendingOperationsStore(fallback)
+
+        try:
+            return PendingOperationsStore(self.config.pending_operations_path)
+        except PermissionError:
+            if self.config.pending_operations_path != _DEFAULT_PENDING_OPERATIONS_PATH:
+                raise
+            fallback = self._local_state_dir() / "pending_operations.json"
+            logger.warning(
+                "Pending operations path %s is not writable; using %s",
+                self.config.pending_operations_path,
+                fallback,
+            )
+            self.config.pending_operations_path = fallback
+            return PendingOperationsStore(fallback)
 
     @classmethod
     def from_config(cls, config: DaemonConfig) -> "TEMMSDaemon":
@@ -414,7 +475,12 @@ class TEMMSDaemon:
                     self.deployment_state.set_state(target, "reconciliation")
                     set_deployment_state(target.value)
 
-                runtime_health_gauge.set(1 if target in {DeploymentState.READY, DeploymentState.DOWNLOADING, DeploymentState.OFFLINE} else 0)
+                healthy_states = {
+                    DeploymentState.READY,
+                    DeploymentState.DOWNLOADING,
+                    DeploymentState.OFFLINE,
+                }
+                runtime_health_gauge.set(1 if target in healthy_states else 0)
                 uptime_gauge.set(time.time() - self._started_at)
             except Exception as e:
                 logger.error(f"Reconciliation loop error: {e}")
@@ -482,7 +548,7 @@ class TEMMSDaemon:
             except Exception as e:
                 logger.error(f"Policy evaluation failed for slot {slot.name}: {e}")
 
-    async def _handle_preloads(self, slot_name: str, preload_list: List[str]) -> None:
+    async def _handle_preloads(self, slot_name: str, preload_list: list[str]) -> None:
         """Preload models specified in policy result."""
         for model_name in preload_list:
             model = self.model_cache.find_model(model_name)
@@ -501,7 +567,7 @@ class TEMMSDaemon:
         new_model_id: str,
         trigger_type: str,
         trigger_detail: str,
-        conditions: Dict[str, Any],
+        conditions: dict[str, Any],
     ) -> None:
         """
         Execute model switch with logging.
@@ -555,8 +621,8 @@ class TEMMSDaemon:
     async def _execute_fallback(
         self,
         slot_name: str,
-        fallback_chain: List[str],
-        conditions: Dict[str, Any],
+        fallback_chain: list[str],
+        conditions: dict[str, Any],
     ) -> None:
         """Execute fallback chain for slot."""
         logger.info(f"Executing fallback chain for {slot_name}: {fallback_chain}")
@@ -636,7 +702,7 @@ class TEMMSDaemon:
         await serve_with_shutdown()
 
 
-async def start_daemon(config: Optional[DaemonConfig] = None) -> None:
+async def start_daemon(config: DaemonConfig | None = None) -> None:
     """
     Start TEMMS daemon.
 

@@ -45,8 +45,9 @@ This launches two containers:
 
 | Service | URL | What it does |
 |---------|-----|-------------|
+| TEMMS Hub | http://localhost:8080/ui/models | Model selection, import, and edge-sim deploy |
 | TEMMS Daemon | http://localhost:8080 | Edge runtime + inference server |
-| MLflow | http://localhost:5000 | Model registry UI |
+| MLflow | configured in Docker | Backing model registry for Hub |
 
 ```bash
 make docker-up
@@ -59,9 +60,7 @@ curl http://localhost:8080/v1/health
 # {"status":"ok","timestamp":"..."}
 ```
 
-Open the TEMMS dashboard: http://localhost:8080/ui/
-
-Open the MLflow UI: http://localhost:5000
+Open the TEMMS Hub: http://localhost:8080/ui/models
 
 ## Step 4: See model switching in action
 
@@ -146,7 +145,7 @@ make docker-clean      # Stop + remove all data (fresh start)
 
 1. **Generated 3 real ONNX models** (~8KB each) — small Conv→ReLU→Pool→FC networks
 2. **Created a model package** with manifest.json + SHA256 checksums
-3. **Imported the package** into TEMMS cache with integrity verification
+3. **Imported the package** into TEMMS cache with persisted hash validation evidence
 4. **Created a `vision` slot** with `yolov8-daylight` as default
 5. **Loaded weather-adaptive policy** from YAML
 6. **Started the daemon** — condition loop + policy loop + inference server
@@ -158,4 +157,15 @@ When fog conditions were injected, the policy engine matched the `fog-conditions
 - [Architecture overview](architecture.md) — how the three tiers fit together
 - [Policy reference](policy-reference.md) — full YAML schema for writing policies
 - [examples/policies/](../examples/policies/) — real policy files you can study
-- Bring your own ONNX models — drop them in `examples/package-example/models/` and update `manifest.json`
+- Bring your own ONNX models — drop them in `examples/package-example/models/`,
+  update `manifest.json`, and include `validation.sim_passed` and
+  `validation.tests_passed` plus `sim_evidence` / `test_evidence` source
+  details when you have that evidence
+- Sign packages with an Ed25519 manifest signature and configure trusted public
+  keys with `TEMMS_TRUSTED_SIGNATURE_KEYS` or
+  `TEMMS_TRUSTED_SIGNATURE_KEYS_FILE`; Hub only marks `Signed` as passed after
+  local verification. Use `temms package keygen` and `temms package sign` for
+  the local builder/admin workflow.
+- Hub deployment gates default to `Signed`, `Sim`, `Test`, and `Val` evidence
+  before an edge/sim deploy. For local smoke tests, set
+  `TEMMS_HUB_REQUIRED_EVIDENCE=val` to permit hash-validated-only deployment.
