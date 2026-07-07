@@ -100,18 +100,12 @@ import {
   modelsForPackage,
   resourceEnvelopeCapabilityFit,
   runtimeForModel,
-  runtimeCapabilityLockForProof,
   runtimeFitDisplayFor,
-  runtimeLaneFor,
   runtimeValidationForModel,
   targetSupportsModel,
   withBenchmarkEvidence
 } from "./lib/runtime-fit";
-import {
-  runtimeDecisionCandidates,
-  runtimeTargetAssessments,
-  runtimeWorkbenchRows
-} from "./lib/runtime-decision";
+import { buildRuntimeStageView } from "./lib/runtime-stage-view";
 import { formatProofCommand } from "./lib/proof-command";
 import { runtimeWorkbenchRowRemediationCommand } from "./lib/runtime-remediation";
 import { actionTitle, loadSnapshotAfterReconciliation } from "./lib/hub-actions";
@@ -148,7 +142,6 @@ import type {
   HubStage,
   MissionWorkflowSignal,
   ReadinessGateAction,
-  RuntimeRemediationContext,
   WorkflowTarget
 } from "./lib/workbench-types";
 
@@ -390,64 +383,21 @@ export function App(): JSX.Element {
   const runtimeDecision = asRecord(scopedReadiness?.runtime_decision);
   const edgeExecutionContract = asRecord(scopedReadiness?.edge_execution_contract);
   const runtimeFitDisplay = runtimeFitDisplayFor(scopedReadiness, edgeRuntimeFit, selectedRuntime);
-  const runtimeStageView = useMemo(() => {
-    const remediationContext: RuntimeRemediationContext = {
-      packageId: selectedModel?.packageId ?? "",
-      modelId: selectedModel?.id ?? "",
-      deviceId: selectedDevice ? deviceId(selectedDevice) : "",
-      slot: "vision"
-    };
-    if (activeHubStage !== "runtime") {
-      return {
-        artifactLane: {},
-        capabilityLock: {},
-        remediationContext,
-        rows: [],
-        selectedLane: {}
-      };
-    }
-
-    const contract = Object.keys(edgeExecutionContract).length ? edgeExecutionContract : runtimeDecision;
-    const runtimeFit = asRecord(scopedReadiness?.runtime_fit);
-    const targetSelection = Object.keys(asRecord(contract.target_selection)).length
-      ? asRecord(contract.target_selection)
-      : asRecord(runtimeFit.target_selection);
-    const selectedRuntimeTargetId = stringOf(
-      targetSelection.selected_runtime_target_id,
-      selectedRuntime ? runtimeTargetId(selectedRuntime) : ""
-    );
-    const bestRuntimeTargetId = stringOf(targetSelection.best_runtime_target_id, "");
-    const candidates = runtimeDecisionCandidates(
-      contract,
-      runtimeFit,
-      selectedRuntimeTargetId,
-      bestRuntimeTargetId || selectedRuntimeTargetId
-    );
-    const assessments = runtimeTargetAssessments(contract, runtimeFit, candidates);
-    const rows = runtimeWorkbenchRows({
-      assessments,
-      device: selectedDevice,
-      model: selectedModel,
-      runtimeFit,
-      runtimeWorkbench: asRecord(scopedReadiness?.runtime_workbench),
-      runtimeTargets: snapshot.runtimeTargets,
-      runtimeValidations: snapshot.runtimeValidations,
-      selectedRuntimeTargetId,
-      bestRuntimeTargetId
-    });
-    const selectedRow = rows.find((row) => row.selected);
-    return {
-      artifactLane: asRecord(runtimeFit.artifact_lane),
-      capabilityLock: runtimeCapabilityLockForProof(scopedReadiness),
-      remediationContext,
-      rows,
-      selectedLane: selectedRow
-        ? asRecord(selectedRow.target.runtime_lane)
-        : runtimeLaneFor(runtimeFit, selectedRuntime)
-    };
-  }, [
+  const runtimeStageView = useMemo(() => buildRuntimeStageView({
     activeHubStage,
     edgeExecutionContract,
+    readiness: scopedReadiness,
+    runtimeDecision,
+    runtimeTargets: snapshot.runtimeTargets,
+    runtimeValidations: snapshot.runtimeValidations,
+    selectedDevice,
+    selectedModel,
+    selectedRuntime,
+    slot: missionDraft.slot
+  }), [
+    activeHubStage,
+    edgeExecutionContract,
+    missionDraft.slot,
     runtimeDecision,
     scopedReadiness,
     selectedDevice,
