@@ -482,7 +482,12 @@ const stageablePackageStatus = missionPackageModule.buildMissionPackageStageStat
     deployment_intent: {
       command: { method: "POST", path: "/v1/hub/rollouts/assign" },
       mission_contract_sha256: "b".repeat(64),
-      requires: { mission_contract_digest: true, runtime_plan_digest: true },
+      requires: {
+        mission_contract_digest: true,
+        runtime_capability_lock_digest: true,
+        runtime_plan_digest: true
+      },
+      runtime_capability_lock_sha256: "c".repeat(64),
       runtime_plan_sha256: "a".repeat(64),
       rollout_id: "rollout-model-yolov8-lowlight-001-temms-rpi5-tflite-edge-rpi5"
     },
@@ -534,7 +539,11 @@ const missingRuntimeDigestPackageStatus = missionPackageModule.buildMissionPacka
     deployment_intent: {
       command: { method: "POST", path: "/v1/hub/rollouts/assign" },
       mission_contract_sha256: "b".repeat(64),
-      requires: { mission_contract_digest: true },
+      requires: {
+        mission_contract_digest: true,
+        runtime_capability_lock_digest: true
+      },
+      runtime_capability_lock_sha256: "c".repeat(64),
       rollout_id: "rollout-model-yolov8-lowlight-001-temms-rpi5-tflite-edge-rpi5"
     },
     proof_gate: { status: "passed" }
@@ -547,6 +556,28 @@ if (
   missingRuntimeDigestPackageStatus.value !== "runtime digest missing"
 ) {
   throw new Error("mission package stage status should block deploy intents without runtime digest binding");
+}
+const missingCapabilityLockDigestPackageStatus = missionPackageModule.buildMissionPackageStageStatus({
+  handoff: undefined,
+  manifest: {
+    ...manifestFixture,
+    deployment_intent: {
+      command: { method: "POST", path: "/v1/hub/rollouts/assign" },
+      mission_contract_sha256: "b".repeat(64),
+      requires: { mission_contract_digest: true, runtime_plan_digest: true },
+      runtime_plan_sha256: "a".repeat(64),
+      rollout_id: "rollout-model-yolov8-lowlight-001-temms-rpi5-tflite-edge-rpi5"
+    },
+    proof_gate: { status: "passed" }
+  },
+  missionReady: true,
+  plan: { schema_version: "temms-edge-mission-package/v1" }
+});
+if (
+  missingCapabilityLockDigestPackageStatus.stageable !== false ||
+  missingCapabilityLockDigestPackageStatus.value !== "capability lock missing"
+) {
+  throw new Error("mission package stage status should block deploy intents without capability lock binding");
 }
 const readyStageOptions = {
   ddilDetail: "ready for replay",

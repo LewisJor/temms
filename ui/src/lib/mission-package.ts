@@ -144,6 +144,10 @@ export function buildMissionPackageStageStatus({
     deploymentIntent.mission_contract_sha256 &&
     deploymentRequires.mission_contract_digest === true
   );
+  const hasRuntimeCapabilityLockDigest = Boolean(
+    deploymentIntent.runtime_capability_lock_sha256 &&
+    deploymentRequires.runtime_capability_lock_digest === true
+  );
   const hasRuntimePlanDigest = Boolean(
     deploymentIntent.runtime_plan_sha256 &&
     deploymentRequires.runtime_plan_digest === true
@@ -211,6 +215,18 @@ export function buildMissionPackageStageStatus({
       stageable: false,
       tone: "warn",
       value: "runtime digest missing"
+    };
+  }
+
+  if (hasPackageArtifact && !hasRuntimeCapabilityLockDigest) {
+    return {
+      detail: "runtime capability lock digest missing; replan package before staging",
+      downloaded: Boolean(handoff),
+      gateStatus,
+      planned: hasPackageArtifact,
+      stageable: false,
+      tone: "warn",
+      value: "capability lock missing"
     };
   }
 

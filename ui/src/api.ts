@@ -138,6 +138,7 @@ export interface MissionPackageDownloadHandoff {
   missionSha256: string;
   packageIdentitySha256: string;
   payloadSha256: string;
+  runtimeCapabilityLockSha256: string;
   runtimePlanSha256: string;
 }
 
@@ -270,6 +271,8 @@ function missionPackageDownloadHandoff(
     packageIdentitySha256:
       headers.get("X-TEMMS-Mission-Package-Identity-SHA256") || "",
     payloadSha256: headers.get("X-TEMMS-Mission-Package-SHA256") || "",
+    runtimeCapabilityLockSha256:
+      headers.get("X-TEMMS-Mission-Package-Runtime-Capability-Lock-SHA256") || "",
     runtimePlanSha256:
       headers.get("X-TEMMS-Mission-Package-Runtime-Plan-SHA256") || ""
   };

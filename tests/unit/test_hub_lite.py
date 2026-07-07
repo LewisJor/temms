@@ -308,6 +308,13 @@ def test_edge_mission_package_plan_binds_mission_runtime_and_policy():
         hub_lite_module.edge_mission_package_mission_contract_hash(plan)
     )
     assert plan["deployment_intent"]["requires"]["mission_contract_digest"] is True
+    assert plan["deployment_intent"]["runtime_capability_lock_sha256"] == (
+        plan["runtime_plan"]["runtime_capability_lock"]["capability_sha256"]
+    )
+    assert (
+        plan["deployment_intent"]["requires"]["runtime_capability_lock_digest"]
+        is True
+    )
     assert plan["deployment_intent"]["runtime_plan_sha256"] == (
         hub_lite_module.canonical_json_hash(plan["runtime_plan"])
     )
@@ -374,6 +381,9 @@ def test_edge_mission_package_plan_binds_mission_runtime_and_policy():
     )
     assert plan["component_digests"]["mission_contract_sha256"] == (
         hub_lite_module.edge_mission_package_mission_contract_hash(plan)
+    )
+    assert plan["component_digests"]["runtime_capability_lock_sha256"] == (
+        plan["runtime_plan"]["runtime_capability_lock"]["capability_sha256"]
     )
     assert plan["component_digests"]["deployment_intent_sha256"] == (
         hub_lite_module.canonical_json_hash(plan["deployment_intent"])

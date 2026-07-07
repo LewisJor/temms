@@ -215,12 +215,12 @@ Expected visible state with the Docker Hub seed:
   planned package/model/device/runtime/slot, require approval and runtime
   validation, switch the UI to **Edge Deploy**, and use the package payload's
   `deployment_intent.command.body`. The deployment intent should also carry the
-  exact `mission_contract_sha256` and `runtime_plan_sha256`, and staging should
-  reject an artifact whose intent points at a different mission-contract or
-  runtime-plan digest. The rollout reason should include the mission package
-  identity digest. It should not stage directly from the draft package preview;
-  press **Plan package** first so the rollout is tied to the hashed deployment
-  intent.
+  exact `mission_contract_sha256`, `runtime_capability_lock_sha256`, and
+  `runtime_plan_sha256`, and staging should reject an artifact whose intent
+  points at a different mission-contract, capability-lock, or runtime-plan
+  digest. The rollout reason should include the mission package identity digest.
+  It should not stage directly from the draft package preview; press
+  **Plan package** first so the rollout is tied to the hashed deployment intent.
 - Model inventory shows three signed vision models: daylight, lowlight, and
   mobilenet-tiny.
 - The Runtime workbench shows the selected model from **Model Plan** as locked
@@ -786,14 +786,16 @@ For the Docker demo on `localhost:8080`, run the live contract smoke first. It
 checks `/ui/hub`, `POST /v1/hub/mission-package/plan`,
 `POST /v1/hub/mission-package/download`, and
 `POST /v1/hub/mission-package/stage`, including the digest headers that tie the
-mission package to its mission contract, runtime plan, and deployment intent. The
-stage step must report a passed stage gate with `mission_contract: verified` and
+mission package to its mission contract, capability lock, runtime plan, and
+deployment intent. The stage step must report a passed stage gate with
+`mission_contract: verified`, `runtime_capability_lock: verified`, and
 `runtime_plan: verified`, which proves failed/advisory proof-gate artifacts plus
-mission-contract or runtime-plan digest mismatches cannot become edge rollouts.
-The smoke then approves and applies the staged rollout so repeated runs leave the
-selected edge path activated rather than stuck in an approval or assigned state.
-It exercises both explicit JSON planning and YAML-only mission planning so the
-backend path stays aligned with the browser importer:
+mission-contract, capability-lock, or runtime-plan digest mismatches cannot
+become edge rollouts. The smoke then approves and applies the staged rollout so
+repeated runs leave the selected edge path activated rather than stuck in an
+approval or assigned state. It exercises both explicit JSON planning and
+YAML-only mission planning so the backend path stays aligned with the browser
+importer:
 
 ```bash
 make docker-product-smoke

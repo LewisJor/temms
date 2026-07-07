@@ -2207,6 +2207,7 @@ spec:
             "proof_gate": "passed",
             "package_identity": "verified",
             "mission_contract": "verified",
+            "runtime_capability_lock": "verified",
             "runtime_plan": "verified",
             "deployment_intent": "verified",
             "current_proof_gate_status": "passed",
@@ -2214,6 +2215,9 @@ spec:
         assert mission_package["edge_handoff"]["artifact_integrity"][
             "mission_contract_digest_header"
         ] == "X-TEMMS-Mission-Package-Mission-Contract-SHA256"
+        assert mission_package["edge_handoff"]["artifact_integrity"][
+            "runtime_capability_lock_digest_header"
+        ] == "X-TEMMS-Mission-Package-Runtime-Capability-Lock-SHA256"
         assert mission_package["edge_handoff"]["artifact_integrity"][
             "runtime_plan_digest_header"
         ] == "X-TEMMS-Mission-Package-Runtime-Plan-SHA256"
@@ -2249,6 +2253,14 @@ spec:
         assert mission_package["deployment_intent"]["requires"][
             "mission_contract_digest"
         ] is True
+        assert mission_package["deployment_intent"][
+            "runtime_capability_lock_sha256"
+        ] == mission_package["runtime_plan"]["runtime_capability_lock"][
+            "capability_sha256"
+        ]
+        assert mission_package["deployment_intent"]["requires"][
+            "runtime_capability_lock_digest"
+        ] is True
         assert mission_package["deployment_intent"]["runtime_plan_sha256"] == (
             canonical_json_hash(mission_package["runtime_plan"])
         )
@@ -2261,6 +2273,9 @@ spec:
         assert mission_package["component_digests"]["mission_contract_sha256"] == (
             mission_package["deployment_intent"]["mission_contract_sha256"]
         )
+        assert mission_package["component_digests"][
+            "runtime_capability_lock_sha256"
+        ] == mission_package["deployment_intent"]["runtime_capability_lock_sha256"]
         assert mission_package["component_digests"]["runtime_plan_sha256"] == (
             canonical_json_hash(mission_package["runtime_plan"])
         )
@@ -2377,6 +2392,11 @@ ddil:
         assert mission_package_download_response.headers[
             "x-temms-mission-package-mission-contract-sha256"
         ] == mission_package_download["component_digests"]["mission_contract_sha256"]
+        assert mission_package_download_response.headers[
+            "x-temms-mission-package-runtime-capability-lock-sha256"
+        ] == mission_package_download["component_digests"][
+            "runtime_capability_lock_sha256"
+        ]
         assert mission_package_download_response.headers[
             "x-temms-mission-package-runtime-plan-sha256"
         ] == canonical_json_hash(mission_package_download["runtime_plan"])
@@ -2503,6 +2523,23 @@ ddil:
             in mismatched_mission_contract_response.json()["detail"]
         )
 
+        mismatched_capability_lock_package = json.loads(
+            json.dumps(mission_package_download)
+        )
+        mismatched_capability_lock_package["deployment_intent"][
+            "runtime_capability_lock_sha256"
+        ] = "0" * 64
+        _rehash_downloaded_mission_package(mismatched_capability_lock_package)
+        mismatched_capability_lock_response = hub_ui_client.post(
+            "/v1/hub/mission-package/stage",
+            json={"mission_package": mismatched_capability_lock_package},
+        )
+        assert mismatched_capability_lock_response.status_code == 400
+        assert (
+            "runtime capability lock digest"
+            in mismatched_capability_lock_response.json()["detail"]
+        )
+
         disabled_gate_package = json.loads(json.dumps(mission_package_download))
         disabled_gate_intent = disabled_gate_package["deployment_intent"]
         disabled_gate_intent["requires"] = {
@@ -2552,6 +2589,7 @@ ddil:
                 "proof_gate": "passed",
                 "package_identity": "verified",
                 "mission_contract": "verified",
+                "runtime_capability_lock": "verified",
                 "runtime_plan": "verified",
                 "deployment_intent": "verified",
             },
@@ -2564,6 +2602,11 @@ ddil:
         )
         assert mission_package_stage["mission_contract_sha256"] == (
             mission_package_download["component_digests"]["mission_contract_sha256"]
+        )
+        assert mission_package_stage["runtime_capability_lock_sha256"] == (
+            mission_package_download["component_digests"][
+                "runtime_capability_lock_sha256"
+            ]
         )
         assert mission_package_stage["runtime_plan_sha256"] == canonical_json_hash(
             mission_package_download["runtime_plan"]

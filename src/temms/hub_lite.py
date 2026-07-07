@@ -96,6 +96,9 @@ edge_mission_package_identity_payload = (
 edge_mission_package_mission_contract_hash = (
     _mission_package.edge_mission_package_mission_contract_hash
 )
+edge_mission_package_runtime_capability_lock_hash = (
+    _mission_package.edge_mission_package_runtime_capability_lock_hash
+)
 
 
 class PackageArtifactNotFound(ValueError):

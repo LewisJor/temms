@@ -2695,6 +2695,12 @@ function MissionPackageDownloadHandoffCard({
       value: handoff?.runtimePlanSha256 || ""
     },
     {
+      body: stringOf(componentDigests.runtime_capability_lock_sha256, ""),
+      key: "runtime_capability_lock",
+      label: "Capability lock",
+      value: handoff?.runtimeCapabilityLockSha256 || ""
+    },
+    {
       body: stringOf(componentDigests.deployment_intent_sha256, ""),
       key: "deployment_intent",
       label: "Deploy intent",
