@@ -246,6 +246,13 @@ export function formatThroughput(value: number): string {
   return String(Math.round(value));
 }
 
+export function compactMetricDetail(detail: string): string {
+  return detail
+    .replace(/(-?\d+(?:\.\d+)?)\s*ms/g, (_match, value) => `${formatMetricNumber(Number(value))} ms`)
+    .replace(/(-?\d+(?:\.\d+)?)\s*ips/g, (_match, value) => `${formatThroughput(Number(value))} ips`)
+    .replace(/(-?\d+(?:\.\d+)?)\s*MB/g, (_match, value) => `${Math.round(Number(value))} MB`);
+}
+
 export interface BenchmarkFreshness {
   state: "fresh" | "stale" | "unknown";
   createdAt?: string;

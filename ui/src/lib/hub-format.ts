@@ -66,6 +66,19 @@ export function compactDate(value?: string): string {
   return Number.isNaN(date.valueOf()) ? value : date.toLocaleString();
 }
 
+export function currentHubUrl(): string {
+  if (typeof window === "undefined" || !window.location?.origin) return "http://127.0.0.1:8080";
+  return window.location.origin;
+}
+
+export function localizeHubCommandText(command: string): string {
+  return command.split("${TEMMS_HUB_URL}").join(currentHubUrl());
+}
+
+export function localizeHubCommandPart(part: string): string {
+  return part.split("${TEMMS_HUB_URL}").join(currentHubUrl());
+}
+
 export function toneFor(value: string): "good" | "warn" | "bad" | "neutral" {
   const normalized = value.toLowerCase();
   if (
