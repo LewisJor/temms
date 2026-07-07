@@ -39,9 +39,7 @@ import { PackageHandoffStage } from "./components/package-stage";
 import {
   ReadinessCommandPanel,
 } from "./components/readiness-panels";
-import {
-  EdgeOperatorCommandPanel
-} from "./components/runtime-execution-contract";
+import { EdgeOperatorCommandPanel } from "./components/runtime-operator-proof";
 import { EdgeRuntimeWorkbench } from "./components/runtime-workbench";
 import {
   HandlingPolicyPanel,
