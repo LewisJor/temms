@@ -3902,6 +3902,7 @@ async def stage_mission_package(
             require_approval=bool(body.get("require_approval")),
             actor=actor,
             reason=str(body["reason"]) if body.get("reason") else None,
+            mission_package_stage=_mission_package_rollout_binding(stage_proof),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -3913,6 +3914,32 @@ async def stage_mission_package(
         "rollout_state": rollout.get("state"),
         "rollout": rollout,
     }
+
+
+def _mission_package_rollout_binding(stage_proof: Dict[str, Any]) -> Dict[str, Any]:
+    """Return compact mission-package proof retained on the staged rollout."""
+    edge_handoff = (
+        stage_proof.get("edge_handoff")
+        if isinstance(stage_proof.get("edge_handoff"), dict)
+        else {}
+    )
+    return _readiness_refs(
+        {
+            "schema_version": "temms-mission-package-rollout-binding/v1",
+            "stage_gate": stage_proof.get("stage_gate"),
+            "package_identity_sha256": stage_proof.get("package_identity_sha256"),
+            "deployment_intent_sha256": stage_proof.get(
+                "deployment_intent_sha256"
+            ),
+            "edge_handoff_sha256": stage_proof.get("edge_handoff_sha256"),
+            "mission_contract_sha256": stage_proof.get("mission_contract_sha256"),
+            "runtime_capability_lock_sha256": stage_proof.get(
+                "runtime_capability_lock_sha256"
+            ),
+            "runtime_plan_sha256": stage_proof.get("runtime_plan_sha256"),
+            "edge_handoff": edge_handoff,
+        }
+    )
 
 
 def _mission_package_plan_for_request(

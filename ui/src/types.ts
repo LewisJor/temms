@@ -65,6 +65,7 @@ export interface Rollout {
   slot?: string;
   state?: string;
   runtime_target_id?: string;
+  mission_package_stage?: JsonObject | null;
   approval_required?: boolean;
   approval?: RolloutApproval;
   created_at?: string;

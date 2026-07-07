@@ -2647,6 +2647,36 @@ ddil:
             "stage from mission package endpoint"
         )
         assert mission_package_stage["rollout"]["actor"] == "operator:stage-test"
+        rollout_binding = mission_package_stage["rollout"]["mission_package_stage"]
+        assert rollout_binding["schema_version"] == (
+            "temms-mission-package-rollout-binding/v1"
+        )
+        assert rollout_binding["package_identity_sha256"] == (
+            mission_package_stage["package_identity_sha256"]
+        )
+        assert rollout_binding["deployment_intent_sha256"] == (
+            mission_package_stage["deployment_intent_sha256"]
+        )
+        assert rollout_binding["edge_handoff_sha256"] == (
+            mission_package_stage["edge_handoff_sha256"]
+        )
+        assert rollout_binding["mission_contract_sha256"] == (
+            mission_package_stage["mission_contract_sha256"]
+        )
+        assert rollout_binding["runtime_capability_lock_sha256"] == (
+            mission_package_stage["runtime_capability_lock_sha256"]
+        )
+        assert rollout_binding["runtime_plan_sha256"] == (
+            mission_package_stage["runtime_plan_sha256"]
+        )
+        assert rollout_binding["stage_gate"] == mission_package_stage["stage_gate"]
+        rollouts_response = hub_ui_client.get("/v1/hub/rollouts")
+        staged_rollout = next(
+            rollout
+            for rollout in rollouts_response.json()["rollouts"]
+            if rollout["rollout_id"] == mission_package_stage["rollout_id"]
+        )
+        assert staged_rollout["mission_package_stage"] == rollout_binding
 
         proof_response = hub_ui_client.get(
             "/v1/hub/edge-runtime-proof",

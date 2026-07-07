@@ -160,7 +160,8 @@ plan as an attachment with `X-TEMMS-Mission-Package-SHA256`,
 payload, edge-handoff, mission-contract, runtime-capability-lock, runtime-plan,
 and deployment-intent digests, plus the passed proof gate, then stages the
 embedded rollout intent while preserving the artifact's `edge_handoff` runbook
-in the stage proof. Failed proof gates stay advisory artifacts; they cannot
+in the stage proof and storing a compact `mission_package_stage` binding on the
+rollout record. Failed proof gates stay advisory artifacts; they cannot
 be staged to edge deploy until readiness is remediated and the package is
 planned again.
 The package planner can run in an advisory mode while readiness is still

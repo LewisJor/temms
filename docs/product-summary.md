@@ -109,8 +109,10 @@ TEMMS has two main layers:
   runtime-capability-lock/runtime-plan/deployment-intent digest chain plus the
   passed proof gate, preserve the embedded `edge_handoff`, and stage the
   package-bound rollout without reconstructing the model/runtime/device body by
-  hand. Advisory or failed proof-gate packages remain inspectable but are
-  fail-closed at deploy time.
+  hand. The rollout retains a compact `mission_package_stage` binding with the
+  verified digests so Edge Deploy can show package provenance after refresh.
+  Advisory or failed proof-gate packages remain inspectable but are fail-closed
+  at deploy time.
   The Hub stage renderer keeps the active step narrow: model selection under
   **Model Plan**, runtime ranking under **Runtime Fit**, sensor/model switching
   policy under **Sensor Handling**, package/proof handoff under **Package

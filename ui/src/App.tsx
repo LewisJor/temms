@@ -7848,15 +7848,19 @@ function RolloutRow({
       ? "approved"
       : rollout.approval?.state ?? "pending"
     : "not required";
+  const missionPackageStage = asRecord(rollout.mission_package_stage);
+  const packageBindingDigest = stringOf(missionPackageStage.package_identity_sha256, "");
   return (
     <article className="rollout-row">
       <div>
         <strong>{id}</strong>
         <small>
           {rollout.model_id ?? rollout.package_id ?? "-"} to {rollout.device_id ?? "-"}
+          {packageBindingDigest ? ` · pkg ${shortProofDigest(packageBindingDigest)}` : ""}
         </small>
       </div>
       <Badge value={rollout.state ?? "unknown"} />
+      {packageBindingDigest ? <Badge value="package-bound" /> : null}
       <Badge value={approval} />
       <div className="row-actions">
         {approvalPending ? (

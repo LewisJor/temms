@@ -792,7 +792,9 @@ plan, and deployment intent. The stage step must report a passed stage gate with
 `runtime_capability_lock: verified`, and `runtime_plan: verified`, which proves
 failed/advisory proof-gate artifacts plus edge-handoff, mission-contract,
 capability-lock, or runtime-plan digest mismatches cannot become edge rollouts.
-The smoke then approves and applies the staged rollout so
+The staged rollout should also retain `mission_package_stage` with the verified
+package identity, edge-handoff, mission-contract, capability-lock, runtime-plan,
+and deployment-intent digests. The smoke then approves and applies the staged rollout so
 repeated runs leave the selected edge path activated rather than stuck in an
 approval or assigned state. It exercises both explicit JSON planning and
 YAML-only mission planning so the backend path stays aligned with the browser

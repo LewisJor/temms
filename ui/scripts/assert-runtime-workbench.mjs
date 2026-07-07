@@ -259,6 +259,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "Download handoff headers",
   'data-testid="edge-proof-download-handoff"',
   "headers match the retained component digests",
+  "package-bound",
   "Browser recomputed workbench, trace, and manifest hashes against the proof payload.",
   "trace agrees with runtime_workbench",
   "temms-edge-runtime-proof-component-digests/v1",

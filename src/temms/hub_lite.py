@@ -712,6 +712,7 @@ class HubLiteStore:
         reason: str | None = None,
         rollout_plan_id: str | None = None,
         rollout_plan_batch: int | None = None,
+        mission_package_stage: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Assign a package rollout to one device."""
         data = self._read()
@@ -728,6 +729,7 @@ class HubLiteStore:
                 require_approval=require_approval,
                 rollout_plan_id=rollout_plan_id,
                 rollout_plan_batch=rollout_plan_batch,
+                mission_package_stage=mission_package_stage,
             )
             return existing
         if device_id not in data["devices"]:
@@ -814,6 +816,7 @@ class HubLiteStore:
             "reason": reason,
             "rollout_plan_id": rollout_plan_id,
             "rollout_plan_batch": rollout_plan_batch,
+            "mission_package_stage": mission_package_stage,
             "history": [
                 {
                     "state": "assigned",
@@ -1556,6 +1559,7 @@ def _ensure_rollout_request_matches(
     require_approval: bool,
     rollout_plan_id: str | None,
     rollout_plan_batch: int | None,
+    mission_package_stage: dict[str, Any] | None = None,
 ) -> None:
     expected = {
         "device_id": device_id,
@@ -1568,6 +1572,8 @@ def _ensure_rollout_request_matches(
         "rollout_plan_id": rollout_plan_id,
         "rollout_plan_batch": rollout_plan_batch,
     }
+    if rollout.get("mission_package_stage") or mission_package_stage:
+        expected["mission_package_stage"] = mission_package_stage
     mismatches = [
         key
         for key, value in expected.items()
