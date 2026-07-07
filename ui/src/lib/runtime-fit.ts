@@ -1,7 +1,7 @@
-import type { Benchmark, Device, HubPackage, JsonObject, RuntimeTarget, RuntimeValidation } from "../types";
+import type { Benchmark, DeploymentReadiness, Device, HubPackage, JsonObject, RuntimeTarget, RuntimeValidation } from "../types";
 import { compactDate, deviceId, packageId, runtimeTargetId } from "./hub-format";
 import { asRecord, latestByTime, numberOf, stringOf, stringsOf } from "./json";
-import type { EdgeRuntimeFit, GateTone, ModelRecord } from "./workbench-types";
+import type { EdgeRuntimeFit, GateTone, ModelRecord, RuntimeFitDisplay } from "./workbench-types";
 
 const DEFAULT_BENCHMARK_STALE_SECONDS = 86400;
 
@@ -438,6 +438,28 @@ export function capabilityLockTone(lock: JsonObject): GateTone {
   if (status === "blocked") return "bad";
   if (status === "attention") return "warn";
   return stringOf(lock.capability_sha256, "") ? "good" : "neutral";
+}
+
+export function runtimeCapabilityLockForProof(readiness: DeploymentReadiness | undefined): JsonObject {
+  const contract = asRecord(readiness?.edge_execution_contract);
+  const runtimeDecision = asRecord(readiness?.runtime_decision);
+  const runtimeFit = asRecord(readiness?.runtime_fit);
+  const contractLock = asRecord(contract.runtime_capability_lock);
+  if (Object.keys(contractLock).length) return contractLock;
+  const decisionLock = asRecord(runtimeDecision.runtime_capability_lock);
+  if (Object.keys(decisionLock).length) return decisionLock;
+  return asRecord(runtimeFit.runtime_capability_lock);
+}
+
+export function runtimeFitScoreForProof(
+  readiness: DeploymentReadiness | undefined,
+  runtimeFitDisplay: RuntimeFitDisplay
+): number | undefined {
+  const runtimeFit = asRecord(readiness?.runtime_fit);
+  const score = numberOf(runtimeFit.score);
+  if (score !== undefined) return score;
+  const match = runtimeFitDisplay.label.match(/^(\d+(?:\.\d+)?)\/100/);
+  return match ? Number(match[1]) : undefined;
 }
 
 function capabilityLockFreshnessDetail(lock: JsonObject): string {

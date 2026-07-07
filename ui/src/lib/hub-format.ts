@@ -109,6 +109,14 @@ export function toneForPath(state: string): "good" | "warn" | "bad" | "neutral" 
   return "neutral";
 }
 
+export function toneForReadinessStatus(status: string): "good" | "warn" | "bad" | "neutral" {
+  const normalized = status.toLowerCase();
+  if (normalized === "go") return "good";
+  if (normalized === "attention") return "warn";
+  if (normalized === "blocked") return "bad";
+  return toneForPath(normalized);
+}
+
 export function actionLabel(action: string): string {
   return action
     .split("-")
