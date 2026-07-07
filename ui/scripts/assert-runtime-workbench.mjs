@@ -13,6 +13,7 @@ const sourcePath = join(uiRoot, "src", "App.tsx");
 const deployListsPath = join(uiRoot, "src", "components", "deploy-lists.tsx");
 const packageHandoffPath = join(uiRoot, "src", "components", "package-handoff.tsx");
 const missionStagesPath = join(uiRoot, "src", "components", "mission-stages.tsx");
+const modelPlanPath = join(uiRoot, "src", "components", "model-plan.tsx");
 const workbenchFlowPath = join(uiRoot, "src", "components", "workbench-flow.tsx");
 const apiPath = join(uiRoot, "src", "api.ts");
 const missionPackagePath = join(uiRoot, "src", "lib", "mission-package.ts");
@@ -81,10 +82,11 @@ const source = readFileSync(sourcePath, "utf8");
 const deployListsSource = readFileSync(deployListsPath, "utf8");
 const packageHandoffSource = readFileSync(packageHandoffPath, "utf8");
 const missionStagesSource = readFileSync(missionStagesPath, "utf8");
+const modelPlanSource = readFileSync(modelPlanPath, "utf8");
 const workbenchFlowSource = readFileSync(workbenchFlowPath, "utf8");
 const missionPackageSource = readFileSync(missionPackagePath, "utf8");
 const missionWorkflowSource = readFileSync(missionWorkflowPath, "utf8");
-const workbenchSource = `${source}\n${deployListsSource}\n${packageHandoffSource}\n${missionStagesSource}\n${workbenchFlowSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
+const workbenchSource = `${source}\n${deployListsSource}\n${packageHandoffSource}\n${missionStagesSource}\n${modelPlanSource}\n${workbenchFlowSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
 const apiSource = readFileSync(apiPath, "utf8");
 const missionSpecSource = readFileSync(missionSpecPath, "utf8");
 const proofHashSource = readFileSync(proofHashPath, "utf8");
@@ -278,6 +280,10 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "Selected model from Model Plan",
   "Open Model Plan to choose a signed model",
   "Compare the model selected in Model Plan",
+  'data-testid="model-plan-inventory"',
+  'data-testid="model-plan-decision"',
+  'data-testid="model-plan-advanced-intake"',
+  "Continue to Runtime Fit",
   "Edge execution command",
   "Run on the edge node to refresh heartbeat",
   "Ranked on-device capability proof",

@@ -11,7 +11,6 @@ import {
   FileCheck2,
   GitBranch,
   KeyRound,
-  PackageCheck,
   PlayCircle,
   RefreshCw,
   Rocket,
@@ -54,6 +53,7 @@ import {
   HandlingPolicyPanel,
   MissionDesignPanel
 } from "./components/mission-stages";
+import { ModelPlanStage } from "./components/model-plan";
 import { MissionWorkflowCockpit, StatusTile } from "./components/workbench-flow";
 import {
   compactDate,
@@ -1684,84 +1684,27 @@ function executePendingReadinessAction(): void {
         ) : null}
 
         {activeHubStage === "model" ? (
-        <section className="section section-primary model-inventory-section" aria-labelledby="models-heading">
-          <div className="section-header">
-            <div>
-              <span className="section-kicker">Mission model plan</span>
-              <h2 id="models-heading">Select the model that will ship to the edge</h2>
-            </div>
-            <Badge value={selectedModel?.packagePromotion ?? "no models"} />
-          </div>
-
-          <div className="model-list">
-            {models.length ? (
-              models.map((model) => (
-                <button
-                  className={model.id === selectedModel?.id ? "model-row model-row-active" : "model-row"}
-                  key={`${model.packageId}-${model.id}`}
-                  type="button"
-                  onClick={() => setSelectedModelId(model.id)}
-                >
-                  <span className="model-main">
-                    <strong>{model.name}</strong>
-                    <small>{model.id}</small>
-                  </span>
-                  <span>{model.format}</span>
-                  <span>{model.profiles.join(", ") || "any profile"}</span>
-                  <span>{formatBenchmark(model)}</span>
-                  <Badge value={model.signed ? "signed" : "unsigned"} />
-                </button>
-              ))
-            ) : (
-              <EmptyState title="No models registered" detail="Register a signed TEMMS package to populate the model inventory." />
+          <ModelPlanStage
+            assetsOpen={focusedWorkflow === "assets"}
+            assetsRef={assetsWorkflowRef}
+            assetsSectionClassName={workflowClass(
+              "assets",
+              "section section-wide utility-section assets-section stage-advanced-drawer"
             )}
-          </div>
-        </section>
-        ) : null}
-
-        {activeHubStage === "model" ? (
-        <section
-          className={workflowClass("model", "section selected-model-section")}
-          aria-labelledby="selected-model-heading"
-          ref={modelWorkflowRef}
-          tabIndex={-1}
-        >
-          <div className="section-header">
-            <div>
-              <span className="section-kicker">Model decision</span>
-              <h2 id="selected-model-heading">{selectedModel?.name ?? "No model selected"}</h2>
-            </div>
-            {selectedModel ? <Badge value={selectedModel.packagePromotion} /> : null}
-          </div>
-          {selectedModel ? (
-            <div className="facts">
-              <Fact label="Package" value={selectedModel.packageId} />
-              <Fact label="Version" value={`${selectedModel.packageName} ${selectedModel.packageVersion}`} />
-              <Fact label="Runtime" value={selectedModel.runtimes.join(", ") || "not declared"} />
-              <Fact label="Provider" value={providerDisplayForModel(selectedModel, selectedRuntime)} />
-              <Fact label="Performance SLO" value={formatPerformanceSlo(selectedModel)} />
-              <Fact label="Resource envelope" value={formatResourceEnvelope(selectedModel)} />
-              <Fact label="Benchmark" value={formatBenchmark(selectedModel)} />
-              <Fact label="Benchmark age" value={formatBenchmarkFreshness(selectedModel)} />
-              <Fact label="Tested on" value={formatBenchmarkTarget(selectedModel)} />
-              <Fact label="Validation" value={selectedRuntimeValidation ? "passed runtime check" : "not validated"} />
-              <Fact label="Runtime fit" value={`${runtimeFitDisplay.label}: ${runtimeFitDisplay.detail}`} />
-              <Fact label="Resource fit" value={`${resourceEnvelopeFit.label}: ${resourceEnvelopeFit.detail}`} />
-              <Fact label="Source" value={selectedModel.source} />
-              <Fact label="Updated" value={compactDate(selectedModel.updatedAt)} />
-            </div>
-          ) : null}
-          <div className="button-row">
-            <Button
-              icon={<PackageCheck size={16} />}
-              variant="secondary"
-              disabled={!nextPackageState}
-              onClick={promoteSelectedPackage}
-            >
-              {nextPackageState ? `Promote to ${nextPackageState}` : "Released"}
-            </Button>
-          </div>
-        </section>
+            modelRef={modelWorkflowRef}
+            models={models}
+            nextPackageState={nextPackageState}
+            resourceEnvelopeFit={resourceEnvelopeFit}
+            runtimeFitDisplay={runtimeFitDisplay}
+            selectedModel={selectedModel}
+            selectedModelSectionClassName={workflowClass("model", "section selected-model-section")}
+            selectedRuntime={selectedRuntime}
+            selectedRuntimeValidation={selectedRuntimeValidation}
+            onGoRuntime={() => navigateHubStage("runtime")}
+            onPromoteSelectedPackage={promoteSelectedPackage}
+            onSelectModel={setSelectedModelId}
+            onSubmitForm={submitForm}
+          />
         ) : null}
 
         {activeHubStage === "deploy" ? (
@@ -2165,61 +2108,6 @@ function executePendingReadinessAction(): void {
         </section>
         ) : null}
 
-        {activeHubStage === "model" ? (
-        <details
-          className={workflowClass("assets", "section section-wide utility-section assets-section stage-advanced-drawer")}
-          aria-labelledby="ingest-heading"
-          ref={assetsWorkflowRef}
-          tabIndex={-1}
-          open={focusedWorkflow === "assets"}
-        >
-          <summary className="section-header">
-            <div>
-              <span className="section-kicker">Advanced intake</span>
-              <h2 id="ingest-heading">Register packages, enroll edge nodes, or import bundles</h2>
-            </div>
-            <Badge value="setup" />
-          </summary>
-          <div className="utility-grid">
-            <form className="stack" onSubmit={(event) => submitForm("register-package", event)}>
-              <label className="field">
-                <span>Signed package path</span>
-                <input name="package_path" placeholder="/path/to/package" required />
-              </label>
-              <input name="actor" type="hidden" value="operator:mission-package-workbench" />
-              <label className="check">
-                <input name="strict_metadata" type="checkbox" defaultChecked />
-                <span>Strict metadata</span>
-              </label>
-              <Submit icon={<PackageCheck size={16} />}>Register package</Submit>
-            </form>
-            <form className="stack" onSubmit={(event) => submitForm("enroll-device", event)}>
-              <label className="field">
-                <span>Device ID</span>
-                <input name="device_id" defaultValue="edge-demo" required />
-              </label>
-              <label className="field">
-                <span>Profile</span>
-                <input name="profile" defaultValue="x86_64-cpu" required />
-              </label>
-              <label className="field">
-                <span>Site</span>
-                <input name="site" defaultValue="local-lab" />
-              </label>
-              <Submit icon={<Activity size={16} />}>Enroll edge</Submit>
-            </form>
-            <form className="stack" onSubmit={(event) => submitForm("airgap-import", event)}>
-              <label className="field">
-                <span>Air-gap bundle JSON</span>
-                <textarea name="bundle" rows={7} placeholder='{"schema_version":"temms-hub-lite-bundle/v1"}' />
-              </label>
-              <Submit icon={<UploadCloud size={16} />} variant="secondary">
-                Import bundle
-              </Submit>
-            </form>
-          </div>
-        </details>
-        ) : null}
       </main>
       ) : null}
 
@@ -2607,15 +2495,6 @@ function RuntimeDecisionTraceItem({
         ) : null}
       </div>
     </article>
-  );
-}
-
-function Fact({ label, value }: { label: string; value: string }): JSX.Element {
-  return (
-    <div className="fact">
-      <span>{label}</span>
-      <strong>{value || "-"}</strong>
-    </div>
   );
 }
 
