@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { toneFor } from "../lib/hub-format";
+import { toneFor, toneForPath } from "../lib/hub-format";
 import type { GateTone } from "../lib/workbench-types";
 import type { Preview, Toast } from "../types";
 
@@ -53,6 +53,35 @@ export function CapabilityMetric({
   return (
     <div className={`capability-metric capability-metric-${tone}`}>
       <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </div>
+  );
+}
+
+export function PathStep({ title, value, state }: { title: string; value: string; state: string }): JSX.Element {
+  return (
+    <div className={`path-step path-step-${toneForPath(state)}`}>
+      <span>{title}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+export function ReadinessCard({
+  title,
+  value,
+  detail,
+  state
+}: {
+  title: string;
+  value: string;
+  detail: string;
+  state: string;
+}): JSX.Element {
+  return (
+    <div className={`readiness-card readiness-card-${toneForPath(state)}`}>
+      <span>{title}</span>
       <strong>{value}</strong>
       <small>{detail}</small>
     </div>

@@ -34,7 +34,16 @@ import type {
   MissionPackageDownloadHandoff,
   ReadinessQuery
 } from "./api";
-import { Badge, Button, CapabilityMetric, PreviewPanel, Submit, ToastView } from "./components/ui";
+import {
+  Badge,
+  Button,
+  CapabilityMetric,
+  PathStep,
+  PreviewPanel,
+  ReadinessCard,
+  Submit,
+  ToastView
+} from "./components/ui";
 import {
   EmptyState,
   EvidenceSummaryRow,
@@ -72,7 +81,8 @@ import {
   rolloutId,
   runtimeTargetId,
   saveToken,
-  storedToken
+  storedToken,
+  toneForPath
 } from "./lib/hub-format";
 import {
   asRecord,
@@ -2663,35 +2673,6 @@ function OperatorCommandMetric({
     <div className={`operator-command-metric operator-command-metric-${tone}`}>
       <span>{label}</span>
       <strong>{value || "-"}</strong>
-      <small>{detail}</small>
-    </div>
-  );
-}
-
-function PathStep({ title, value, state }: { title: string; value: string; state: string }): JSX.Element {
-  return (
-    <div className={`path-step path-step-${toneForPath(state)}`}>
-      <span>{title}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function ReadinessCard({
-  title,
-  value,
-  detail,
-  state
-}: {
-  title: string;
-  value: string;
-  detail: string;
-  state: string;
-}): JSX.Element {
-  return (
-    <div className={`readiness-card readiness-card-${toneForPath(state)}`}>
-      <span>{title}</span>
-      <strong>{value}</strong>
       <small>{detail}</small>
     </div>
   );
@@ -6548,14 +6529,6 @@ function actionTitle(action: string): string {
     .split("-")
     .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
     .join(" ");
-}
-
-function toneForPath(state: string): "good" | "warn" | "bad" | "neutral" {
-  const normalized = state.toLowerCase();
-  if (["ready", "released", "approved", "activated", "rolled_back", "complete"].includes(normalized)) return "good";
-  if (["blocked", "failed", "error", "missing"].includes(normalized)) return "bad";
-  if (["pending", "assigned", "advancing", "downloading", "imported", "preview", "preview_only"].includes(normalized)) return "warn";
-  return "neutral";
 }
 
 function toneForReadinessStatus(status: string): "good" | "warn" | "bad" | "neutral" {

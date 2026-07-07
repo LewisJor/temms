@@ -88,6 +88,14 @@ export function toneFor(value: string): "good" | "warn" | "bad" | "neutral" {
   return "neutral";
 }
 
+export function toneForPath(state: string): "good" | "warn" | "bad" | "neutral" {
+  const normalized = state.toLowerCase();
+  if (["ready", "released", "approved", "activated", "rolled_back", "complete"].includes(normalized)) return "good";
+  if (["blocked", "failed", "error", "missing"].includes(normalized)) return "bad";
+  if (["pending", "assigned", "advancing", "downloading", "imported", "preview", "preview_only"].includes(normalized)) return "warn";
+  return "neutral";
+}
+
 export function actionLabel(action: string): string {
   return action
     .split("-")
