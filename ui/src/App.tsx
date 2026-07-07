@@ -35,7 +35,6 @@ import {
 import type {
   EdgeProofDownloadHandoff,
   MissionPackageDownloadHandoff,
-  MissionPackagePlanRequest,
   ReadinessQuery
 } from "./api";
 import { Badge, Button, PreviewPanel, Submit, ToastView } from "./components/ui";
@@ -77,6 +76,7 @@ import {
   type MissionDraft
 } from "./lib/mission-spec";
 import {
+  buildMissionPackagePlanRequest,
   buildMissionPackageManifest,
   buildMissionPackageStageStatus,
   missionPackageRolloutId
@@ -671,28 +671,11 @@ export function App(): JSX.Element {
     }
   }
 
-  function missionPackagePlanPayload(): MissionPackagePlanRequest {
-    const latencyBudget = Number(missionDraft.latencyBudgetMs);
-    const minThroughput = Number(missionDraft.throughputMinIps);
-    const confidenceThreshold = Number(missionDraft.confidenceThreshold);
-    return {
-      ...readinessContext,
-      confidence_threshold: Number.isFinite(confidenceThreshold) ? confidenceThreshold : undefined,
-      ddil_mode: missionDraft.ddilMode || undefined,
-      fallback_model_id: missionDraft.fallbackModelId || undefined,
-      goal: missionDraft.goal || undefined,
-      latency_budget_ms: Number.isFinite(latencyBudget) ? latencyBudget : undefined,
-      min_throughput_ips: Number.isFinite(minThroughput) ? minThroughput : undefined,
-      mission_yaml: missionDraft.yaml || undefined,
-      require_best_runtime: true,
-      require_capability_lock: true,
-      require_go: false,
-      require_proof_signature: true,
-      sensor: missionDraft.sensor || undefined,
-      slot: missionDraft.slot || readinessContext.slot,
-      switch_policy: missionDraft.switchPolicy || undefined,
-      min_runtime_fit: 95
-    };
+  function missionPackagePlanPayload() {
+    return buildMissionPackagePlanRequest({
+      draft: missionDraft,
+      readinessContext
+    });
   }
 
   function planMissionPackageArtifact(): void {

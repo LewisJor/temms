@@ -205,6 +205,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "Manual controls",
   "Advanced intake",
   "operator:mission-package-workbench",
+  "buildMissionPackagePlanRequest",
   "buildMissionPackageStageStatus",
   "missionPackageStageStatus",
   "hasPlannedDeploymentIntent",
@@ -365,6 +366,72 @@ const missionDraftFixture = {
   throughputMinIps: "20",
   yaml: ""
 };
+const bundledMissionPackage = await build({
+  bundle: true,
+  entryPoints: [missionPackagePath],
+  format: "esm",
+  platform: "node",
+  target: "es2020",
+  write: false
+});
+const missionPackageModule = await import(
+  `data:text/javascript;base64,${Buffer.from(bundledMissionPackage.outputFiles[0].text).toString("base64")}`
+);
+const planRequestFixture = missionPackageModule.buildMissionPackagePlanRequest({
+  draft: {
+    ...missionDraftFixture,
+    yaml: "schema_version: temms-edge-mission/v1\nmission:\n  goal: Detect vehicles locally while disconnected.\n"
+  },
+  readinessContext: {
+    device_id: "edge-rpi5",
+    model_id: "model-yolov8-lowlight-001",
+    package_id: "pkg-vision-models-20240115",
+    runtime_target_id: "temms-rpi5-tflite",
+    slot: "vision"
+  }
+});
+const expectedPlanRequestFields = {
+  confidence_threshold: 0.7,
+  ddil_mode: "queue_signed_intents",
+  device_id: "edge-rpi5",
+  fallback_model_id: "model-fallback",
+  goal: "Detect vehicles locally while disconnected.",
+  latency_budget_ms: 95,
+  min_runtime_fit: 95,
+  min_throughput_ips: 20,
+  model_id: "model-yolov8-lowlight-001",
+  package_id: "pkg-vision-models-20240115",
+  require_best_runtime: true,
+  require_capability_lock: true,
+  require_go: false,
+  require_proof_signature: true,
+  runtime_target_id: "temms-rpi5-tflite",
+  sensor: "camera.rgb",
+  slot: "vision",
+  switch_policy: "confidence_and_condition"
+};
+Object.entries(expectedPlanRequestFields).forEach(([key, value]) => {
+  if (planRequestFixture[key] !== value) {
+    throw new Error(`mission package plan request ${key} mismatch: ${planRequestFixture[key]}`);
+  }
+});
+if (!String(planRequestFixture.mission_yaml || "").includes("temms-edge-mission/v1")) {
+  throw new Error("mission package plan request should preserve source mission YAML");
+}
+const invalidNumberPlanRequest = missionPackageModule.buildMissionPackagePlanRequest({
+  draft: {
+    ...missionDraftFixture,
+    confidenceThreshold: "auto",
+    latencyBudgetMs: "fast",
+    throughputMinIps: ""
+  },
+  readinessContext: { slot: "vision" }
+});
+["confidence_threshold", "latency_budget_ms", "min_throughput_ips"].forEach((key) => {
+  if (invalidNumberPlanRequest[key] !== undefined) {
+    throw new Error(`mission package plan request should omit non-finite ${key}`);
+  }
+});
 const modelFixture = {
   format: "onnx",
   id: "model-yolov8-lowlight-001",

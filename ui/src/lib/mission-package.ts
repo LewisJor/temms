@@ -1,10 +1,54 @@
-import type { MissionPackageDownloadHandoff } from "../api";
+import type {
+  MissionPackageDownloadHandoff,
+  MissionPackagePlanRequest,
+  ReadinessQuery
+} from "../api";
 import type { Device, JsonObject, RuntimeTarget } from "../types";
 import { deviceId, runtimeTargetId } from "./hub-format";
 import { asRecord, stringOf } from "./json";
 import type { MissionDraft } from "./mission-spec";
 import { shortProofDigest } from "./proof-hash";
 import type { MissionPackageStageStatus, ModelRecord } from "./workbench-types";
+
+export function buildMissionPackagePlanRequest({
+  draft,
+  minRuntimeFit = 95,
+  readinessContext,
+  requireBestRuntime = true,
+  requireCapabilityLock = true,
+  requireGo = false,
+  requireProofSignature = true
+}: {
+  draft: MissionDraft;
+  minRuntimeFit?: number;
+  readinessContext: ReadinessQuery;
+  requireBestRuntime?: boolean;
+  requireCapabilityLock?: boolean;
+  requireGo?: boolean;
+  requireProofSignature?: boolean;
+}): MissionPackagePlanRequest {
+  const latencyBudget = optionalNumber(draft.latencyBudgetMs);
+  const minThroughput = optionalNumber(draft.throughputMinIps);
+  const confidenceThreshold = optionalNumber(draft.confidenceThreshold);
+  return {
+    ...readinessContext,
+    confidence_threshold: confidenceThreshold,
+    ddil_mode: draft.ddilMode || undefined,
+    fallback_model_id: draft.fallbackModelId || undefined,
+    goal: draft.goal || undefined,
+    latency_budget_ms: latencyBudget,
+    min_throughput_ips: minThroughput,
+    mission_yaml: draft.yaml || undefined,
+    require_best_runtime: requireBestRuntime,
+    require_capability_lock: requireCapabilityLock,
+    require_go: requireGo,
+    require_proof_signature: requireProofSignature,
+    sensor: draft.sensor || undefined,
+    slot: draft.slot || readinessContext.slot,
+    switch_policy: draft.switchPolicy || undefined,
+    min_runtime_fit: minRuntimeFit
+  };
+}
 
 export function buildMissionPackageManifest({
   device,
@@ -195,4 +239,11 @@ export function missionPackageRolloutId(manifest: JsonObject): string {
     .filter(Boolean)
     .join("-");
   return `rollout-${parts || "mission-package"}`;
+}
+
+function optionalNumber(value: string): number | undefined {
+  const trimmedValue = value.trim();
+  if (!trimmedValue) return undefined;
+  const numericValue = Number(trimmedValue);
+  return Number.isFinite(numericValue) ? numericValue : undefined;
 }
