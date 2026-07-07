@@ -1418,6 +1418,7 @@ function executePendingReadinessAction(): void {
             selectedRuntime={selectedRuntime}
             onCopyCommand={(label, command) => void copyCommand(label, command)}
             onGenerateProof={generateEdgeProofArtifact}
+            onGoHandling={() => navigateHubStage("handling")}
             onGoModels={() => navigateHubStage("model")}
             onSelectDevice={setSelectedDeviceId}
             onSelectRuntime={setSelectedRuntimeId}
@@ -2122,6 +2123,7 @@ function EdgeRuntimeWorkbench({
   models,
   onCopyCommand,
   onGenerateProof,
+  onGoHandling,
   onGoModels,
   onSelectDevice,
   onSelectRuntime,
@@ -2140,6 +2142,7 @@ function EdgeRuntimeWorkbench({
   models: ModelRecord[];
   onCopyCommand: (label: string, command: string) => void;
   onGenerateProof: () => void;
+  onGoHandling: () => void;
   onGoModels: () => void;
   onSelectDevice: (id: string) => void;
   onSelectRuntime: (id: string) => void;
@@ -2283,6 +2286,15 @@ function EdgeRuntimeWorkbench({
           onClick={onGenerateProof}
         >
           Generate proof
+        </Button>
+        <Button
+          ariaLabel="Continue to Sensor Handling"
+          icon={<Activity size={16} />}
+          testId="runtime-workbench-go-handling"
+          disabled={proofDisabled}
+          onClick={onGoHandling}
+        >
+          Continue to Sensor Handling
         </Button>
       </div>
 

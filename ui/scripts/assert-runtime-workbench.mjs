@@ -287,6 +287,8 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "Edge execution command",
   "Run on the edge node to refresh heartbeat",
   "Ranked on-device capability proof",
+  'testId="runtime-workbench-go-handling"',
+  "Continue to Sensor Handling",
   "runtime_retarget_workbench_previous_selected_runtime_target_id",
   "Select runtime target",
   "Target the model to the edge runtime"
