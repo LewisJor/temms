@@ -1,4 +1,4 @@
-import type { Benchmark, Device, HubPackage, RuntimeTarget, RuntimeValidation } from "../types";
+import type { Benchmark, Device, HubPackage, JsonObject, RuntimeTarget, RuntimeValidation } from "../types";
 import { deviceId, packageId, runtimeTargetId } from "./hub-format";
 import { asRecord, latestByTime, numberOf, stringOf, stringsOf } from "./json";
 import type { EdgeRuntimeFit, GateTone, ModelRecord } from "./workbench-types";
@@ -251,6 +251,29 @@ export function compactMetricDetail(detail: string): string {
     .replace(/(-?\d+(?:\.\d+)?)\s*ms/g, (_match, value) => `${formatMetricNumber(Number(value))} ms`)
     .replace(/(-?\d+(?:\.\d+)?)\s*ips/g, (_match, value) => `${formatThroughput(Number(value))} ips`)
     .replace(/(-?\d+(?:\.\d+)?)\s*MB/g, (_match, value) => `${Math.round(Number(value))} MB`);
+}
+
+export function artifactLaneValue(artifactLane: JsonObject): string {
+  const state = stringOf(artifactLane.state, "");
+  if (state) return state.replace(/_/g, " ");
+  const format = stringOf(artifactLane.model_format, "");
+  return format ? `${format} artifact` : "not classified";
+}
+
+export function artifactLaneDetail(artifactLane: JsonObject): string {
+  const detail = stringOf(artifactLane.detail, "");
+  if (detail) return detail;
+  const nativeFormats = stringsOf(artifactLane.native_formats);
+  if (nativeFormats.length) return `native formats: ${nativeFormats.join(", ")}`;
+  return "artifact format has not been evaluated for this runtime lane";
+}
+
+export function artifactLaneTone(artifactLane: JsonObject): GateTone {
+  const status = stringOf(artifactLane.status, "");
+  if (status === "go") return "good";
+  if (status === "blocked") return "bad";
+  if (status === "attention") return "warn";
+  return "neutral";
 }
 
 export interface BenchmarkFreshness {

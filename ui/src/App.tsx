@@ -67,6 +67,7 @@ import {
   ReadinessCommandPanel,
   ReadinessVerdictPanel
 } from "./components/readiness-panels";
+import { EdgeRecommendationPanel } from "./components/runtime-optimizer";
 import {
   HandlingPolicyPanel,
   MissionDesignPanel
@@ -133,6 +134,9 @@ import {
   workflowTargetLabel
 } from "./lib/mission-workflow";
 import {
+  artifactLaneDetail,
+  artifactLaneTone,
+  artifactLaneValue,
   benchmarkFreshness,
   compactMetricDetail,
   deviceResourceSnapshot,
@@ -3125,104 +3129,6 @@ function TargetRuntimeAssessmentRow({
   );
 }
 
-function EdgeRecommendationPanel({
-  recommendations,
-  selectedModelId,
-  selectedDeviceId,
-  selectedRuntimeId,
-  onSelect
-}: {
-  recommendations: EdgeRecommendation[];
-  selectedModelId: string;
-  selectedDeviceId: string;
-  selectedRuntimeId: string;
-  onSelect: (recommendation: EdgeRecommendation) => void;
-}): JSX.Element {
-  const visible = recommendations.slice(0, 3);
-  if (!visible.length) {
-    return (
-      <div className="edge-recommendations edge-recommendations-empty">
-        <div>
-          <span className="section-kicker">Runtime optimizer</span>
-          <strong>Recommendation score pending</strong>
-        </div>
-        <p>Register packages, edge inventory, and runtime targets to rank deployment paths.</p>
-      </div>
-    );
-  }
-  return (
-    <div className="edge-recommendations" aria-label="Ranked edge runtime recommendations">
-      <div className="edge-recommendations-header">
-        <div>
-          <span className="section-kicker">Runtime optimizer</span>
-          <strong>Best edge paths</strong>
-        </div>
-        <span>{visible.length} ranked</span>
-      </div>
-      <div className="edge-recommendation-grid">
-        {visible.map((recommendation) => {
-          const runtimeId = recommendation.runtime_target_id
-            ? String(recommendation.runtime_target_id)
-            : "device inventory";
-          const modelId = recommendation.model_id ? String(recommendation.model_id) : "package";
-          const device = recommendation.device_id ? String(recommendation.device_id) : "edge";
-          const selected =
-            modelId === selectedModelId &&
-            device === selectedDeviceId &&
-            (recommendation.runtime_target_id ? runtimeId === selectedRuntimeId : !selectedRuntimeId);
-          const optimization = asRecord(recommendation.optimization);
-          const runtimeFit = asRecord(recommendation.runtime_fit);
-          const artifactLane = asRecord(recommendation.artifact_lane ?? runtimeFit.artifact_lane);
-          const runtimeFitScore = numberOf(runtimeFit.score);
-          const runtimeFitTier = stringOf(runtimeFit.tier, "fit").replace(/_/g, " ");
-          const latency = metricText(optimization.latency_ms_p95);
-          const throughput = throughputText(optimization.throughput_ips);
-          const action = (recommendation.required_actions ?? [])[0];
-          return (
-            <article
-              className={`edge-recommendation edge-recommendation-${recommendationTone(recommendation)}${
-                selected ? " edge-recommendation-selected" : ""
-              }`}
-              key={`${recommendation.rank}-${modelId}-${device}-${runtimeId}`}
-            >
-              <div className="edge-recommendation-topline">
-                <span>#{recommendation.rank ?? "-"}</span>
-                <strong>{recommendation.score ?? 0}</strong>
-              </div>
-              <div>
-                <Badge value={formatRecommendationDecision(recommendation.decision)} />
-                <h3>{modelId}</h3>
-                <p>{device} / {runtimeId}</p>
-              </div>
-              <p className="edge-recommendation-reason">
-                {recommendation.primary_reason || action || "Review this target"}
-              </p>
-              <div className="edge-recommendation-metrics">
-                <span>
-                  {runtimeFitScore !== undefined
-                    ? `${runtimeFitScore}/100 ${runtimeFitTier}`
-                    : `${recommendation.confidence || "low"} confidence`}
-                </span>
-                {latency ? <span>{latency} ms p95</span> : null}
-                {throughput ? <span>{throughput} ips</span> : null}
-                {Object.keys(artifactLane).length ? <span>{artifactLaneValue(artifactLane)}</span> : null}
-              </div>
-              <button
-                className="button button-ghost"
-                type="button"
-                onClick={() => onSelect(recommendation)}
-                disabled={selected}
-              >
-                <span>{selected ? "Selected" : "Use path"}</span>
-              </button>
-            </article>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function CapabilityDossier({
   device,
   edgeRuntimeFit,
@@ -3406,25 +3312,6 @@ function CapabilityBlock({ items, title }: { items: [string, string][]; title: s
   );
 }
 
-function formatRecommendationDecision(value?: string): string {
-  if (!value) return "review";
-  return value.replace(/_/g, " ");
-}
-
-function metricText(value: unknown): string {
-  if (value === undefined || value === null || value === "") return "";
-  const numeric = numberOf(value);
-  if (numeric !== undefined) return formatMetricNumber(numeric);
-  return String(value);
-}
-
-function throughputText(value: unknown): string {
-  if (value === undefined || value === null || value === "") return "";
-  const numeric = numberOf(value);
-  if (numeric !== undefined) return formatThroughput(numeric);
-  return String(value);
-}
-
 function runtimeLaneFor(
   runtimeFit: Record<string, unknown>,
   runtime: RuntimeTarget | undefined
@@ -3501,29 +3388,6 @@ function runtimeProviderTone(lane: JsonObject, device: Device | undefined): Gate
   const inventoryTone = runtimeInventoryTone(device);
   if (inventoryTone === "bad") return "bad";
   return runtimeLaneTone(lane);
-}
-
-function artifactLaneValue(artifactLane: JsonObject): string {
-  const state = stringOf(artifactLane.state, "");
-  if (state) return state.replace(/_/g, " ");
-  const format = stringOf(artifactLane.model_format, "");
-  return format ? `${format} artifact` : "not classified";
-}
-
-function artifactLaneDetail(artifactLane: JsonObject): string {
-  const detail = stringOf(artifactLane.detail, "");
-  if (detail) return detail;
-  const nativeFormats = stringsOf(artifactLane.native_formats);
-  if (nativeFormats.length) return `native formats: ${nativeFormats.join(", ")}`;
-  return "artifact format has not been evaluated for this runtime lane";
-}
-
-function artifactLaneTone(artifactLane: JsonObject): GateTone {
-  const status = stringOf(artifactLane.status, "");
-  if (status === "go") return "good";
-  if (status === "blocked") return "bad";
-  if (status === "attention") return "warn";
-  return "neutral";
 }
 
 function capabilityLockValue(lock: JsonObject): string {
@@ -4709,12 +4573,6 @@ function formatSignedPercent(value: number): string {
 function formatSignedMb(value: number): string {
   const rounded = Math.round(value);
   return `${rounded >= 0 ? "+" : ""}${rounded} MB`;
-}
-
-function recommendationTone(recommendation: EdgeRecommendation): GateTone {
-  if (recommendation.decision === "deploy") return "good";
-  if (recommendation.decision === "blocked") return "bad";
-  return "warn";
 }
 
 function runtimeTargetSelectionValue(selection: JsonObject): string {
