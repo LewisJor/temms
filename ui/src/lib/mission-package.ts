@@ -119,6 +119,7 @@ export function buildMissionPackageStageStatus({
 }): MissionPackageStageStatus {
   const selection = asRecord(manifest.selection);
   const deploymentIntent = asRecord(manifest.deployment_intent);
+  const deploymentCommand = asRecord(deploymentIntent.command);
   const proofGate = asRecord(manifest.proof_gate);
   const integrity = asRecord(manifest.integrity);
   const packageIdentity = asRecord(manifest.package_identity);
@@ -137,6 +138,7 @@ export function buildMissionPackageStageStatus({
   );
   const gateStatus = stringOf(proofGate.status, plan || handoff ? "planned" : "");
   const hasPackageArtifact = Boolean(plan || handoff);
+  const hasDeploymentIntent = Boolean(deploymentIntent.rollout_id && deploymentCommand.path);
 
   if (hasPackageArtifact && gateStatus === "failed") {
     return {
@@ -164,6 +166,18 @@ export function buildMissionPackageStageStatus({
       stageable: false,
       tone: "warn",
       value: "proof gate pending"
+    };
+  }
+
+  if (hasPackageArtifact && !hasDeploymentIntent) {
+    return {
+      detail: "deployment intent missing; replan package with model, runtime, and edge target",
+      downloaded: Boolean(handoff),
+      gateStatus,
+      planned: hasPackageArtifact,
+      stageable: false,
+      tone: "warn",
+      value: "deploy intent missing"
     };
   }
 

@@ -222,6 +222,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "proof gate failed",
   "proof gate pending",
   "proof gate must pass before staging",
+  "deploy intent missing",
   "Stage rollout unlocks only after the mission package proof gate passes.",
   "stageable",
   "plan package to hash mission handoff",
@@ -473,6 +474,34 @@ if (
   invalidNumberManifest.model_handling?.confidence_threshold !== undefined
 ) {
   throw new Error("mission package manifest should omit blank or non-finite numeric controls");
+}
+const stageablePackageStatus = missionPackageModule.buildMissionPackageStageStatus({
+  handoff: undefined,
+  manifest: {
+    ...manifestFixture,
+    deployment_intent: {
+      command: { method: "POST", path: "/v1/hub/rollouts/assign" },
+      rollout_id: "rollout-model-yolov8-lowlight-001-temms-rpi5-tflite-edge-rpi5"
+    },
+    proof_gate: { status: "passed" }
+  },
+  missionReady: true,
+  plan: { schema_version: "temms-edge-mission-package/v1" }
+});
+if (stageablePackageStatus.stageable !== true || stageablePackageStatus.value !== "package planned") {
+  throw new Error("mission package stage status should be stageable only after proof gate and deploy intent");
+}
+const missingIntentPackageStatus = missionPackageModule.buildMissionPackageStageStatus({
+  handoff: undefined,
+  manifest: {
+    ...manifestFixture,
+    proof_gate: { status: "passed" }
+  },
+  missionReady: true,
+  plan: { schema_version: "temms-edge-mission-package/v1" }
+});
+if (missingIntentPackageStatus.stageable !== false || missingIntentPackageStatus.value !== "deploy intent missing") {
+  throw new Error("mission package stage status should block passed plans that lack deployment intent");
 }
 const readyStageOptions = {
   ddilDetail: "ready for replay",
