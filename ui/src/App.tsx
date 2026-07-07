@@ -166,10 +166,25 @@ import {
   runtimeInventoryDetail,
   runtimeInventoryLabel,
   runtimeInventoryTone,
+  runtimeLaneDetail,
+  runtimeLaneFor,
+  runtimeLaneTone,
+  runtimeLaneValue,
+  runtimeProviderDetail,
+  runtimeProviderTone,
+  runtimeProviderValue,
   runtimeTargetCapabilityDetail,
+  runtimeTargetImageDetail,
+  runtimeTargetImageValue,
   runtimeTargetInventoryConstraints,
   runtimeTargetInventoryFailures,
+  runtimeTargetSelectionDetail,
+  runtimeTargetSelectionTone,
+  runtimeTargetSelectionValue,
   runtimeValidationForModel,
+  productionAdmissionDetail,
+  productionAdmissionTone,
+  productionAdmissionValue,
   targetSupportsModel,
   withBenchmarkEvidence
 } from "./lib/runtime-fit";
@@ -3207,84 +3222,6 @@ function CapabilityBlock({ items, title }: { items: [string, string][]; title: s
   );
 }
 
-function runtimeLaneFor(
-  runtimeFit: Record<string, unknown>,
-  runtime: RuntimeTarget | undefined
-): JsonObject {
-  const readinessLane = asRecord(runtimeFit.runtime_lane);
-  if (Object.keys(readinessLane).length) return readinessLane;
-  return asRecord(runtime?.runtime_lane);
-}
-
-function runtimeLaneValue(lane: JsonObject): string {
-  return stringOf(lane.label, stringOf(lane.lane_id, "not classified"));
-}
-
-function runtimeLaneDetail(lane: JsonObject): string {
-  const parts = [
-    stringOf(lane.execution_engine, ""),
-    stringOf(lane.acceleration, "").replace(/_/g, " "),
-    stringOf(lane.optimization_goal, "")
-  ].filter(Boolean);
-  const providers = stringsOf(lane.providers);
-  if (providers.length) {
-    parts.splice(Math.min(2, parts.length), 0, `providers ${providers.join(", ")}`);
-  }
-  return parts.join(" / ") || "runtime target has no lane metadata";
-}
-
-function runtimeLaneTone(lane: JsonObject): GateTone {
-  const laneId = stringOf(lane.lane_id, "");
-  if (!laneId) return "neutral";
-  return laneId === "device-inventory" ? "warn" : "good";
-}
-
-function runtimeTargetImageValue(runtime: RuntimeTarget | undefined): string {
-  if (!runtime) return "runtime missing";
-  return runtime.image || runtime.name || runtime.runtime_target_id || runtime.id || "image pending";
-}
-
-function runtimeTargetImageDetail(runtime: RuntimeTarget | undefined): string {
-  if (!runtime) return "select a runtime target";
-  const platform = [runtime.os, runtime.arch].filter(Boolean).join("/");
-  const profiles = stringsOf(runtime.device_profiles);
-  return [
-    platform,
-    profiles.length ? `profiles ${profiles.join(", ")}` : "",
-    runtime.updated_at ? `updated ${compactDate(runtime.updated_at)}` : ""
-  ]
-    .filter(Boolean)
-    .join(" / ") || "runtime image metadata pending";
-}
-
-function runtimeProviderValue(lane: JsonObject): string {
-  const providers = stringsOf(lane.providers);
-  if (providers.length) return providers.join(", ");
-  return stringOf(lane.execution_engine, "provider pending");
-}
-
-function runtimeProviderDetail(lane: JsonObject, device: Device | undefined): string {
-  const engine = stringOf(lane.execution_engine, "");
-  const acceleration = stringOf(lane.acceleration, "").replace(/_/g, " ");
-  const accelerators = stringsOf(lane.accelerators);
-  const edgeProfile = device?.profile ?? "";
-  return [
-    engine,
-    acceleration,
-    accelerators.length ? `accelerators ${accelerators.join(", ")}` : "",
-    edgeProfile ? `edge profile ${edgeProfile}` : ""
-  ]
-    .filter(Boolean)
-    .join(" / ") || "provider and accelerator metadata pending";
-}
-
-function runtimeProviderTone(lane: JsonObject, device: Device | undefined): GateTone {
-  if (!Object.keys(lane).length) return "neutral";
-  const inventoryTone = runtimeInventoryTone(device);
-  if (inventoryTone === "bad") return "bad";
-  return runtimeLaneTone(lane);
-}
-
 function capabilityLockValue(lock: JsonObject): string {
   const status = stringOf(lock.status, "");
   if (status) return status.replace(/_/g, " ");
@@ -4431,62 +4368,6 @@ function formatSignedPercent(value: number): string {
 function formatSignedMb(value: number): string {
   const rounded = Math.round(value);
   return `${rounded >= 0 ? "+" : ""}${rounded} MB`;
-}
-
-function runtimeTargetSelectionValue(selection: JsonObject): string {
-  const status = stringOf(selection.status, "");
-  const selectedRank = numberOf(selection.selected_rank);
-  const eligibleCount = numberOf(selection.eligible_target_count);
-  if (status === "best") {
-    return selectedRank !== undefined && eligibleCount !== undefined
-      ? `#${selectedRank} of ${eligibleCount}`
-      : "best target";
-  }
-  if (status === "upgrade_available") return "upgrade available";
-  if (status === "selected_not_eligible") return "not eligible";
-  if (status === "no_eligible_targets") return "no target";
-  return "comparison pending";
-}
-
-function runtimeTargetSelectionDetail(selection: JsonObject): string {
-  const detail = stringOf(selection.detail, "");
-  if (detail) return detail;
-  const bestTarget = stringOf(selection.best_runtime_target_id, "");
-  const bestScore = numberOf(selection.best_score);
-  if (bestTarget) {
-    return bestScore !== undefined
-      ? `Best measured target is ${bestTarget} at ${bestScore}/100`
-      : `Best measured target is ${bestTarget}`;
-  }
-  return "No alternate runtime target comparison is available yet.";
-}
-
-function runtimeTargetSelectionTone(selection: JsonObject): GateTone {
-  const status = stringOf(selection.status, "");
-  if (status === "best") return "good";
-  if (status === "upgrade_available") return "warn";
-  if (status === "selected_not_eligible" || status === "no_eligible_targets") return "bad";
-  return "neutral";
-}
-
-function productionAdmissionValue(admission: JsonObject): string {
-  if (admission.apply_allowed === true) return "permitted";
-  if (admission.apply_allowed === false) return "blocked";
-  return "pending";
-}
-
-function productionAdmissionDetail(admission: JsonObject): string {
-  const detail = stringOf(admission.detail, "");
-  const blockers = numberOf(admission.blocking_gate_count);
-  if (detail && blockers && blockers > 0) return `${detail}; ${blockers} blocking gate${blockers === 1 ? "" : "s"}`;
-  if (detail) return detail;
-  return "waiting for Hub admission gates";
-}
-
-function productionAdmissionTone(admission: JsonObject): GateTone {
-  if (admission.apply_allowed === true) return "good";
-  if (admission.apply_allowed === false) return "bad";
-  return "neutral";
 }
 
 function edgeRuntimeMissionFromApi(value: unknown): EdgeRuntimeMission | undefined {
