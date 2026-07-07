@@ -1462,6 +1462,7 @@ function executePendingReadinessAction(): void {
             workflow={edgeProofWorkflow}
             onCopyManifest={copyMissionPackageManifest}
             onDownloadPackage={downloadMissionPackageArtifact}
+            onGoDeploy={() => navigateHubStage("deploy")}
             onPlanPackage={planMissionPackageArtifact}
             onStageDeploy={stageMissionPackageRollout}
           />

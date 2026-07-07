@@ -1,4 +1,4 @@
-import { Clipboard, Download, PackageCheck, Rocket } from "lucide-react";
+import { ArrowRight, Clipboard, Download, PackageCheck, Rocket } from "lucide-react";
 import type { MissionPackageDownloadHandoff } from "../api";
 import { asRecord, stringOf } from "../lib/json";
 import { missionPackageRolloutId } from "../lib/mission-package";
@@ -14,6 +14,7 @@ export function EdgePackagePlanPanel({
   workflow,
   onCopyManifest,
   onDownloadPackage,
+  onGoDeploy,
   onPlanPackage,
   onStageDeploy
 }: {
@@ -23,6 +24,7 @@ export function EdgePackagePlanPanel({
   workflow: EdgeProofWorkflow;
   onCopyManifest: () => void;
   onDownloadPackage: () => void;
+  onGoDeploy: () => void;
   onPlanPackage: () => void;
   onStageDeploy: () => void;
 }): JSX.Element {
@@ -71,6 +73,16 @@ export function EdgePackagePlanPanel({
           <button className="button" type="button" disabled={!canStageDeploy} onClick={onStageDeploy}>
             <Rocket size={16} />
             <span>Stage rollout</span>
+          </button>
+          <button
+            className="button button-secondary"
+            data-testid="package-go-deploy"
+            disabled={!hasEdgePath}
+            type="button"
+            onClick={onGoDeploy}
+          >
+            <span>Continue to Edge Deploy</span>
+            <ArrowRight size={16} />
           </button>
           <button className="button button-secondary" type="button" onClick={onDownloadPackage}>
             <Download size={16} />

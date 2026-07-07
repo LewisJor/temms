@@ -291,6 +291,8 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "Continue to Sensor Handling",
   'data-testid="handling-go-package"',
   "Continue to Package Handoff",
+  'data-testid="package-go-deploy"',
+  "Continue to Edge Deploy",
   "runtime_retarget_workbench_previous_selected_runtime_target_id",
   "Select runtime target",
   "Target the model to the edge runtime"
