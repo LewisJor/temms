@@ -33,7 +33,6 @@ import {
   runtimeDecisionActionLabel,
   runtimeDecisionCandidates,
   runtimeDecisionGates,
-  runtimeTargetAssessmentRemediationCommand,
   runtimeTargetAssessments,
   runtimeTargetComponentProofs,
   targetAssessmentDetail,
@@ -41,6 +40,7 @@ import {
   targetAssessmentTone,
   targetRuntimeCoverageSummary
 } from "../lib/runtime-decision";
+import { runtimeTargetAssessmentRemediationCommand } from "../lib/runtime-remediation";
 import type {
   EdgeProofWorkflow,
   EdgeRuntimeFit,

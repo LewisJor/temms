@@ -8,7 +8,7 @@ import {
   isSha256Digest,
   sha256Hex
 } from "./proof-hash";
-import { formatProofCommand } from "./runtime-decision";
+import { formatProofCommand } from "./proof-command";
 import {
   capabilityLockDetail,
   capabilityLockTone,

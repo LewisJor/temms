@@ -110,12 +110,12 @@ import {
   withBenchmarkEvidence
 } from "./lib/runtime-fit";
 import {
-  formatProofCommand,
   runtimeDecisionCandidates,
   runtimeTargetAssessments,
-  runtimeWorkbenchRowRemediationCommand,
   runtimeWorkbenchRows
 } from "./lib/runtime-decision";
+import { formatProofCommand } from "./lib/proof-command";
+import { runtimeWorkbenchRowRemediationCommand } from "./lib/runtime-remediation";
 import { actionTitle, loadSnapshotAfterReconciliation } from "./lib/hub-actions";
 import {
   buildEdgeProofWorkflow,
