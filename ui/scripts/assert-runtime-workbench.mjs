@@ -10,6 +10,7 @@ const uiRoot = resolve(scriptDir, "..");
 const repoRoot = resolve(uiRoot, "..");
 const indexPath = join(uiRoot, "index.html");
 const sourcePath = join(uiRoot, "src", "App.tsx");
+const deployListsPath = join(uiRoot, "src", "components", "deploy-lists.tsx");
 const workbenchFlowPath = join(uiRoot, "src", "components", "workbench-flow.tsx");
 const apiPath = join(uiRoot, "src", "api.ts");
 const missionPackagePath = join(uiRoot, "src", "lib", "mission-package.ts");
@@ -75,10 +76,11 @@ function assertAssetBudget(label, content, { rawBytes, gzipBytes }) {
 
 const indexHtml = readFileSync(indexPath, "utf8");
 const source = readFileSync(sourcePath, "utf8");
+const deployListsSource = readFileSync(deployListsPath, "utf8");
 const workbenchFlowSource = readFileSync(workbenchFlowPath, "utf8");
 const missionPackageSource = readFileSync(missionPackagePath, "utf8");
 const missionWorkflowSource = readFileSync(missionWorkflowPath, "utf8");
-const workbenchSource = `${source}\n${workbenchFlowSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
+const workbenchSource = `${source}\n${deployListsSource}\n${workbenchFlowSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
 const apiSource = readFileSync(apiPath, "utf8");
 const missionSpecSource = readFileSync(missionSpecPath, "utf8");
 const proofHashSource = readFileSync(proofHashPath, "utf8");
