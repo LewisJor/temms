@@ -3968,6 +3968,21 @@ def _mission_package_stage_request_body(
         if isinstance(package_plan.get("selection"), dict)
         else {}
     )
+    for field_name in (
+        "package_id",
+        "model_id",
+        "device_id",
+        "runtime_target_id",
+        "slot",
+    ):
+        command_value = command_body.get(field_name)
+        selection_value = selection.get(field_name)
+        if command_value in (None, "") or selection_value in (None, ""):
+            continue
+        if str(command_value) != str(selection_value):
+            raise ValueError(
+                f"mission package deployment intent {field_name} does not match selection"
+            )
     body: Dict[str, Any] = dict(command_body)
     for field_name in (
         "package_id",

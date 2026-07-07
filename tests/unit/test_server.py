@@ -2421,6 +2421,33 @@ ddil:
         assert missing_rollout_stage_response.status_code == 400
         assert "requires rollout_id" in missing_rollout_stage_response.json()["detail"]
 
+        mismatched_command_package = json.loads(json.dumps(mission_package_download))
+        mismatched_command_intent = mismatched_command_package["deployment_intent"]
+        mismatched_command_intent["command"]["body"]["device_id"] = "edge-other"
+        mismatched_component_digests = dict(
+            mismatched_command_package["component_digests"]
+        )
+        mismatched_component_digests["deployment_intent_sha256"] = (
+            canonical_json_hash(mismatched_command_intent)
+        )
+        mismatched_command_package["component_digests"] = mismatched_component_digests
+        mismatched_integrity = dict(mismatched_command_package["integrity"])
+        unsigned_mismatched_package = dict(mismatched_command_package)
+        unsigned_mismatched_package.pop("integrity", None)
+        mismatched_integrity["payload_sha256"] = canonical_json_hash(
+            unsigned_mismatched_package
+        )
+        mismatched_command_package["integrity"] = mismatched_integrity
+        mismatched_stage_response = hub_ui_client.post(
+            "/v1/hub/mission-package/stage",
+            json={"mission_package": mismatched_command_package},
+        )
+        assert mismatched_stage_response.status_code == 400
+        assert (
+            "device_id does not match selection"
+            in mismatched_stage_response.json()["detail"]
+        )
+
         mission_package_stage_response = hub_ui_client.post(
             "/v1/hub/mission-package/stage",
             json={
