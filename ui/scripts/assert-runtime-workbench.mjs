@@ -481,6 +481,8 @@ const stageablePackageStatus = missionPackageModule.buildMissionPackageStageStat
     ...manifestFixture,
     deployment_intent: {
       command: { method: "POST", path: "/v1/hub/rollouts/assign" },
+      requires: { runtime_plan_digest: true },
+      runtime_plan_sha256: "a".repeat(64),
       rollout_id: "rollout-model-yolov8-lowlight-001-temms-rpi5-tflite-edge-rpi5"
     },
     proof_gate: { status: "passed" }
@@ -502,6 +504,25 @@ const missingIntentPackageStatus = missionPackageModule.buildMissionPackageStage
 });
 if (missingIntentPackageStatus.stageable !== false || missingIntentPackageStatus.value !== "deploy intent missing") {
   throw new Error("mission package stage status should block passed plans that lack deployment intent");
+}
+const missingRuntimeDigestPackageStatus = missionPackageModule.buildMissionPackageStageStatus({
+  handoff: undefined,
+  manifest: {
+    ...manifestFixture,
+    deployment_intent: {
+      command: { method: "POST", path: "/v1/hub/rollouts/assign" },
+      rollout_id: "rollout-model-yolov8-lowlight-001-temms-rpi5-tflite-edge-rpi5"
+    },
+    proof_gate: { status: "passed" }
+  },
+  missionReady: true,
+  plan: { schema_version: "temms-edge-mission-package/v1" }
+});
+if (
+  missingRuntimeDigestPackageStatus.stageable !== false ||
+  missingRuntimeDigestPackageStatus.value !== "runtime digest missing"
+) {
+  throw new Error("mission package stage status should block deploy intents without runtime digest binding");
 }
 const readyStageOptions = {
   ddilDetail: "ready for replay",

@@ -405,6 +405,7 @@ def build_edge_mission_package_plan(
         package_identity_payload.get("components", {}).keys()
     )
     package_identity_sha256 = canonical_json_hash(package_identity_payload)
+    runtime_plan_sha256 = canonical_json_hash(runtime_plan)
     package_plan["package_identity"] = {
         "schema_version": EDGE_MISSION_PACKAGE_IDENTITY_SCHEMA_VERSION,
         "package_identity_sha256": package_identity_sha256,
@@ -413,6 +414,7 @@ def build_edge_mission_package_plan(
     deployment_intent = _edge_mission_package_deployment_intent(
         selection_refs,
         mission_package_core_sha256=package_identity_sha256,
+        runtime_plan_sha256=runtime_plan_sha256,
     )
     if deployment_intent:
         package_plan["deployment_intent"] = deployment_intent
@@ -538,6 +540,7 @@ def _edge_mission_package_deployment_intent(
     selection: dict[str, Any],
     *,
     mission_package_core_sha256: str,
+    runtime_plan_sha256: str,
 ) -> dict[str, Any]:
     refs = _refs(
         {
@@ -575,10 +578,12 @@ def _edge_mission_package_deployment_intent(
         "rollout_id": rollout_id,
         "package_identity_sha256": mission_package_core_sha256,
         "mission_package_core_sha256": mission_package_core_sha256,
+        "runtime_plan_sha256": runtime_plan_sha256,
         "requires": {
             "approval": True,
             "runtime_validation": True,
             "edge_readiness": True,
+            "runtime_plan_digest": True,
         },
         "command": {
             "method": "POST",
@@ -616,6 +621,7 @@ def _edge_mission_package_edge_handoff(
         "stage_gate": {
             "proof_gate": "passed",
             "package_identity": "verified",
+            "runtime_plan": "verified",
             "deployment_intent": "verified",
             "current_proof_gate_status": proof_gate.get("status"),
         },
@@ -626,6 +632,7 @@ def _edge_mission_package_edge_handoff(
             "deployment_intent_digest_header": (
                 "X-TEMMS-Mission-Package-Deployment-Intent-SHA256"
             ),
+            "runtime_plan_digest_header": "X-TEMMS-Mission-Package-Runtime-Plan-SHA256",
         },
         "commands": {
             "stage_package": {

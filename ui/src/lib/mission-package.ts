@@ -120,6 +120,7 @@ export function buildMissionPackageStageStatus({
   const selection = asRecord(manifest.selection);
   const deploymentIntent = asRecord(manifest.deployment_intent);
   const deploymentCommand = asRecord(deploymentIntent.command);
+  const deploymentRequires = asRecord(deploymentIntent.requires);
   const proofGate = asRecord(manifest.proof_gate);
   const integrity = asRecord(manifest.integrity);
   const packageIdentity = asRecord(manifest.package_identity);
@@ -139,6 +140,10 @@ export function buildMissionPackageStageStatus({
   const gateStatus = stringOf(proofGate.status, plan || handoff ? "planned" : "");
   const hasPackageArtifact = Boolean(plan || handoff);
   const hasDeploymentIntent = Boolean(deploymentIntent.rollout_id && deploymentCommand.path);
+  const hasRuntimePlanDigest = Boolean(
+    deploymentIntent.runtime_plan_sha256 &&
+    deploymentRequires.runtime_plan_digest === true
+  );
 
   if (hasPackageArtifact && gateStatus === "failed") {
     return {
@@ -178,6 +183,18 @@ export function buildMissionPackageStageStatus({
       stageable: false,
       tone: "warn",
       value: "deploy intent missing"
+    };
+  }
+
+  if (hasPackageArtifact && !hasRuntimePlanDigest) {
+    return {
+      detail: "runtime plan digest missing; replan package before staging",
+      downloaded: Boolean(handoff),
+      gateStatus,
+      planned: hasPackageArtifact,
+      stageable: false,
+      tone: "warn",
+      value: "runtime digest missing"
     };
   }
 

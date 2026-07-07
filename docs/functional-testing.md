@@ -202,20 +202,24 @@ Expected visible state with the Docker Hub seed:
   the package boundary unless the audience asks for proof internals.
 - **Download package** should call `POST /v1/hub/mission-package/download`,
   save a `temms-edge-mission-package-*.json` file, and expose the package
-  identity, payload, runtime-plan, deployment-intent, and edge-handoff hashes in the preview handoff.
+  identity, payload, runtime-plan, deployment-intent, and edge-handoff hashes in
+  the preview handoff.
   The Package stage should then show **Mission package handoff** with retained
   filename, package identity hash, payload hash, mission hash, runtime-plan
-  hash, deploy-intent hash, and preserved `edge_handoff` runbook matching the package body. Repeated plan/download
+  hash, deploy-intent hash, and preserved `edge_handoff` runbook matching the
+  package body. Repeated plan/download
   calls may produce different payload hashes because artifact observation time
   changes, but they must keep the same package identity hash for the same
   mission/model/runtime/device policy.
 - **Stage rollout** in the Package/Deploy path should create a rollout from the
   planned package/model/device/runtime/slot, require approval and runtime
   validation, switch the UI to **Edge Deploy**, and use the package payload's
-  `deployment_intent.command.body`. The rollout reason should include the
-  mission package identity digest. It should not stage directly from the draft
-  package preview; press **Plan package** first so the rollout is tied to the
-  hashed deployment intent.
+  `deployment_intent.command.body`. The deployment intent should also carry the
+  exact `runtime_plan_sha256`, and staging should reject an artifact whose intent
+  points at a different runtime-plan digest. The rollout reason should include
+  the mission package identity digest. It should not stage directly from the
+  draft package preview; press **Plan package** first so the rollout is tied to
+  the hashed deployment intent.
 - Model inventory shows three signed vision models: daylight, lowlight, and
   mobilenet-tiny.
 - The Runtime workbench shows the selected model from **Model Plan** as locked
@@ -781,12 +785,14 @@ For the Docker demo on `localhost:8080`, run the live contract smoke first. It
 checks `/ui/hub`, `POST /v1/hub/mission-package/plan`,
 `POST /v1/hub/mission-package/download`, and
 `POST /v1/hub/mission-package/stage`, including the digest headers that tie the
-mission package to its deployment intent. The stage step must report a passed
-stage gate, which proves failed/advisory proof-gate artifacts cannot become edge
-rollouts. The smoke then approves and applies the staged rollout so repeated
-runs leave the selected edge path activated rather than stuck in an approval or
-assigned state. It exercises both explicit JSON planning and YAML-only mission
-planning so the backend path stays aligned with the browser importer:
+mission package to its runtime plan and deployment intent. The stage step must
+report a passed stage gate with `runtime_plan: verified`, which proves
+failed/advisory proof-gate artifacts and runtime-plan-digest mismatches cannot
+become edge rollouts. The smoke then approves and applies the staged rollout so
+repeated runs leave the selected edge path activated rather than stuck in an
+approval or assigned state. It exercises both explicit JSON planning and
+YAML-only mission planning so the backend path stays aligned with the browser
+importer:
 
 ```bash
 make docker-product-smoke

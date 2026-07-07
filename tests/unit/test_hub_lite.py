@@ -161,7 +161,10 @@ def test_edge_runtime_proof_envelope_hash_and_gate_policy():
     assert unlocked_proof["gate_status"] == "failed"
     assert unlocked_proof["gate_failures"] == [
         "runtime capability lock status is blocked, expected locked",
-        "runtime capability lock has failures: edge inventory cannot host runtime target temms-x86_64-cpu",
+        (
+            "runtime capability lock has failures: edge inventory cannot host "
+            "runtime target temms-x86_64-cpu"
+        ),
     ]
 
 
@@ -301,6 +304,10 @@ def test_edge_mission_package_plan_binds_mission_runtime_and_policy():
     assert plan["deployment_intent"]["mission_package_core_sha256"] == (
         plan["package_identity"]["package_identity_sha256"]
     )
+    assert plan["deployment_intent"]["runtime_plan_sha256"] == (
+        hub_lite_module.canonical_json_hash(plan["runtime_plan"])
+    )
+    assert plan["deployment_intent"]["requires"]["runtime_plan_digest"] is True
     replanned = dict(plan)
     replanned["planned_at"] = "2099-01-01T00:00:00Z"
     replanned["readiness"] = {
@@ -1185,7 +1192,10 @@ def test_runtime_target_compatibility_blocks_artifact_lane_mismatch(temp_dir):
     )
 
     assert preview["compatible"] is False
-    assert any("onnx artifact is not compatible with Raspberry Pi 5 TFLite" in failure for failure in preview["failures"])
+    assert any(
+        "onnx artifact is not compatible with Raspberry Pi 5 TFLite" in failure
+        for failure in preview["failures"]
+    )
     cell = matrix["cells"][0]
     assert cell["compatible"] is False
     assert cell["runtime_fit"]["artifact_lane"] == {

@@ -3992,6 +3992,10 @@ def _mission_package_stage_request_body(
             )
     if intent_requires.get("edge_readiness") is not True:
         raise ValueError("mission package deployment intent must require edge_readiness")
+    if intent_requires.get("runtime_plan_digest") is not True:
+        raise ValueError(
+            "mission package deployment intent must require runtime_plan_digest"
+        )
 
     selection = (
         package_plan.get("selection")
@@ -4061,10 +4065,12 @@ def _mission_package_stage_request_body(
         component_digests.get("deployment_intent_sha256")
         or canonical_json_hash(deployment_intent)
     )
+    runtime_plan_sha256 = str(component_digests.get("runtime_plan_sha256") or "")
     stage_proof = {
         "schema_version": "temms-edge-mission-package-stage/v1",
         "stage_gate": stage_gate,
         "package_identity_sha256": package_identity_sha256,
+        "runtime_plan_sha256": runtime_plan_sha256,
         "deployment_intent_sha256": deployment_intent_sha256,
         "command": {
             "method": "POST",
@@ -4097,6 +4103,7 @@ def _mission_package_stage_gate(package_plan: Dict[str, Any]) -> Dict[str, Any]:
         "requires": {
             "proof_gate": "passed",
             "package_identity": "verified",
+            "runtime_plan": "verified",
             "deployment_intent": "verified",
         },
     }
@@ -4132,6 +4139,11 @@ def _verify_mission_package_stage_integrity(
         if isinstance(package_plan.get("component_digests"), dict)
         else {}
     )
+    runtime_plan = (
+        package_plan.get("runtime_plan")
+        if isinstance(package_plan.get("runtime_plan"), dict)
+        else {}
+    )
 
     payload_sha256 = integrity.get("payload_sha256")
     if payload_sha256:
@@ -4147,6 +4159,26 @@ def _verify_mission_package_stage_integrity(
         deployment_intent
     ) != str(expected_deployment_intent_sha256):
         raise ValueError("mission package deployment intent digest does not match body")
+
+    expected_runtime_plan_sha256 = str(
+        component_digests.get("runtime_plan_sha256") or ""
+    )
+    intent_runtime_plan_sha256 = str(
+        deployment_intent.get("runtime_plan_sha256") or ""
+    )
+    if not runtime_plan or not expected_runtime_plan_sha256:
+        raise ValueError("mission package runtime plan digest is missing")
+    if not intent_runtime_plan_sha256:
+        raise ValueError(
+            "mission package deployment intent requires runtime_plan_sha256"
+        )
+    if canonical_json_hash(runtime_plan) != expected_runtime_plan_sha256:
+        raise ValueError("mission package runtime plan digest does not match body")
+    if intent_runtime_plan_sha256 != expected_runtime_plan_sha256:
+        raise ValueError(
+            "mission package deployment intent runtime plan digest does not match "
+            "component digests"
+        )
 
     identity_values = [
         str(value)
