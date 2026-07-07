@@ -2683,6 +2683,12 @@ function MissionPackageDownloadHandoffCard({
       value: handoff?.missionSha256 || ""
     },
     {
+      body: stringOf(componentDigests.mission_contract_sha256, ""),
+      key: "mission_contract",
+      label: "Mission contract",
+      value: handoff?.missionContractSha256 || ""
+    },
+    {
       body: stringOf(componentDigests.runtime_plan_sha256, ""),
       key: "runtime_plan",
       label: "Runtime plan",

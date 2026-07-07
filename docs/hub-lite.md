@@ -145,16 +145,19 @@ the package stage, rollout approval, rollout apply, and digest-verification
 runbook that should travel with the downloaded artifact. That deploy intent
 includes the deterministic rollout ID plus the exact
 `POST /v1/hub/rollouts` body for an approval- and runtime-validation-gated edge
-staging action, plus the `runtime_plan_sha256` it is allowed to stage.
+staging action, plus the `mission_contract_sha256` and `runtime_plan_sha256` it
+is allowed to stage.
 `POST /v1/hub/mission-package/download` returns the same package
 plan as an attachment with `X-TEMMS-Mission-Package-SHA256`,
+`X-TEMMS-Mission-Package-Mission-Contract-SHA256`,
 `X-TEMMS-Mission-Package-Runtime-Plan-SHA256`, and
 `X-TEMMS-Mission-Package-Deployment-Intent-SHA256` headers for field handoff.
 `POST /v1/hub/mission-package/stage` accepts that
 `temms-edge-mission-package/v1` artifact, verifies the package identity,
-payload, runtime-plan, deployment-intent digests, and passed proof gate, then
-stages the embedded rollout intent while preserving the artifact's `edge_handoff`
-runbook in the stage proof. Failed proof gates stay advisory artifacts; they cannot
+payload, mission-contract, runtime-plan, deployment-intent digests, and passed
+proof gate, then stages the embedded rollout intent while preserving the
+artifact's `edge_handoff` runbook in the stage proof. Failed proof gates stay
+advisory artifacts; they cannot
 be staged to edge deploy until readiness is remediated and the package is
 planned again.
 The package planner can run in an advisory mode while readiness is still

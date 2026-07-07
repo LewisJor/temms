@@ -90,8 +90,9 @@ TEMMS has two main layers:
   From the package stage, operators can stage a validation- and
   approval-gated rollout directly from that plan; the rollout reason carries the
   mission package identity digest, and the `deployment_intent` block carries the
-  exact `POST /v1/hub/rollouts` body plus the runtime-plan digest it is allowed to
-  stage, so package planning and edge deployment remain traceable as one handoff.
+  exact `POST /v1/hub/rollouts` body plus the mission-contract and runtime-plan
+  digests it is allowed to stage, so package planning and edge deployment remain
+  traceable as one handoff.
   The same artifact carries an `edge_handoff` block
   with schema `temms-edge-mission-package-handoff/v1`, mode
   `stage_approve_apply`, and the stage, approve, apply, and digest-verification
@@ -104,11 +105,11 @@ TEMMS has two main layers:
   explicit overrides for sensor, SLO, switching, fallback, and DDIL behavior.
   `POST /v1/hub/mission-package/stage` and
   `temms hub mission-package-stage` then accept the downloaded package artifact,
-  verify its identity/payload/runtime-plan/deployment-intent digest chain plus the
-  passed proof gate, preserve the embedded `edge_handoff`, and stage the
-  package-bound rollout without reconstructing the model/runtime/device body by
-  hand. Advisory or failed proof-gate packages remain inspectable but are
-  fail-closed at deploy time.
+  verify its identity/payload/mission-contract/runtime-plan/deployment-intent
+  digest chain plus the passed proof gate, preserve the embedded `edge_handoff`,
+  and stage the package-bound rollout without reconstructing the
+  model/runtime/device body by hand. Advisory or failed proof-gate packages
+  remain inspectable but are fail-closed at deploy time.
   The Hub stage renderer keeps the active step narrow: model selection under
   **Model Plan**, runtime ranking under **Runtime Fit**, sensor/model switching
   policy under **Sensor Handling**, package/proof handoff under **Package

@@ -16,6 +16,9 @@ EDGE_MISSION_PACKAGE_IDENTITY_SCHEMA_VERSION = (
 EDGE_MISSION_PACKAGE_COMPONENT_DIGESTS_SCHEMA_VERSION = (
     "temms-edge-mission-package-component-digests/v1"
 )
+EDGE_MISSION_PACKAGE_MISSION_CONTRACT_SCHEMA_VERSION = (
+    "temms-edge-mission-contract/v1"
+)
 READINESS_REMEDIATION_ACTOR = "operator:readiness-remediation"
 READINESS_REMEDIATION_ID_PREFIX = "readiness"
 
@@ -177,6 +180,7 @@ def edge_mission_package_component_digests(plan: dict[str, Any]) -> dict[str, An
     """Return stable digests for package-plan components handed to the edge."""
     digests: dict[str, Any] = {
         "schema_version": EDGE_MISSION_PACKAGE_COMPONENT_DIGESTS_SCHEMA_VERSION,
+        "mission_contract_sha256": edge_mission_package_mission_contract_hash(plan),
     }
     for component_name in (
         "mission",
@@ -195,6 +199,26 @@ def edge_mission_package_component_digests(plan: dict[str, Any]) -> dict[str, An
         if isinstance(component, dict) and component:
             digests[f"{component_name}_sha256"] = canonical_json_hash(component)
     return digests
+
+
+def edge_mission_package_mission_contract(plan: dict[str, Any]) -> dict[str, Any]:
+    """Return the mission/sensor/handling contract that must match edge deploy."""
+    return _refs(
+        {
+            "schema_version": EDGE_MISSION_PACKAGE_MISSION_CONTRACT_SCHEMA_VERSION,
+            "mission": plan.get("mission") if isinstance(plan.get("mission"), dict) else {},
+            "slo": plan.get("slo") if isinstance(plan.get("slo"), dict) else {},
+            "model_handling": plan.get("model_handling")
+            if isinstance(plan.get("model_handling"), dict)
+            else {},
+            "ddil": plan.get("ddil") if isinstance(plan.get("ddil"), dict) else {},
+        }
+    )
+
+
+def edge_mission_package_mission_contract_hash(plan: dict[str, Any]) -> str:
+    """Return the stable digest for mission, sensor, SLO, handling, and DDIL policy."""
+    return canonical_json_hash(edge_mission_package_mission_contract(plan))
 
 
 def hydrate_mission_spec_from_yaml(
@@ -405,6 +429,7 @@ def build_edge_mission_package_plan(
         package_identity_payload.get("components", {}).keys()
     )
     package_identity_sha256 = canonical_json_hash(package_identity_payload)
+    mission_contract_sha256 = edge_mission_package_mission_contract_hash(package_plan)
     runtime_plan_sha256 = canonical_json_hash(runtime_plan)
     package_plan["package_identity"] = {
         "schema_version": EDGE_MISSION_PACKAGE_IDENTITY_SCHEMA_VERSION,
@@ -414,6 +439,7 @@ def build_edge_mission_package_plan(
     deployment_intent = _edge_mission_package_deployment_intent(
         selection_refs,
         mission_package_core_sha256=package_identity_sha256,
+        mission_contract_sha256=mission_contract_sha256,
         runtime_plan_sha256=runtime_plan_sha256,
     )
     if deployment_intent:
@@ -540,6 +566,7 @@ def _edge_mission_package_deployment_intent(
     selection: dict[str, Any],
     *,
     mission_package_core_sha256: str,
+    mission_contract_sha256: str,
     runtime_plan_sha256: str,
 ) -> dict[str, Any]:
     refs = _refs(
@@ -578,11 +605,13 @@ def _edge_mission_package_deployment_intent(
         "rollout_id": rollout_id,
         "package_identity_sha256": mission_package_core_sha256,
         "mission_package_core_sha256": mission_package_core_sha256,
+        "mission_contract_sha256": mission_contract_sha256,
         "runtime_plan_sha256": runtime_plan_sha256,
         "requires": {
             "approval": True,
             "runtime_validation": True,
             "edge_readiness": True,
+            "mission_contract_digest": True,
             "runtime_plan_digest": True,
         },
         "command": {
@@ -621,6 +650,7 @@ def _edge_mission_package_edge_handoff(
         "stage_gate": {
             "proof_gate": "passed",
             "package_identity": "verified",
+            "mission_contract": "verified",
             "runtime_plan": "verified",
             "deployment_intent": "verified",
             "current_proof_gate_status": proof_gate.get("status"),
@@ -631,6 +661,9 @@ def _edge_mission_package_edge_handoff(
             "identity_digest_header": "X-TEMMS-Mission-Package-Identity-SHA256",
             "deployment_intent_digest_header": (
                 "X-TEMMS-Mission-Package-Deployment-Intent-SHA256"
+            ),
+            "mission_contract_digest_header": (
+                "X-TEMMS-Mission-Package-Mission-Contract-SHA256"
             ),
             "runtime_plan_digest_header": "X-TEMMS-Mission-Package-Runtime-Plan-SHA256",
         },

@@ -140,6 +140,10 @@ export function buildMissionPackageStageStatus({
   const gateStatus = stringOf(proofGate.status, plan || handoff ? "planned" : "");
   const hasPackageArtifact = Boolean(plan || handoff);
   const hasDeploymentIntent = Boolean(deploymentIntent.rollout_id && deploymentCommand.path);
+  const hasMissionContractDigest = Boolean(
+    deploymentIntent.mission_contract_sha256 &&
+    deploymentRequires.mission_contract_digest === true
+  );
   const hasRuntimePlanDigest = Boolean(
     deploymentIntent.runtime_plan_sha256 &&
     deploymentRequires.runtime_plan_digest === true
@@ -183,6 +187,18 @@ export function buildMissionPackageStageStatus({
       stageable: false,
       tone: "warn",
       value: "deploy intent missing"
+    };
+  }
+
+  if (hasPackageArtifact && !hasMissionContractDigest) {
+    return {
+      detail: "mission contract digest missing; replan package before staging",
+      downloaded: Boolean(handoff),
+      gateStatus,
+      planned: hasPackageArtifact,
+      stageable: false,
+      tone: "warn",
+      value: "mission contract missing"
     };
   }
 

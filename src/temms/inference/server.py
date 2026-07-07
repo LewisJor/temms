@@ -30,7 +30,10 @@ from temms.conditions.store import ConditionStore
 from temms.policy.engine import PolicyEngine
 from temms.core.cache import ModelCache
 from temms.core.storage import ModelStorage
-from temms.core.mission_package import hydrate_mission_spec_from_yaml
+from temms.core.mission_package import (
+    edge_mission_package_mission_contract_hash,
+    hydrate_mission_spec_from_yaml,
+)
 from temms.inference.runtime import InferenceRuntime
 from temms.hub_lite import (
     EDGE_MISSION_PACKAGE_SCHEMA_VERSION,
@@ -3824,6 +3827,9 @@ async def download_mission_package(
     }
     component_digest_headers = {
         "mission_sha256": "X-TEMMS-Mission-Package-Mission-SHA256",
+        "mission_contract_sha256": (
+            "X-TEMMS-Mission-Package-Mission-Contract-SHA256"
+        ),
         "runtime_plan_sha256": "X-TEMMS-Mission-Package-Runtime-Plan-SHA256",
         "deployment_intent_sha256": (
             "X-TEMMS-Mission-Package-Deployment-Intent-SHA256"
@@ -3992,6 +3998,10 @@ def _mission_package_stage_request_body(
             )
     if intent_requires.get("edge_readiness") is not True:
         raise ValueError("mission package deployment intent must require edge_readiness")
+    if intent_requires.get("mission_contract_digest") is not True:
+        raise ValueError(
+            "mission package deployment intent must require mission_contract_digest"
+        )
     if intent_requires.get("runtime_plan_digest") is not True:
         raise ValueError(
             "mission package deployment intent must require runtime_plan_digest"
@@ -4061,6 +4071,9 @@ def _mission_package_stage_request_body(
         or deployment_intent.get("package_identity_sha256")
         or ""
     )
+    mission_contract_sha256 = str(
+        component_digests.get("mission_contract_sha256") or ""
+    )
     deployment_intent_sha256 = str(
         component_digests.get("deployment_intent_sha256")
         or canonical_json_hash(deployment_intent)
@@ -4070,6 +4083,7 @@ def _mission_package_stage_request_body(
         "schema_version": "temms-edge-mission-package-stage/v1",
         "stage_gate": stage_gate,
         "package_identity_sha256": package_identity_sha256,
+        "mission_contract_sha256": mission_contract_sha256,
         "runtime_plan_sha256": runtime_plan_sha256,
         "deployment_intent_sha256": deployment_intent_sha256,
         "command": {
@@ -4103,6 +4117,7 @@ def _mission_package_stage_gate(package_plan: Dict[str, Any]) -> Dict[str, Any]:
         "requires": {
             "proof_gate": "passed",
             "package_identity": "verified",
+            "mission_contract": "verified",
             "runtime_plan": "verified",
             "deployment_intent": "verified",
         },
@@ -4163,9 +4178,33 @@ def _verify_mission_package_stage_integrity(
     expected_runtime_plan_sha256 = str(
         component_digests.get("runtime_plan_sha256") or ""
     )
+    expected_mission_contract_sha256 = str(
+        component_digests.get("mission_contract_sha256") or ""
+    )
     intent_runtime_plan_sha256 = str(
         deployment_intent.get("runtime_plan_sha256") or ""
     )
+    intent_mission_contract_sha256 = str(
+        deployment_intent.get("mission_contract_sha256") or ""
+    )
+    if not expected_mission_contract_sha256:
+        raise ValueError("mission package mission contract digest is missing")
+    if not intent_mission_contract_sha256:
+        raise ValueError(
+            "mission package deployment intent requires mission_contract_sha256"
+        )
+    if (
+        edge_mission_package_mission_contract_hash(package_plan)
+        != expected_mission_contract_sha256
+    ):
+        raise ValueError(
+            "mission package mission contract digest does not match body"
+        )
+    if intent_mission_contract_sha256 != expected_mission_contract_sha256:
+        raise ValueError(
+            "mission package deployment intent mission contract digest does not "
+            "match component digests"
+        )
     if not runtime_plan or not expected_runtime_plan_sha256:
         raise ValueError("mission package runtime plan digest is missing")
     if not intent_runtime_plan_sha256:

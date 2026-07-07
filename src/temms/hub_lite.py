@@ -93,6 +93,9 @@ edge_mission_package_identity_hash = _mission_package.edge_mission_package_ident
 edge_mission_package_identity_payload = (
     _mission_package.edge_mission_package_identity_payload
 )
+edge_mission_package_mission_contract_hash = (
+    _mission_package.edge_mission_package_mission_contract_hash
+)
 
 
 class PackageArtifactNotFound(ValueError):
@@ -1880,7 +1883,14 @@ def _rollout_compatibility_preview(
         runtime_target = _runtime_targets_with_defaults(data).get(runtime_target_id)
         if runtime_target is None:
             raise ValueError(f"Unknown runtime target: {runtime_target_id}")
-        failures.extend(_runtime_target_failures(runtime_target, package, device, model_id=model_id))
+        failures.extend(
+            _runtime_target_failures(
+                runtime_target,
+                package,
+                device,
+                model_id=model_id,
+            )
+        )
     else:
         failures.extend(_runtime_constraint_failures(package, device, model_id=model_id))
 
@@ -2290,7 +2300,11 @@ def _recommendation_decision_rank(decision: str) -> int:
 
 
 def _recommendation_confidence(cell: dict[str, Any], decision: str) -> str:
-    if decision == "deploy" and cell.get("runtime_validation_ready") and cell.get("performance_ready"):
+    if (
+        decision == "deploy"
+        and cell.get("runtime_validation_ready")
+        and cell.get("performance_ready")
+    ):
         return "high"
     if cell.get("assignment_ready") and cell.get("compatible"):
         return "medium"
@@ -2304,18 +2318,33 @@ def _recommendation_primary_reason(cell: dict[str, Any], decision: str) -> str:
     if decision == "deploy":
         return str(
             runtime_fit.get("detail")
-            or "released package, compatible edge inventory, runtime validation, SLO, and resource gates align"
+            or (
+                "released package, compatible edge inventory, runtime "
+                "validation, SLO, and resource gates align"
+            )
         )
     if decision == "validate_runtime":
         return "compatible target needs runtime validation evidence before confident rollout"
     if decision == "benchmark_or_tune":
-        performance = cell.get("performance") if isinstance(cell.get("performance"), dict) else {}
+        performance = (
+            cell.get("performance")
+            if isinstance(cell.get("performance"), dict)
+            else {}
+        )
         return str(performance.get("detail") or "performance evidence needs review")
     if decision == "refresh_resource_telemetry":
-        resource = cell.get("resource_envelope") if isinstance(cell.get("resource_envelope"), dict) else {}
+        resource = (
+            cell.get("resource_envelope")
+            if isinstance(cell.get("resource_envelope"), dict)
+            else {}
+        )
         return str(resource.get("detail") or "resource envelope needs fresh edge telemetry")
     if decision == "release_required":
-        promotion = cell.get("package_promotion") if isinstance(cell.get("package_promotion"), dict) else {}
+        promotion = (
+            cell.get("package_promotion")
+            if isinstance(cell.get("package_promotion"), dict)
+            else {}
+        )
         return f"package is {promotion.get('state') or 'candidate'}, not released"
     blockers = cell.get("assignment_blockers")
     if isinstance(blockers, list) and blockers:
@@ -2355,10 +2384,18 @@ def _recommendation_warnings(cell: dict[str, Any]) -> list[str]:
     if cell.get("runtime_target_id") and not cell.get("runtime_validation_ready"):
         warnings.append("runtime validation evidence missing")
     if not cell.get("performance_ready"):
-        performance = cell.get("performance") if isinstance(cell.get("performance"), dict) else {}
+        performance = (
+            cell.get("performance")
+            if isinstance(cell.get("performance"), dict)
+            else {}
+        )
         warnings.append(str(performance.get("detail") or "performance evidence missing"))
     if not cell.get("resource_ready") and not cell.get("resource_blocked"):
-        resource = cell.get("resource_envelope") if isinstance(cell.get("resource_envelope"), dict) else {}
+        resource = (
+            cell.get("resource_envelope")
+            if isinstance(cell.get("resource_envelope"), dict)
+            else {}
+        )
         warnings.append(str(resource.get("detail") or "resource telemetry incomplete"))
     penalties = runtime_fit.get("penalties")
     if isinstance(penalties, list):
@@ -2595,7 +2632,12 @@ def _runtime_target_fit_summary(
     if artifact_lane.get("status") == "go":
         reasons.append(str(artifact_lane.get("detail") or "model artifact fits runtime lane"))
     elif artifact_lane.get("status") == "blocked":
-        penalties.append(str(artifact_lane.get("detail") or "model artifact does not fit runtime lane"))
+        penalties.append(
+            str(
+                artifact_lane.get("detail")
+                or "model artifact does not fit runtime lane"
+            )
+        )
     elif artifact_lane.get("status") == "attention":
         penalties.append(str(artifact_lane.get("detail") or "model artifact lane needs review"))
     if performance_status == "go":
@@ -2938,14 +2980,6 @@ def _runtime_capability_lock(
             model_id=model_id,
         )
     ]
-    target_profiles = [
-        normalized
-        for normalized in (
-            normalize_device_profile(profile)
-            for profile in (runtime_target or {}).get("device_profiles", [])
-        )
-        if normalized
-    ]
     inventory = device.get("inventory") if isinstance(device.get("inventory"), dict) else {}
     artifact_status = str(artifact_lane.get("status") or "")
     if telemetry_freshness is None:
@@ -2953,7 +2987,12 @@ def _runtime_capability_lock(
     telemetry_status = str(telemetry_freshness.get("status") or "")
     failures = list(compatibility_failures)
     if artifact_status == "blocked":
-        failures.append(str(artifact_lane.get("detail") or "model artifact does not fit runtime lane"))
+        failures.append(
+            str(
+                artifact_lane.get("detail")
+                or "model artifact does not fit runtime lane"
+            )
+        )
     if telemetry_status != "go":
         freshness_detail = str(
             telemetry_freshness.get("detail")
@@ -2961,7 +3000,12 @@ def _runtime_capability_lock(
             or "edge heartbeat timestamp is not fresh"
         )
         failures.append(f"edge inventory freshness is not locked: {freshness_detail}")
-    status = "locked" if not failures and artifact_status != "attention" else "blocked" if failures else "attention"
+    if failures:
+        status = "blocked"
+    elif artifact_status == "attention":
+        status = "attention"
+    else:
+        status = "locked"
     payload = _readiness_refs(
         {
             "schema_version": "temms-runtime-capability-lock/v1",
@@ -3067,7 +3111,11 @@ def _edge_inventory_capability_basis(
             ),
             "runtimes": _compact_runtime_surface(inventory.get("runtimes")),
             "accelerators": _compact_accelerator_surface(inventory.get("accelerators")),
-            "memory": inventory.get("memory") if isinstance(inventory.get("memory"), dict) else None,
+            "memory": (
+                inventory.get("memory")
+                if isinstance(inventory.get("memory"), dict)
+                else None
+            ),
             "storage": (
                 inventory.get("storage") if isinstance(inventory.get("storage"), dict) else None
             ),
@@ -3141,7 +3189,11 @@ def _runtime_capability_lock_summary(lock: dict[str, Any]) -> dict[str, Any]:
 
 def _runtime_capability_lock_digest_payload(lock: dict[str, Any]) -> dict[str, Any]:
     """Return stable capability facts used for capability lock hashing."""
-    edge_inventory = lock.get("edge_inventory") if isinstance(lock.get("edge_inventory"), dict) else {}
+    edge_inventory = (
+        lock.get("edge_inventory")
+        if isinstance(lock.get("edge_inventory"), dict)
+        else {}
+    )
     telemetry_freshness = (
         edge_inventory.get("telemetry_freshness")
         if isinstance(edge_inventory.get("telemetry_freshness"), dict)
@@ -3244,7 +3296,11 @@ def _runtime_target_assessment_remediation(
         if isinstance(candidate.get("component_states"), dict)
         else {}
     )
-    raw_penalties = candidate.get("penalties") if isinstance(candidate.get("penalties"), list) else []
+    raw_penalties = (
+        candidate.get("penalties")
+        if isinstance(candidate.get("penalties"), list)
+        else []
+    )
     penalties = [
         str(penalty)
         for penalty in raw_penalties
@@ -3284,7 +3340,11 @@ def _runtime_target_assessment_remediation(
         if "device profile" in penalty_text:
             action = "select_matching_edge_class"
             label = "Use matching edge class"
-            detail = penalties[0] if penalties else "Runtime target requires a different edge profile."
+            detail = (
+                penalties[0]
+                if penalties
+                else "Runtime target requires a different edge profile."
+            )
         elif artifact_lane.get("status") == "blocked":
             action = "package_runtime_artifact"
             label = "Package runtime artifact"
@@ -3295,11 +3355,19 @@ def _runtime_target_assessment_remediation(
         elif resource.get("status") == "blocked" or resource.get("state") == "blocked":
             action = "free_edge_resources"
             label = "Free edge resources"
-            detail = penalties[0] if penalties else "Selected edge does not satisfy resource envelope."
+            detail = (
+                penalties[0]
+                if penalties
+                else "Selected edge does not satisfy resource envelope."
+            )
         elif compatibility.get("state") == "blocked" or compatibility.get("failures"):
             action = "resolve_runtime_capability"
             label = "Resolve capability gap"
-            detail = penalties[0] if penalties else "Runtime target capability requirements are not met."
+            detail = (
+                penalties[0]
+                if penalties
+                else "Runtime target capability requirements are not met."
+            )
         else:
             action = "resolve_target_blocker"
             label = "Resolve target blocker"
@@ -3644,7 +3712,9 @@ def _deployment_readiness(
         device=device,
         model_id=selected_model_id,
     )
-    runtime_target_is_pinned = bool(runtime_target_id or (seed_rollout or {}).get("runtime_target_id"))
+    runtime_target_is_pinned = bool(
+        runtime_target_id or (seed_rollout or {}).get("runtime_target_id")
+    )
     selected_runtime_target_id = (
         runtime_target.get("runtime_target_id") if runtime_target else runtime_target_id
     )
@@ -3865,7 +3935,9 @@ def _runtime_target_readiness_gate(
                 )
             ],
         )
-    runtime_target_id = str(runtime_target.get("runtime_target_id") or runtime_target.get("id") or "")
+    runtime_target_id = str(
+        runtime_target.get("runtime_target_id") or runtime_target.get("id") or ""
+    )
     rollout_id = str((rollout or {}).get("rollout_id") or "")
     rollout_state = str((rollout or {}).get("state") or "")
     drift_sensitive = rollout_state in {"imported", "activated"}
@@ -4058,7 +4130,10 @@ def _runtime_optimization_readiness_gate(
             "Runtime optimizer",
             "go",
             "best target",
-            str(target_selection.get("detail") or "Selected runtime target is the best measured fit"),
+            str(
+                target_selection.get("detail")
+                or "Selected runtime target is the best measured fit"
+            ),
             refs=refs,
         )
     if status == "upgrade_available":
@@ -4289,7 +4364,10 @@ def _resource_envelope_readiness_gate(
                 f"Active rollout {rollout_id or 'selected rollout'} cannot prove its "
                 f"resource envelope from stale edge telemetry: {freshness['detail']}"
                 if drift_sensitive
-                else f"Resource envelope was last proven from stale edge telemetry: {freshness['detail']}"
+                else (
+                    "Resource envelope was last proven from stale edge "
+                    f"telemetry: {freshness['detail']}"
+                )
             )
             return _readiness_gate(
                 "resource_envelope",
@@ -4946,12 +5024,18 @@ def _finalize_deployment_readiness(
     elif warning is not None:
         status = "attention"
         headline = "Deployment is stageable with operator action"
-        detail = "The selected model has no hard blockers, but one runtime, resource, performance, or proof gate still needs review."
+        detail = (
+            "The selected model has no hard blockers, but one runtime, "
+            "resource, performance, or proof gate still needs review."
+        )
         next_action = str(warning.get("detail") or "Review the attention gate")
     else:
         status = "go"
         headline = "Deployment loop is ready"
-        detail = "Model package, runtime target, performance SLO, resource envelope, edge target, rollout, DDIL queue, and evidence chain are aligned."
+        detail = (
+            "Model package, runtime target, performance SLO, resource envelope, "
+            "edge target, rollout, DDIL queue, and evidence chain are aligned."
+        )
         next_action = "Export mission replay or stage the next rollout batch"
     readiness = {
         "schema_version": "temms-deployment-readiness/v1",
@@ -5418,8 +5502,16 @@ def _runtime_decision_trace_row(target: dict[str, Any]) -> dict[str, Any]:
             "benchmark_id": proof.get("benchmark_id"),
             "latency_ms_p95": proof.get("latency_ms_p95"),
             "throughput_ips": proof.get("throughput_ips"),
-            "reasons": target.get("reasons") if isinstance(target.get("reasons"), list) else [],
-            "penalties": target.get("penalties") if isinstance(target.get("penalties"), list) else [],
+            "reasons": (
+                target.get("reasons")
+                if isinstance(target.get("reasons"), list)
+                else []
+            ),
+            "penalties": (
+                target.get("penalties")
+                if isinstance(target.get("penalties"), list)
+                else []
+            ),
             "remediation": _readiness_refs(
                 {
                     "action": remediation.get("action"),
@@ -6100,7 +6192,11 @@ def _runtime_workbench_selected_target(
             continue
         if target.get("selected") is True:
             return target
-        if selected_runtime_target_id and str(target.get("runtime_target_id") or "") == selected_runtime_target_id:
+        if (
+            selected_runtime_target_id
+            and str(target.get("runtime_target_id") or "")
+            == selected_runtime_target_id
+        ):
             return target
     return {}
 
@@ -7087,7 +7183,10 @@ def _matrix_package_summary(package: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
-def _matrix_model_ids(package: dict[str, Any], requested_model_ids: list[str] | None) -> list[str | None]:
+def _matrix_model_ids(
+    package: dict[str, Any],
+    requested_model_ids: list[str] | None,
+) -> list[str | None]:
     """Return model ids represented by compatibility-matrix cells for a package."""
     declared_model_ids = sorted(_catalog_model_ids(package))
     if requested_model_ids is not None:
@@ -7128,7 +7227,10 @@ def _performance_fit_summary(
             return {
                 "status": "attention",
                 "state": "benchmark missing",
-                "detail": "No benchmark evidence for declared performance SLO on this edge/runtime target",
+                "detail": (
+                    "No benchmark evidence for declared performance SLO on "
+                    "this edge/runtime target"
+                ),
                 "slo": slo,
                 "benchmark": None,
                 "failures": ["missing benchmark evidence"],
@@ -7228,7 +7330,11 @@ def _fallback_model_candidate(
     if allow_runtime_switch:
         runtime_options = list(_runtime_targets_with_defaults(data).values())
         if runtime_target is not None:
-            current_target_id = str(runtime_target.get("runtime_target_id") or runtime_target.get("id") or "")
+            current_target_id = str(
+                runtime_target.get("runtime_target_id")
+                or runtime_target.get("id")
+                or ""
+            )
             runtime_options.sort(
                 key=lambda target: (
                     str((target or {}).get("runtime_target_id") or (target or {}).get("id") or "")
@@ -8063,7 +8169,12 @@ def _runtime_target_failures(
         runtime_target=runtime_target,
     )
     if artifact_fit.get("status") == "blocked":
-        failures.append(str(artifact_fit.get("detail") or "model artifact does not fit runtime lane"))
+        failures.append(
+            str(
+                artifact_fit.get("detail")
+                or "model artifact does not fit runtime lane"
+            )
+        )
 
     return failures
 
@@ -8125,7 +8236,10 @@ def _model_artifact_lane_summary(
             **base,
             "status": "attention",
             "state": "format missing",
-            "detail": f"{model_id} does not declare an artifact format for {runtime_lane.get('label')}",
+            "detail": (
+                f"{model_id} does not declare an artifact format for "
+                f"{runtime_lane.get('label')}"
+            ),
         }
     if not format_sets:
         return {
@@ -8211,7 +8325,11 @@ def _device_inventory_runtime_target_failures(
         "device_profile": normalize_device_profile(
             inventory.get("device_profile") or device.get("profile")
         ),
-        "runtimes": inventory.get("runtimes") if isinstance(inventory.get("runtimes"), dict) else {},
+        "runtimes": (
+            inventory.get("runtimes")
+            if isinstance(inventory.get("runtimes"), dict)
+            else {}
+        ),
         "accelerators": (
             inventory.get("accelerators") if isinstance(inventory.get("accelerators"), dict) else {}
         ),
@@ -8230,7 +8348,11 @@ def _device_inventory_runtime_target_failures(
 def _runtime_target_inventory_constraints(runtime_target: dict[str, Any]) -> dict[str, Any]:
     """Return runtime/provider/accelerator constraints implied by a runtime target."""
     constraints = dict(runtime_target.get("runtime_constraints") or {})
-    runtimes = runtime_target.get("runtimes") if isinstance(runtime_target.get("runtimes"), dict) else {}
+    runtimes = (
+        runtime_target.get("runtimes")
+        if isinstance(runtime_target.get("runtimes"), dict)
+        else {}
+    )
     accelerators = (
         runtime_target.get("accelerators")
         if isinstance(runtime_target.get("accelerators"), dict)
@@ -8246,7 +8368,11 @@ def _runtime_target_inventory_constraints(runtime_target: dict[str, Any]) -> dic
         if required_runtimes:
             constraints["runtimes"] = required_runtimes
 
-    onnxruntime = runtimes.get("onnxruntime") if isinstance(runtimes.get("onnxruntime"), dict) else {}
+    onnxruntime = (
+        runtimes.get("onnxruntime")
+        if isinstance(runtimes.get("onnxruntime"), dict)
+        else {}
+    )
     if (
         "providers" not in constraints
         and "provider_order" not in constraints
@@ -8412,7 +8538,10 @@ def _runtime_constraint_failures(
         ),
     }
     failures: list[str] = []
-    for constrained_model_id, constraints in _catalog_runtime_constraints(package, model_id=model_id):
+    for constrained_model_id, constraints in _catalog_runtime_constraints(
+        package,
+        model_id=model_id,
+    ):
         satisfied, reasons = runtime_constraints_satisfied(constraints, capabilities)
         if not satisfied:
             failures.extend(f"{constrained_model_id}: {reason}" for reason in reasons)

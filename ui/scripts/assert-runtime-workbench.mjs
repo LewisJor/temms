@@ -481,7 +481,8 @@ const stageablePackageStatus = missionPackageModule.buildMissionPackageStageStat
     ...manifestFixture,
     deployment_intent: {
       command: { method: "POST", path: "/v1/hub/rollouts/assign" },
-      requires: { runtime_plan_digest: true },
+      mission_contract_sha256: "b".repeat(64),
+      requires: { mission_contract_digest: true, runtime_plan_digest: true },
       runtime_plan_sha256: "a".repeat(64),
       rollout_id: "rollout-model-yolov8-lowlight-001-temms-rpi5-tflite-edge-rpi5"
     },
@@ -505,12 +506,35 @@ const missingIntentPackageStatus = missionPackageModule.buildMissionPackageStage
 if (missingIntentPackageStatus.stageable !== false || missingIntentPackageStatus.value !== "deploy intent missing") {
   throw new Error("mission package stage status should block passed plans that lack deployment intent");
 }
+const missingMissionContractPackageStatus = missionPackageModule.buildMissionPackageStageStatus({
+  handoff: undefined,
+  manifest: {
+    ...manifestFixture,
+    deployment_intent: {
+      command: { method: "POST", path: "/v1/hub/rollouts/assign" },
+      requires: { runtime_plan_digest: true },
+      runtime_plan_sha256: "a".repeat(64),
+      rollout_id: "rollout-model-yolov8-lowlight-001-temms-rpi5-tflite-edge-rpi5"
+    },
+    proof_gate: { status: "passed" }
+  },
+  missionReady: true,
+  plan: { schema_version: "temms-edge-mission-package/v1" }
+});
+if (
+  missingMissionContractPackageStatus.stageable !== false ||
+  missingMissionContractPackageStatus.value !== "mission contract missing"
+) {
+  throw new Error("mission package stage status should block deploy intents without mission contract binding");
+}
 const missingRuntimeDigestPackageStatus = missionPackageModule.buildMissionPackageStageStatus({
   handoff: undefined,
   manifest: {
     ...manifestFixture,
     deployment_intent: {
       command: { method: "POST", path: "/v1/hub/rollouts/assign" },
+      mission_contract_sha256: "b".repeat(64),
+      requires: { mission_contract_digest: true },
       rollout_id: "rollout-model-yolov8-lowlight-001-temms-rpi5-tflite-edge-rpi5"
     },
     proof_gate: { status: "passed" }
