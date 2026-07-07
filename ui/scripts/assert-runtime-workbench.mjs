@@ -23,6 +23,7 @@ const modelPlanPath = join(uiRoot, "src", "components", "model-plan.tsx");
 const readinessPanelsPath = join(uiRoot, "src", "components", "readiness-panels.tsx");
 const runtimeDecisionTracePath = join(uiRoot, "src", "components", "runtime-decision-trace.tsx");
 const runtimeExecutionContractPath = join(uiRoot, "src", "components", "runtime-execution-contract.tsx");
+const runtimeContractRowsPath = join(uiRoot, "src", "components", "runtime-contract-rows.tsx");
 const runtimeMissionPath = join(uiRoot, "src", "components", "runtime-mission.tsx");
 const runtimeOptimizerPath = join(uiRoot, "src", "components", "runtime-optimizer.tsx");
 const runtimeWorkbenchPath = join(uiRoot, "src", "components", "runtime-workbench.tsx");
@@ -112,6 +113,7 @@ const modelPlanSource = readFileSync(modelPlanPath, "utf8");
 const readinessPanelsSource = readFileSync(readinessPanelsPath, "utf8");
 const runtimeDecisionTraceSource = readFileSync(runtimeDecisionTracePath, "utf8");
 const runtimeExecutionContractSource = readFileSync(runtimeExecutionContractPath, "utf8");
+const runtimeContractRowsSource = readFileSync(runtimeContractRowsPath, "utf8");
 const runtimeMissionSource = readFileSync(runtimeMissionPath, "utf8");
 const runtimeOptimizerSource = readFileSync(runtimeOptimizerPath, "utf8");
 const runtimeWorkbenchSource = readFileSync(runtimeWorkbenchPath, "utf8");
@@ -126,7 +128,7 @@ const proofCommandSource = readFileSync(proofCommandPath, "utf8");
 const runtimeRemediationSource = readFileSync(runtimeRemediationPath, "utf8");
 const missionPackageSource = readFileSync(missionPackagePath, "utf8");
 const missionWorkflowSource = readFileSync(missionWorkflowPath, "utf8");
-const workbenchSource = `${source}\n${capabilityDossierSource}\n${edgeDeployStageSource}\n${deployListsSource}\n${edgeProofSource}\n${fieldOpsSource}\n${fieldOpsStageSource}\n${packageHandoffSource}\n${packageStageSource}\n${missionStagesSource}\n${modelPlanSource}\n${readinessPanelsSource}\n${runtimeDecisionTraceSource}\n${runtimeExecutionContractSource}\n${runtimeMissionSource}\n${runtimeOptimizerSource}\n${runtimeWorkbenchSource}\n${workbenchFlowSource}\n${edgeProofWorkflowSource}\n${edgeRuntimeMissionSource}\n${fieldOpsProofSource}\n${hubActionsSource}\n${readinessSource}\n${runtimeDecisionSource}\n${proofCommandSource}\n${runtimeRemediationSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
+const workbenchSource = `${source}\n${capabilityDossierSource}\n${edgeDeployStageSource}\n${deployListsSource}\n${edgeProofSource}\n${fieldOpsSource}\n${fieldOpsStageSource}\n${packageHandoffSource}\n${packageStageSource}\n${missionStagesSource}\n${modelPlanSource}\n${readinessPanelsSource}\n${runtimeDecisionTraceSource}\n${runtimeExecutionContractSource}\n${runtimeContractRowsSource}\n${runtimeMissionSource}\n${runtimeOptimizerSource}\n${runtimeWorkbenchSource}\n${workbenchFlowSource}\n${edgeProofWorkflowSource}\n${edgeRuntimeMissionSource}\n${fieldOpsProofSource}\n${hubActionsSource}\n${readinessSource}\n${runtimeDecisionSource}\n${proofCommandSource}\n${runtimeRemediationSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
 const apiSource = readFileSync(apiPath, "utf8");
 const missionSpecSource = readFileSync(missionSpecPath, "utf8");
 const proofHashSource = readFileSync(proofHashPath, "utf8");
@@ -363,9 +365,15 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "Target runtime coverage",
   "Measured runtime candidates",
   "Runtime blockers and evidence gaps",
-  "Use best runtime",
-  "Copy command"
+  "Use best runtime"
 ].forEach((needle) => assertContains("Runtime execution contract sources", runtimeExecutionContractSource, needle));
+
+[
+  "RuntimeCandidateRow",
+  "TargetRuntimeAssessmentRow",
+  "ExecutionPathNode",
+  "Copy command"
+].forEach((needle) => assertContains("Runtime contract row sources", runtimeContractRowsSource, needle));
 
 [
   "runtimeDecisionCandidates",
