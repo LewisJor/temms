@@ -121,6 +121,8 @@ export function buildMissionPackageStageStatus({
   const deploymentIntent = asRecord(manifest.deployment_intent);
   const deploymentCommand = asRecord(deploymentIntent.command);
   const deploymentRequires = asRecord(deploymentIntent.requires);
+  const edgeHandoff = asRecord(manifest.edge_handoff);
+  const componentDigests = asRecord(manifest.component_digests);
   const proofGate = asRecord(manifest.proof_gate);
   const integrity = asRecord(manifest.integrity);
   const packageIdentity = asRecord(manifest.package_identity);
@@ -140,6 +142,10 @@ export function buildMissionPackageStageStatus({
   const gateStatus = stringOf(proofGate.status, plan || handoff ? "planned" : "");
   const hasPackageArtifact = Boolean(plan || handoff);
   const hasDeploymentIntent = Boolean(deploymentIntent.rollout_id && deploymentCommand.path);
+  const hasEdgeHandoffDigest = Boolean(
+    Object.keys(edgeHandoff).length &&
+    componentDigests.edge_handoff_sha256
+  );
   const hasMissionContractDigest = Boolean(
     deploymentIntent.mission_contract_sha256 &&
     deploymentRequires.mission_contract_digest === true
@@ -191,6 +197,18 @@ export function buildMissionPackageStageStatus({
       stageable: false,
       tone: "warn",
       value: "deploy intent missing"
+    };
+  }
+
+  if (hasPackageArtifact && !hasEdgeHandoffDigest) {
+    return {
+      detail: "edge handoff digest missing; replan package before staging",
+      downloaded: Boolean(handoff),
+      gateStatus,
+      planned: hasPackageArtifact,
+      stageable: false,
+      tone: "warn",
+      value: "edge handoff missing"
     };
   }
 

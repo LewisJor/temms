@@ -206,8 +206,8 @@ Expected visible state with the Docker Hub seed:
   the preview handoff.
   The Package stage should then show **Mission package handoff** with retained
   filename, package identity hash, payload hash, mission hash, runtime-plan
-  hash, deploy-intent hash, and preserved `edge_handoff` runbook matching the
-  package body. Repeated plan/download
+  hash, deploy-intent hash, edge-handoff hash, and preserved `edge_handoff`
+  runbook matching the package body. Repeated plan/download
   calls may produce different payload hashes because artifact observation time
   changes, but they must keep the same package identity hash for the same
   mission/model/runtime/device policy.
@@ -786,12 +786,13 @@ For the Docker demo on `localhost:8080`, run the live contract smoke first. It
 checks `/ui/hub`, `POST /v1/hub/mission-package/plan`,
 `POST /v1/hub/mission-package/download`, and
 `POST /v1/hub/mission-package/stage`, including the digest headers that tie the
-mission package to its mission contract, capability lock, runtime plan, and
-deployment intent. The stage step must report a passed stage gate with
-`mission_contract: verified`, `runtime_capability_lock: verified`, and
-`runtime_plan: verified`, which proves failed/advisory proof-gate artifacts plus
-mission-contract, capability-lock, or runtime-plan digest mismatches cannot
-become edge rollouts. The smoke then approves and applies the staged rollout so
+mission package to its edge handoff, mission contract, capability lock, runtime
+plan, and deployment intent. The stage step must report a passed stage gate with
+`edge_handoff: verified`, `mission_contract: verified`,
+`runtime_capability_lock: verified`, and `runtime_plan: verified`, which proves
+failed/advisory proof-gate artifacts plus edge-handoff, mission-contract,
+capability-lock, or runtime-plan digest mismatches cannot become edge rollouts.
+The smoke then approves and applies the staged rollout so
 repeated runs leave the selected edge path activated rather than stuck in an
 approval or assigned state. It exercises both explicit JSON planning and
 YAML-only mission planning so the backend path stays aligned with the browser

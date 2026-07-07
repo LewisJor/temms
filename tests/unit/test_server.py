@@ -2210,8 +2210,12 @@ spec:
             "runtime_capability_lock": "verified",
             "runtime_plan": "verified",
             "deployment_intent": "verified",
+            "edge_handoff": "verified",
             "current_proof_gate_status": "passed",
         }
+        assert mission_package["edge_handoff"]["artifact_integrity"][
+            "edge_handoff_digest_header"
+        ] == "X-TEMMS-Mission-Package-Edge-Handoff-SHA256"
         assert mission_package["edge_handoff"]["artifact_integrity"][
             "mission_contract_digest_header"
         ] == "X-TEMMS-Mission-Package-Mission-Contract-SHA256"
@@ -2390,6 +2394,9 @@ ddil:
             "x-temms-mission-package-deployment-intent-sha256"
         ] == canonical_json_hash(mission_package_download["deployment_intent"])
         assert mission_package_download_response.headers[
+            "x-temms-mission-package-edge-handoff-sha256"
+        ] == mission_package_download["component_digests"]["edge_handoff_sha256"]
+        assert mission_package_download_response.headers[
             "x-temms-mission-package-mission-contract-sha256"
         ] == mission_package_download["component_digests"]["mission_contract_sha256"]
         assert mission_package_download_response.headers[
@@ -2446,6 +2453,21 @@ ddil:
         assert (
             "deployment intent digest"
             in tampered_digest_stage_response.json()["detail"]
+        )
+
+        tampered_handoff_package = json.loads(json.dumps(mission_package_download))
+        tampered_handoff_package["edge_handoff"]["commands"]["apply_rollout"][
+            "path"
+        ] = "/v1/hub/rollouts/tampered/apply"
+        _rehash_downloaded_mission_package(tampered_handoff_package)
+        tampered_handoff_stage_response = hub_ui_client.post(
+            "/v1/hub/mission-package/stage",
+            json={"mission_package": tampered_handoff_package},
+        )
+        assert tampered_handoff_stage_response.status_code == 400
+        assert (
+            "edge handoff digest"
+            in tampered_handoff_stage_response.json()["detail"]
         )
 
         failed_gate_mission_package = dict(mission_package_download)
@@ -2592,6 +2614,7 @@ ddil:
                 "runtime_capability_lock": "verified",
                 "runtime_plan": "verified",
                 "deployment_intent": "verified",
+                "edge_handoff": "verified",
             },
         }
         assert mission_package_stage["package_identity_sha256"] == (
@@ -2599,6 +2622,9 @@ ddil:
         )
         assert mission_package_stage["deployment_intent_sha256"] == canonical_json_hash(
             mission_package_download["deployment_intent"]
+        )
+        assert mission_package_stage["edge_handoff_sha256"] == (
+            mission_package_download["component_digests"]["edge_handoff_sha256"]
         )
         assert mission_package_stage["mission_contract_sha256"] == (
             mission_package_download["component_digests"]["mission_contract_sha256"]

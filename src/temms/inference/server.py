@@ -3838,6 +3838,7 @@ async def download_mission_package(
         "deployment_intent_sha256": (
             "X-TEMMS-Mission-Package-Deployment-Intent-SHA256"
         ),
+        "edge_handoff_sha256": "X-TEMMS-Mission-Package-Edge-Handoff-SHA256",
     }
     for digest_key, header_name in component_digest_headers.items():
         digest = component_digests.get(digest_key)
@@ -4090,6 +4091,7 @@ def _mission_package_stage_request_body(
         component_digests.get("deployment_intent_sha256")
         or canonical_json_hash(deployment_intent)
     )
+    edge_handoff_sha256 = str(component_digests.get("edge_handoff_sha256") or "")
     runtime_plan_sha256 = str(component_digests.get("runtime_plan_sha256") or "")
     stage_proof = {
         "schema_version": "temms-edge-mission-package-stage/v1",
@@ -4099,6 +4101,7 @@ def _mission_package_stage_request_body(
         "runtime_capability_lock_sha256": runtime_capability_lock_sha256,
         "runtime_plan_sha256": runtime_plan_sha256,
         "deployment_intent_sha256": deployment_intent_sha256,
+        "edge_handoff_sha256": edge_handoff_sha256,
         "command": {
             "method": "POST",
             "path": "/v1/hub/rollouts",
@@ -4134,6 +4137,7 @@ def _mission_package_stage_gate(package_plan: Dict[str, Any]) -> Dict[str, Any]:
             "runtime_capability_lock": "verified",
             "runtime_plan": "verified",
             "deployment_intent": "verified",
+            "edge_handoff": "verified",
         },
     }
 
@@ -4173,6 +4177,11 @@ def _verify_mission_package_stage_integrity(
         if isinstance(package_plan.get("runtime_plan"), dict)
         else {}
     )
+    edge_handoff = (
+        package_plan.get("edge_handoff")
+        if isinstance(package_plan.get("edge_handoff"), dict)
+        else {}
+    )
 
     payload_sha256 = integrity.get("payload_sha256")
     if payload_sha256:
@@ -4188,6 +4197,16 @@ def _verify_mission_package_stage_integrity(
         deployment_intent
     ) != str(expected_deployment_intent_sha256):
         raise ValueError("mission package deployment intent digest does not match body")
+
+    expected_edge_handoff_sha256 = str(
+        component_digests.get("edge_handoff_sha256") or ""
+    )
+    if not edge_handoff:
+        raise ValueError("mission package edge handoff is missing")
+    if not expected_edge_handoff_sha256:
+        raise ValueError("mission package edge handoff digest is missing")
+    if canonical_json_hash(edge_handoff) != expected_edge_handoff_sha256:
+        raise ValueError("mission package edge handoff digest does not match body")
 
     expected_runtime_plan_sha256 = str(
         component_digests.get("runtime_plan_sha256") or ""

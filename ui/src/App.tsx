@@ -2705,6 +2705,12 @@ function MissionPackageDownloadHandoffCard({
       key: "deployment_intent",
       label: "Deploy intent",
       value: handoff?.deploymentIntentSha256 || ""
+    },
+    {
+      body: stringOf(componentDigests.edge_handoff_sha256, ""),
+      key: "edge_handoff",
+      label: "Edge handoff",
+      value: handoff?.edgeHandoffSha256 || ""
     }
   ];
   const mismatched = handoff

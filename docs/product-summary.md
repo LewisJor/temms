@@ -98,19 +98,19 @@ TEMMS has two main layers:
   `stage_approve_apply`, and the stage, approve, apply, and digest-verification
   runbook expected by the edge operator. Operators can also download that package plan from
   `POST /v1/hub/mission-package/download`, which returns the same JSON artifact
-  with package-identity, payload, mission-contract, runtime-capability-lock,
-  runtime-plan, and deployment-intent digest headers.
+  with package-identity, payload, edge-handoff, mission-contract,
+  runtime-capability-lock, runtime-plan, and deployment-intent digest headers.
   The CLI mirrors the same handoff with `temms hub mission-package-plan` and
   `temms hub mission-package-download`, accepting a mission YAML file plus
   explicit overrides for sensor, SLO, switching, fallback, and DDIL behavior.
   `POST /v1/hub/mission-package/stage` and
   `temms hub mission-package-stage` then accept the downloaded package artifact,
-  verify its identity/payload/mission-contract/runtime-capability-lock/
-  runtime-plan/deployment-intent digest chain plus the passed proof gate,
-  preserve the embedded `edge_handoff`, and stage the package-bound rollout
-  without reconstructing the model/runtime/device body by hand. Advisory or
-  failed proof-gate packages remain inspectable but are fail-closed at deploy
-  time.
+  verify its identity/payload/edge-handoff/mission-contract/
+  runtime-capability-lock/runtime-plan/deployment-intent digest chain plus the
+  passed proof gate, preserve the embedded `edge_handoff`, and stage the
+  package-bound rollout without reconstructing the model/runtime/device body by
+  hand. Advisory or failed proof-gate packages remain inspectable but are
+  fail-closed at deploy time.
   The Hub stage renderer keeps the active step narrow: model selection under
   **Model Plan**, runtime ranking under **Runtime Fit**, sensor/model switching
   policy under **Sensor Handling**, package/proof handoff under **Package

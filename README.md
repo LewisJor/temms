@@ -136,8 +136,9 @@ the mission package handoff. Package planning now separates the stable package
 identity hash from the exact downloaded payload hash, so repeated plan/download
 actions can be audited as the same mission/runtime package even when artifact
 timestamps differ. The deployment intent also carries mission-contract,
-runtime-capability-lock, and runtime-plan digests that staging verifies before
-creating the edge rollout.
+runtime-capability-lock, and runtime-plan digests, and the package carries a
+verified edge-handoff digest for the operator runbook that staging preserves
+before creating the edge rollout.
 **Model Plan** owns model selection and package release
 context; **Runtime Fit** preserves that selected model as locked context, lets
 the operator choose the edge node and target runtime, ranks available runtime

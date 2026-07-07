@@ -678,6 +678,7 @@ def _edge_mission_package_edge_handoff(
             "runtime_capability_lock": "verified",
             "runtime_plan": "verified",
             "deployment_intent": "verified",
+            "edge_handoff": "verified",
             "current_proof_gate_status": proof_gate.get("status"),
         },
         "artifact_integrity": {
@@ -686,6 +687,9 @@ def _edge_mission_package_edge_handoff(
             "identity_digest_header": "X-TEMMS-Mission-Package-Identity-SHA256",
             "deployment_intent_digest_header": (
                 "X-TEMMS-Mission-Package-Deployment-Intent-SHA256"
+            ),
+            "edge_handoff_digest_header": (
+                "X-TEMMS-Mission-Package-Edge-Handoff-SHA256"
             ),
             "mission_contract_digest_header": (
                 "X-TEMMS-Mission-Package-Mission-Contract-SHA256"

@@ -479,6 +479,7 @@ const stageablePackageStatus = missionPackageModule.buildMissionPackageStageStat
   handoff: undefined,
   manifest: {
     ...manifestFixture,
+    component_digests: { edge_handoff_sha256: "d".repeat(64) },
     deployment_intent: {
       command: { method: "POST", path: "/v1/hub/rollouts/assign" },
       mission_contract_sha256: "b".repeat(64),
@@ -491,6 +492,7 @@ const stageablePackageStatus = missionPackageModule.buildMissionPackageStageStat
       runtime_plan_sha256: "a".repeat(64),
       rollout_id: "rollout-model-yolov8-lowlight-001-temms-rpi5-tflite-edge-rpi5"
     },
+    edge_handoff: { schema_version: "temms-edge-mission-package-handoff/v1" },
     proof_gate: { status: "passed" }
   },
   missionReady: true,
@@ -511,16 +513,45 @@ const missingIntentPackageStatus = missionPackageModule.buildMissionPackageStage
 if (missingIntentPackageStatus.stageable !== false || missingIntentPackageStatus.value !== "deploy intent missing") {
   throw new Error("mission package stage status should block passed plans that lack deployment intent");
 }
+const missingEdgeHandoffPackageStatus = missionPackageModule.buildMissionPackageStageStatus({
+  handoff: undefined,
+  manifest: {
+    ...manifestFixture,
+    deployment_intent: {
+      command: { method: "POST", path: "/v1/hub/rollouts/assign" },
+      mission_contract_sha256: "b".repeat(64),
+      requires: {
+        mission_contract_digest: true,
+        runtime_capability_lock_digest: true,
+        runtime_plan_digest: true
+      },
+      runtime_capability_lock_sha256: "c".repeat(64),
+      runtime_plan_sha256: "a".repeat(64),
+      rollout_id: "rollout-model-yolov8-lowlight-001-temms-rpi5-tflite-edge-rpi5"
+    },
+    proof_gate: { status: "passed" }
+  },
+  missionReady: true,
+  plan: { schema_version: "temms-edge-mission-package/v1" }
+});
+if (
+  missingEdgeHandoffPackageStatus.stageable !== false ||
+  missingEdgeHandoffPackageStatus.value !== "edge handoff missing"
+) {
+  throw new Error("mission package stage status should block deploy intents without edge handoff binding");
+}
 const missingMissionContractPackageStatus = missionPackageModule.buildMissionPackageStageStatus({
   handoff: undefined,
   manifest: {
     ...manifestFixture,
+    component_digests: { edge_handoff_sha256: "d".repeat(64) },
     deployment_intent: {
       command: { method: "POST", path: "/v1/hub/rollouts/assign" },
       requires: { runtime_plan_digest: true },
       runtime_plan_sha256: "a".repeat(64),
       rollout_id: "rollout-model-yolov8-lowlight-001-temms-rpi5-tflite-edge-rpi5"
     },
+    edge_handoff: { schema_version: "temms-edge-mission-package-handoff/v1" },
     proof_gate: { status: "passed" }
   },
   missionReady: true,
@@ -536,6 +567,7 @@ const missingRuntimeDigestPackageStatus = missionPackageModule.buildMissionPacka
   handoff: undefined,
   manifest: {
     ...manifestFixture,
+    component_digests: { edge_handoff_sha256: "d".repeat(64) },
     deployment_intent: {
       command: { method: "POST", path: "/v1/hub/rollouts/assign" },
       mission_contract_sha256: "b".repeat(64),
@@ -546,6 +578,7 @@ const missingRuntimeDigestPackageStatus = missionPackageModule.buildMissionPacka
       runtime_capability_lock_sha256: "c".repeat(64),
       rollout_id: "rollout-model-yolov8-lowlight-001-temms-rpi5-tflite-edge-rpi5"
     },
+    edge_handoff: { schema_version: "temms-edge-mission-package-handoff/v1" },
     proof_gate: { status: "passed" }
   },
   missionReady: true,
@@ -561,6 +594,7 @@ const missingCapabilityLockDigestPackageStatus = missionPackageModule.buildMissi
   handoff: undefined,
   manifest: {
     ...manifestFixture,
+    component_digests: { edge_handoff_sha256: "d".repeat(64) },
     deployment_intent: {
       command: { method: "POST", path: "/v1/hub/rollouts/assign" },
       mission_contract_sha256: "b".repeat(64),
@@ -568,6 +602,7 @@ const missingCapabilityLockDigestPackageStatus = missionPackageModule.buildMissi
       runtime_plan_sha256: "a".repeat(64),
       rollout_id: "rollout-model-yolov8-lowlight-001-temms-rpi5-tflite-edge-rpi5"
     },
+    edge_handoff: { schema_version: "temms-edge-mission-package-handoff/v1" },
     proof_gate: { status: "passed" }
   },
   missionReady: true,

@@ -133,6 +133,7 @@ export interface EdgeProofDownloadHandoff {
 
 export interface MissionPackageDownloadHandoff {
   deploymentIntentSha256: string;
+  edgeHandoffSha256: string;
   fileName: string;
   missionContractSha256: string;
   missionSha256: string;
@@ -264,6 +265,8 @@ function missionPackageDownloadHandoff(
   return {
     deploymentIntentSha256:
       headers.get("X-TEMMS-Mission-Package-Deployment-Intent-SHA256") || "",
+    edgeHandoffSha256:
+      headers.get("X-TEMMS-Mission-Package-Edge-Handoff-SHA256") || "",
     fileName,
     missionContractSha256:
       headers.get("X-TEMMS-Mission-Package-Mission-Contract-SHA256") || "",

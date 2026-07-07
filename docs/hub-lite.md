@@ -150,16 +150,17 @@ staging action, plus the `mission_contract_sha256`,
 stage.
 `POST /v1/hub/mission-package/download` returns the same package
 plan as an attachment with `X-TEMMS-Mission-Package-SHA256`,
+`X-TEMMS-Mission-Package-Edge-Handoff-SHA256`,
 `X-TEMMS-Mission-Package-Mission-Contract-SHA256`,
 `X-TEMMS-Mission-Package-Runtime-Capability-Lock-SHA256`,
 `X-TEMMS-Mission-Package-Runtime-Plan-SHA256`, and
 `X-TEMMS-Mission-Package-Deployment-Intent-SHA256` headers for field handoff.
 `POST /v1/hub/mission-package/stage` accepts that
 `temms-edge-mission-package/v1` artifact, verifies the package identity,
-payload, mission-contract, runtime-capability-lock, runtime-plan, and
-deployment-intent digests, and passed proof gate, then stages the embedded
-rollout intent while preserving the artifact's `edge_handoff` runbook in the
-stage proof. Failed proof gates stay advisory artifacts; they cannot
+payload, edge-handoff, mission-contract, runtime-capability-lock, runtime-plan,
+and deployment-intent digests, plus the passed proof gate, then stages the
+embedded rollout intent while preserving the artifact's `edge_handoff` runbook
+in the stage proof. Failed proof gates stay advisory artifacts; they cannot
 be staged to edge deploy until readiness is remediated and the package is
 planned again.
 The package planner can run in an advisory mode while readiness is still
