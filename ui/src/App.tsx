@@ -34,19 +34,12 @@ import {
   ToastView
 } from "./components/ui";
 import { EdgeDeployStage } from "./components/edge-deploy-stage";
-import { EdgeProofPanel } from "./components/edge-proof";
 import { FieldOpsStage } from "./components/field-ops-stage";
-import {
-  EdgePackagePlanPanel,
-  MissionPackageDownloadHandoffCard
-} from "./components/package-handoff";
+import { PackageHandoffStage } from "./components/package-stage";
 import {
   ReadinessCommandPanel,
-  ReadinessVerdictPanel
 } from "./components/readiness-panels";
-import { EdgeRuntimeMissionPanel } from "./components/runtime-mission";
 import {
-  EdgeExecutionContractPanel,
   EdgeOperatorCommandPanel
 } from "./components/runtime-execution-contract";
 import { EdgeRuntimeWorkbench } from "./components/runtime-workbench";
@@ -1499,68 +1492,39 @@ function executePendingReadinessAction(): void {
       ) : null}
 
       {activeHubStage === "package" ? (
-        <div className="stage-stack" data-testid="hub-stage-package">
-          <EdgePackagePlanPanel
-            canStageDeploy={canStageMissionPackage}
-            manifest={missionPackageManifest}
-            readinessVerdict={readinessVerdict}
-            workflow={edgeProofWorkflow}
-            onCopyManifest={copyMissionPackageManifest}
-            onDownloadPackage={downloadMissionPackageArtifact}
-            onGoDeploy={() => navigateHubStage("deploy")}
-            onPlanPackage={planMissionPackageArtifact}
-            onStageDeploy={stageMissionPackageRollout}
-          />
-          <MissionPackageDownloadHandoffCard
-            handoff={lastMissionPackageHandoff}
-            manifest={missionPackageManifest}
-          />
-
-          <details className="package-verification-drawer" data-testid="package-advanced-verification">
-            <summary>
-              <span className="package-verification-summary-copy">
-                <span className="section-kicker">Advanced verification</span>
-                <strong>Proof, readiness, and execution contract</strong>
-                <small>Open when an operator needs to inspect why this package can or cannot deploy.</small>
-              </span>
-              <Badge value={readinessVerdict.label} />
-            </summary>
-
-            <div className="package-verification-stack">
-              <ReadinessVerdictPanel verdict={readinessVerdict} onAction={handleReadinessAction} />
-
-              <EdgeRuntimeMissionPanel mission={edgeRuntimeMission} />
-
-              <EdgeProofPanel
-                componentDigests={edgeProofComponentDigests}
-                disabled={loading}
-                handoff={lastEdgeProofHandoff}
-                proof={lastEdgeProof}
-                trace={edgeProofTrace}
-                workflow={edgeProofWorkflow}
-                onGenerate={generateEdgeProofArtifact}
-                onDownload={downloadEdgeProofArtifact}
-                onCopy={(label, command) => void copyCommand(label, command)}
-              />
-
-              <EdgeExecutionContractPanel
-                device={selectedDevice}
-                edgeRuntimeFit={edgeRuntimeFit}
-                edgeExecutionContract={edgeExecutionContract}
-                model={selectedModel}
-                readiness={scopedReadiness}
-                readinessVerdict={readinessVerdict}
-                resourceEnvelopeFit={resourceEnvelopeFit}
-                runtime={selectedRuntime}
-                runtimeDecision={runtimeDecision}
-                runtimeFitDisplay={runtimeFitDisplay}
-                runtimeValidation={selectedRuntimeValidation}
-                onCopyRemediation={(label, command) => void copyCommand(label, command)}
-                onSelectRuntimeTarget={(runtimeTargetIdValue) => setSelectedRuntimeId(runtimeTargetIdValue)}
-              />
-            </div>
-          </details>
-        </div>
+        <PackageHandoffStage
+          canStageMissionPackage={canStageMissionPackage}
+          componentDigests={edgeProofComponentDigests}
+          disabled={loading}
+          edgeExecutionContract={edgeExecutionContract}
+          edgeProofHandoff={lastEdgeProofHandoff}
+          edgeRuntimeFit={edgeRuntimeFit}
+          manifest={missionPackageManifest}
+          missionPackageHandoff={lastMissionPackageHandoff}
+          proof={lastEdgeProof}
+          readiness={scopedReadiness}
+          readinessVerdict={readinessVerdict}
+          resourceEnvelopeFit={resourceEnvelopeFit}
+          runtimeDecision={runtimeDecision}
+          runtimeFitDisplay={runtimeFitDisplay}
+          runtimeMission={edgeRuntimeMission}
+          selectedDevice={selectedDevice}
+          selectedModel={selectedModel}
+          selectedRuntime={selectedRuntime}
+          selectedRuntimeValidation={selectedRuntimeValidation}
+          trace={edgeProofTrace}
+          workflow={edgeProofWorkflow}
+          onCopyCommand={(label, command) => void copyCommand(label, command)}
+          onCopyManifest={copyMissionPackageManifest}
+          onDownloadEdgeProof={downloadEdgeProofArtifact}
+          onDownloadPackage={downloadMissionPackageArtifact}
+          onGenerateEdgeProof={generateEdgeProofArtifact}
+          onGoDeploy={() => navigateHubStage("deploy")}
+          onPlanPackage={planMissionPackageArtifact}
+          onReadinessAction={handleReadinessAction}
+          onSelectRuntimeTarget={(runtimeTargetIdValue) => setSelectedRuntimeId(runtimeTargetIdValue)}
+          onStageDeploy={stageMissionPackageRollout}
+        />
       ) : null}
 
       {pendingReadinessAction ? (
