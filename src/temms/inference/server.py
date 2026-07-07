@@ -3956,6 +3956,12 @@ def _mission_package_stage_request_body(
 
     stage_gate = _mission_package_stage_gate(package_plan)
     _verify_mission_package_stage_integrity(package_plan, deployment_intent)
+    deployment_rollout_id = str(deployment_intent.get("rollout_id") or "")
+    command_rollout_id = str(command_body.get("rollout_id") or "")
+    if not deployment_rollout_id or not command_rollout_id:
+        raise ValueError("mission package deployment intent requires rollout_id")
+    if deployment_rollout_id != command_rollout_id:
+        raise ValueError("mission package deployment intent rollout_id mismatch")
 
     selection = (
         package_plan.get("selection")

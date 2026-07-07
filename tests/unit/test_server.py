@@ -2392,6 +2392,35 @@ ddil:
         assert failed_gate_stage_response.status_code == 400
         assert "proof gate must pass" in failed_gate_stage_response.json()["detail"]
 
+        missing_rollout_id_package = json.loads(json.dumps(mission_package_download))
+        missing_rollout_deployment_intent = missing_rollout_id_package[
+            "deployment_intent"
+        ]
+        missing_rollout_deployment_intent.pop("rollout_id", None)
+        missing_rollout_deployment_intent["command"]["body"].pop("rollout_id", None)
+        missing_rollout_component_digests = dict(
+            missing_rollout_id_package["component_digests"]
+        )
+        missing_rollout_component_digests["deployment_intent_sha256"] = (
+            canonical_json_hash(missing_rollout_deployment_intent)
+        )
+        missing_rollout_id_package["component_digests"] = (
+            missing_rollout_component_digests
+        )
+        missing_rollout_integrity = dict(missing_rollout_id_package["integrity"])
+        unsigned_missing_rollout_package = dict(missing_rollout_id_package)
+        unsigned_missing_rollout_package.pop("integrity", None)
+        missing_rollout_integrity["payload_sha256"] = canonical_json_hash(
+            unsigned_missing_rollout_package
+        )
+        missing_rollout_id_package["integrity"] = missing_rollout_integrity
+        missing_rollout_stage_response = hub_ui_client.post(
+            "/v1/hub/mission-package/stage",
+            json={"mission_package": missing_rollout_id_package},
+        )
+        assert missing_rollout_stage_response.status_code == 400
+        assert "requires rollout_id" in missing_rollout_stage_response.json()["detail"]
+
         mission_package_stage_response = hub_ui_client.post(
             "/v1/hub/mission-package/stage",
             json={
