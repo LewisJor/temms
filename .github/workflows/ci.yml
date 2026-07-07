@@ -184,6 +184,7 @@ jobs:
       - name: Start TEMMS compose stack
         env:
           MLFLOW_HOST_PORT: "5001"
+          TEMMS_EXTRAS: inference
         run: docker compose up --build -d
 
       - name: Run compose smoke checks

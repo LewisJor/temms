@@ -37,7 +37,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        TEMMS_EXTRAS: sim
+        TEMMS_EXTRAS: ${TEMMS_EXTRAS:-sim}
     container_name: temms-daemon
     ports:
       - "8080:8080"
