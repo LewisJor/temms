@@ -986,3 +986,36 @@ export function isSigned(pkg: HubPackage): boolean {
   const validation = asRecord(asRecord(pkg.metadata).validation);
   return validation.signature_verified === true;
 }
+
+export function runtimeFitDisplayFor(
+  readiness: DeploymentReadiness | undefined,
+  fallback: EdgeRuntimeFit,
+  runtime: RuntimeTarget | undefined
+): RuntimeFitDisplay {
+  const runtimeFit = asRecord(readiness?.runtime_fit);
+  const score = numberOf(runtimeFit.score);
+  const tier = stringOf(runtimeFit.tier, "").replace(/_/g, " ");
+  const detail = stringOf(runtimeFit.detail, fallback.detail);
+  const runtimeId = stringOf(runtimeFit.runtime_target_id, runtime ? runtimeTargetId(runtime) : "");
+  if (score === undefined) {
+    return {
+      ...fallback,
+      tileDetail: runtimeId ? `${fallback.label} on ${runtimeId}` : fallback.detail
+    };
+  }
+  const label = tier ? `${score}/100 ${tier}` : `${score}/100`;
+  return {
+    label,
+    detail,
+    tone: runtimeFitTone(runtimeFit, fallback.tone),
+    failures: fallback.failures,
+    tileDetail: runtimeId ? `${label} on ${runtimeId}` : label
+  };
+}
+
+function runtimeFitTone(runtimeFit: Record<string, unknown>, fallback: GateTone): GateTone {
+  const tier = stringOf(runtimeFit.tier, "");
+  if (tier === "blocked") return "bad";
+  if (tier === "needs_evidence") return "warn";
+  return numberOf(runtimeFit.score) !== undefined ? "good" : fallback;
+}
