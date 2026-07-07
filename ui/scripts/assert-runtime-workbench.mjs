@@ -205,6 +205,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "Manual controls",
   "Advanced intake",
   "operator:mission-package-workbench",
+  "buildMissionPackageManifest",
   "buildMissionPackagePlanRequest",
   "buildMissionPackageStageStatus",
   "missionPackageStageStatus",
@@ -377,6 +378,14 @@ const bundledMissionPackage = await build({
 const missionPackageModule = await import(
   `data:text/javascript;base64,${Buffer.from(bundledMissionPackage.outputFiles[0].text).toString("base64")}`
 );
+const modelFixture = {
+  format: "onnx",
+  id: "model-yolov8-lowlight-001",
+  maxLatencyP95Ms: 95,
+  minThroughputIps: 20,
+  name: "YOLOv8 lowlight",
+  packageId: "pkg-vision-models-20240115"
+};
 const planRequestFixture = missionPackageModule.buildMissionPackagePlanRequest({
   draft: {
     ...missionDraftFixture,
@@ -418,6 +427,21 @@ Object.entries(expectedPlanRequestFields).forEach(([key, value]) => {
 if (!String(planRequestFixture.mission_yaml || "").includes("temms-edge-mission/v1")) {
   throw new Error("mission package plan request should preserve source mission YAML");
 }
+const manifestFixture = missionPackageModule.buildMissionPackageManifest({
+  device: { device_id: "edge-rpi5" },
+  draft: missionDraftFixture,
+  model: modelFixture,
+  runtime: { runtime_target_id: "temms-rpi5-tflite" }
+});
+if (manifestFixture.slo?.latency_budget_ms !== 95 || manifestFixture.slo?.min_throughput_ips !== 20) {
+  throw new Error("mission package manifest should preserve numeric SLO values");
+}
+if (manifestFixture.model_handling?.confidence_threshold !== 0.7) {
+  throw new Error("mission package manifest should preserve numeric confidence threshold");
+}
+if (manifestFixture.selection?.runtime_target_id !== "temms-rpi5-tflite") {
+  throw new Error("mission package manifest should bind selected runtime target");
+}
 const invalidNumberPlanRequest = missionPackageModule.buildMissionPackagePlanRequest({
   draft: {
     ...missionDraftFixture,
@@ -432,14 +456,24 @@ const invalidNumberPlanRequest = missionPackageModule.buildMissionPackagePlanReq
     throw new Error(`mission package plan request should omit non-finite ${key}`);
   }
 });
-const modelFixture = {
-  format: "onnx",
-  id: "model-yolov8-lowlight-001",
-  maxLatencyP95Ms: 95,
-  minThroughputIps: 20,
-  name: "YOLOv8 lowlight",
-  packageId: "pkg-vision-models-20240115"
-};
+const invalidNumberManifest = missionPackageModule.buildMissionPackageManifest({
+  device: undefined,
+  draft: {
+    ...missionDraftFixture,
+    confidenceThreshold: "auto",
+    latencyBudgetMs: "",
+    throughputMinIps: "fast"
+  },
+  model: undefined,
+  runtime: undefined
+});
+if (
+  invalidNumberManifest.slo?.latency_budget_ms !== undefined ||
+  invalidNumberManifest.slo?.min_throughput_ips !== undefined ||
+  invalidNumberManifest.model_handling?.confidence_threshold !== undefined
+) {
+  throw new Error("mission package manifest should omit blank or non-finite numeric controls");
+}
 const readyStageOptions = {
   ddilDetail: "ready for replay",
   deadLetteredOperations: 0,

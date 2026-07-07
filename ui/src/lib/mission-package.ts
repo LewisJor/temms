@@ -61,9 +61,9 @@ export function buildMissionPackageManifest({
   model: ModelRecord | undefined;
   runtime: RuntimeTarget | undefined;
 }): JsonObject {
-  const latencyBudget = Number(draft.latencyBudgetMs);
-  const throughputMin = Number(draft.throughputMinIps);
-  const confidenceThreshold = Number(draft.confidenceThreshold);
+  const latencyBudget = optionalNumber(draft.latencyBudgetMs);
+  const throughputMin = optionalNumber(draft.throughputMinIps);
+  const confidenceThreshold = optionalNumber(draft.confidenceThreshold);
   return {
     schema_version: "temms-edge-mission-package/v1",
     mission: {
@@ -79,14 +79,12 @@ export function buildMissionPackageManifest({
       device_id: device ? deviceId(device) : ""
     },
     slo: {
-      latency_budget_ms: Number.isFinite(latencyBudget) ? latencyBudget : draft.latencyBudgetMs,
-      min_throughput_ips: Number.isFinite(throughputMin) ? throughputMin : draft.throughputMinIps
+      latency_budget_ms: latencyBudget,
+      min_throughput_ips: throughputMin
     },
     model_handling: {
       switch_policy: draft.switchPolicy,
-      confidence_threshold: Number.isFinite(confidenceThreshold)
-        ? confidenceThreshold
-        : draft.confidenceThreshold,
+      confidence_threshold: confidenceThreshold,
       fallback_model_id: draft.fallbackModelId || "auto"
     },
     ddil: {
