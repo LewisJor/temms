@@ -172,6 +172,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "scrollIntoView",
   "showProductStage",
   "MissionWorkflowCockpit",
+  "buildHubStages",
   "mission-workflow-cockpit",
   "operator-path-rail",
   "operator-path-step-active",

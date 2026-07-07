@@ -82,6 +82,7 @@ import {
   missionPackageRolloutId
 } from "./lib/mission-package";
 import {
+  buildHubStages,
   buildReadinessVerdict,
   ddilStatusDetail,
   edgeReadinessCommandReason,
@@ -155,7 +156,6 @@ import type {
   EdgeRuntimeMission,
   GateTone,
   HubStage,
-  HubStageItem,
   MissionWorkflowSignal,
   ModelRecord,
   ReadinessGate,
@@ -455,71 +455,26 @@ export function App(): JSX.Element {
     missionReady,
     plan: missionPackagePlan
   });
-  const hubStages: HubStageItem[] = [
-    {
-      id: "mission",
-      label: "Mission",
-      value: missionReady ? (missionDraft.yaml ? "YAML loaded" : "goal defined") : "define goal",
-      detail: missionReady ? missionDraft.goal || "mission YAML ready" : "goal or mission YAML",
-      decision: "Describe the field objective or paste the mission YAML.",
-      outcome: "Mission intent is ready to bind to model, runtime, handling, and package evidence.",
-      tone: missionReady ? "good" : "warn"
-    },
-    {
-      id: "model",
-      label: "Model Plan",
-      value: selectedModel?.name ?? "select model",
-      detail: selectedModel ? `${selectedModel.format}; ${formatPerformanceSlo(selectedModel)}` : "choose candidate models",
-      decision: "Choose the model package that should satisfy the mission.",
-      outcome: "A signed model candidate is selected for runtime fit and edge deployment.",
-      tone: selectedModel ? "good" : "warn"
-    },
-    {
-      id: "runtime",
-      label: "Runtime Fit",
-      value: selectedRuntime ? runtimeTargetId(selectedRuntime) : "select runtime",
-      detail: runtimeFitDisplay.detail,
-      decision: "Pick the on-device runtime target with proof of compatibility and SLO fit.",
-      outcome: "The model has a concrete runtime target and capability proof path.",
-      tone: selectedRuntime ? runtimeFitDisplay.tone : "warn"
-    },
-    {
-      id: "handling",
-      label: "Sensor Handling",
-      value: missionDraft.sensor || "sensor pending",
-      detail: `${missionDraft.switchPolicy.replace(/_/g, " ")}; fallback ${missionDraft.fallbackModelId || "auto"}; ${missionDraft.ddilMode.replace(/_/g, " ")}`,
-      decision: "Set sensor input, confidence switching, fallback model, and DDIL behavior.",
-      outcome: "The edge daemon knows when to run, switch, queue, or require review.",
-      tone: missionDraft.sensor && missionDraft.slot ? "good" : "warn"
-    },
-    {
-      id: "package",
-      label: "Package Handoff",
-      value: missionPackageStageStatus.value,
-      detail: missionPackageStageStatus.detail,
-      decision: "Hash the mission, model, runtime plan, and handling policy into one deployable handoff.",
-      outcome: "A signed mission package and deployment intent can be staged on the edge device.",
-      tone: missionPackageStageStatus.tone
-    },
-    {
-      id: "deploy",
-      label: "Edge Deploy",
-      value: latestRollout?.state ?? (missionRollouts.length ? `${missionRollouts.length} rollouts` : "not assigned"),
-      detail: replayBlockedOperations ? `${replayBlockedOperations} DDIL replay blocked` : rolloutDetail,
-      decision: "Stage the planned mission package to the selected edge device or rollout batch.",
-      outcome: "The edge deployment is assigned, approved, activated, or blocked with explicit evidence.",
-      tone: replayBlockedOperations ? "bad" : latestRollout?.state === "failed" ? "bad" : latestRollout ? "good" : "warn"
-    },
-    {
-      id: "field",
-      label: "Field Ops",
-      value: String(evidenceValue || `${snapshot.evidenceBundles.length} bundles`),
-      detail: offlineMode ? `DDIL offline; ${ddilDetail}` : evidenceDetail,
-      decision: "Monitor evidence, DDIL queues, rollback, and runtime repair while the mission runs.",
-      outcome: "Operators can prove what happened and recover safely under connectivity loss.",
-      tone: replayBlockedOperations || deadLetteredOperations ? "bad" : missionProofComplete || proofEvents ? "good" : "warn"
-    }
-  ];
+  const hubStages = buildHubStages({
+    ddilDetail,
+    deadLetteredOperations,
+    evidenceBundleCount: snapshot.evidenceBundles.length,
+    evidenceDetail,
+    evidenceValue,
+    latestRollout,
+    missionDraft,
+    missionPackageStageStatus,
+    missionProofComplete,
+    missionReady,
+    missionRolloutCount: missionRollouts.length,
+    offlineMode,
+    proofEvents,
+    replayBlockedOperations,
+    rolloutDetail,
+    runtimeFitDisplay,
+    selectedModel,
+    selectedRuntime
+  });
   const showProductStage =
     activeHubStage === "model" || activeHubStage === "deploy" || activeHubStage === "field";
   const missionPackageDeploymentIntent = asRecord(missionPackageManifest.deployment_intent);
