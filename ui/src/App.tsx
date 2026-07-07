@@ -88,6 +88,32 @@ import type {
   RuntimeTarget,
   Toast
 } from "./types";
+import type {
+  EdgeMissionMetric,
+  EdgeProofComponentDigestStatus,
+  EdgeProofTraceStatus,
+  EdgeProofWorkflow,
+  EdgeRuntimeFit,
+  EdgeRuntimeMission,
+  GateTone,
+  HubStage,
+  HubStageItem,
+  HubStageRunbook,
+  HubStageRunbookAction,
+  MissionPackageStageStatus,
+  MissionWorkflowSignal,
+  ModelRecord,
+  ReadinessGate,
+  ReadinessGateAction,
+  ReadinessVerdict,
+  RuntimeFitDisplay,
+  RuntimeRemediationCommand,
+  RuntimeRemediationContext,
+  RuntimeRepairProof,
+  RuntimeWorkbenchRow,
+  RuntimeWorkbenchTraceMetric,
+  WorkflowTarget
+} from "./lib/workbench-types";
 
 const emptySnapshot: HubSnapshot = {
   devices: [],
@@ -102,253 +128,6 @@ const emptySnapshot: HubSnapshot = {
 
 const DEFAULT_BENCHMARK_STALE_SECONDS = 86400;
 const EDGE_PROOF_MAX_AGE_SECONDS = 900;
-
-interface ModelRecord {
-  id: string;
-  name: string;
-  version: string;
-  format: string;
-  packageId: string;
-  packageName: string;
-  packageVersion: string;
-  packagePromotion: string;
-  profiles: string[];
-  runtimes: string[];
-  providers: string[];
-  latencyMs?: number;
-  throughputIps?: number;
-  maxLatencyP95Ms?: number;
-  minThroughputIps?: number;
-  maxBenchmarkAgeSeconds?: number;
-  minMemoryAvailableMb?: number;
-  minStorageAvailableMb?: number;
-  maxTemperatureC?: number;
-  minBatteryPercent?: number;
-  requiredPowerSource?: string;
-  artifactSizeMb?: number;
-  benchmarkDeviceId?: string;
-  benchmarkRuntimeId?: string;
-  benchmarkedAt?: string;
-  signed: boolean;
-  source: string;
-  updatedAt?: string;
-}
-
-type GateTone = "good" | "warn" | "bad" | "neutral";
-
-interface EdgeRuntimeFit {
-  label: string;
-  detail: string;
-  tone: GateTone;
-  failures: string[];
-}
-
-interface RuntimeFitDisplay extends EdgeRuntimeFit {
-  tileDetail: string;
-}
-
-interface EdgeMissionMetric {
-  label: string;
-  value: string;
-  detail: string;
-  tone: GateTone;
-}
-
-interface EdgeRuntimeMission {
-  headline: string;
-  detail: string;
-  tone: GateTone;
-  path: string;
-  metrics: EdgeMissionMetric[];
-  focus: string[];
-}
-
-interface EdgeProofWorkflow {
-  status: string;
-  detail: string;
-  tone: GateTone;
-  proofPath: string;
-  gatePolicy: string;
-  attestation: string;
-  capabilityLock: string;
-  capabilityLockDetail: string;
-  capabilityLockTone: GateTone;
-  runtimeFit: string;
-  generateCommand: string;
-  verifyCommand: string;
-  verifyJsonCommand: string;
-  missing: string[];
-}
-
-interface EdgeProofTraceStatus {
-  commandCount: number;
-  detail: string;
-  errors: string[];
-  rowCount: number;
-  schema: string;
-  status: "consistent" | "mismatch" | "missing" | "not_generated" | "stale";
-  tone: GateTone;
-  value: string;
-}
-
-interface EdgeProofComponentDigestStatus {
-  detail: string;
-  digestCount: number;
-  digests: Array<{ key: string; label: string; value: string }>;
-  errors: string[];
-  schema: string;
-  status: "consistent" | "mismatch" | "retained" | "missing" | "not_generated" | "stale" | "verifying";
-  tone: GateTone;
-  value: string;
-}
-
-interface RuntimeWorkbenchRow {
-  actionKind: string;
-  actionLabel: string;
-  actionRequiresEdge: boolean;
-  benchmark: string;
-  best: boolean;
-  capabilitySha256: string;
-  compatible: boolean;
-  detail: string;
-  inventory: string;
-  lane: string;
-  penalties: string[];
-  rank?: number;
-  reasons: string[];
-  remediation: JsonObject;
-  score?: number;
-  selected: boolean;
-  status: string;
-  target: RuntimeTarget;
-  targetId: string;
-  tone: GateTone;
-  traceMetrics: RuntimeWorkbenchTraceMetric[];
-  validated: boolean;
-}
-
-interface RuntimeWorkbenchTraceMetric {
-  detail: string;
-  label: string;
-  tone: GateTone;
-  value: string;
-}
-
-interface RuntimeRepairProof {
-  actor: string;
-  benchmarkId: string;
-  bestRuntime: string;
-  blockedTargetCount?: number;
-  capabilityLockStatus: string;
-  capabilitySha256: string;
-  detail: string;
-  eligibleTargetCount?: number;
-  headline: string;
-  occurredAt: string;
-  operation?: Record<string, unknown>;
-  previousRuntime: string;
-  proofStatus: string;
-  reason: string;
-  runtimeFitScore?: number;
-  selectedIsBest?: boolean;
-  selectedRuntime: string;
-  source: "pending" | "replayed" | "mission";
-  status: "repair_available" | "proved";
-  targetCount?: number;
-  targetSelectionStatus: string;
-  tone: GateTone;
-  validationId: string;
-  workbenchSchema: string;
-}
-
-interface RuntimeRemediationContext {
-  packageId: string;
-  modelId: string;
-  deviceId: string;
-  slot: string;
-}
-
-interface RuntimeRemediationCommand {
-  action: string;
-  label: string;
-  command: string;
-  note: string;
-  edgeRun: boolean;
-}
-
-type WorkflowTarget = "model" | "deployment" | "plans" | "rollouts" | "ddil" | "evidence" | "assets";
-type HubStage = "mission" | "model" | "runtime" | "handling" | "package" | "deploy" | "field";
-
-interface HubStageItem {
-  id: HubStage;
-  label: string;
-  value: string;
-  detail: string;
-  decision: string;
-  outcome: string;
-  tone: GateTone;
-}
-
-interface HubStageRunbookAction {
-  label: string;
-  detail: string;
-  disabled?: boolean;
-  icon: "activity" | "arrow" | "cpu" | "download" | "package" | "refresh" | "rocket" | "shield";
-  onClick: () => void;
-  variant?: "primary" | "secondary";
-}
-
-interface HubStageRunbook {
-  objective: string;
-  ready: string;
-  risk: string;
-  status: string;
-  tone: GateTone;
-  actions: HubStageRunbookAction[];
-}
-
-interface MissionWorkflowSignal {
-  label: string;
-  value: string;
-  detail: string;
-  tone: GateTone;
-}
-
-interface MissionPackageStageStatus {
-  detail: string;
-  downloaded: boolean;
-  gateStatus: string;
-  planned: boolean;
-  stageable: boolean;
-  tone: GateTone;
-  value: string;
-}
-
-interface ReadinessGateAction {
-  id: string;
-  label: string;
-  kind: string;
-  gateId: string;
-  refs?: JsonObject;
-  command?: DeploymentReadinessCommand;
-}
-
-interface ReadinessGate {
-  label: string;
-  state: string;
-  detail: string;
-  tone: GateTone;
-  actions?: ReadinessGateAction[];
-}
-
-interface ReadinessVerdict {
-  label: string;
-  headline: string;
-  detail: string;
-  nextAction: string;
-  tone: GateTone;
-  gates: ReadinessGate[];
-}
 
 export function App(): JSX.Element {
   const [snapshot, setSnapshot] = useState<HubSnapshot>(emptySnapshot);
