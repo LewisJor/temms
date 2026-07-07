@@ -1,8 +1,8 @@
 """
-TEMMS Web UI routes using FastAPI + Jinja2 + HTMX.
+TEMMS Web UI routes using FastAPI, Jinja2, HTMX, and the compiled React Hub app.
 
-Provides a lightweight dashboard for monitoring and controlling the TEMMS daemon.
-No Node.js or frontend build step required — HTMX and Tailwind CSS loaded via CDN.
+Serves the Mission Package Workbench first, with legacy agent diagnostics only
+for standalone/debug deployments.
 """
 
 import json
@@ -10,22 +10,59 @@ import time
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
-from datetime import datetime
 
 from fastapi import APIRouter, Request, Depends, Form, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 logger = logging.getLogger(__name__)
 
 # Templates directory (relative to this file)
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+STATIC_DIR = Path(__file__).parent / "static"
+HUB_STATIC_DIR = STATIC_DIR / "hub"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
 def _template_response(request: Request, name: str, context: Dict[str, Any]) -> HTMLResponse:
     context.setdefault("request", request)
     return templates.TemplateResponse(request, name, context)
+
+
+def _hub_app_assets() -> Dict[str, list[str]]:
+    """Return Vite-built Hub app assets, if the React bundle has been built."""
+    manifest_path = HUB_STATIC_DIR / ".vite" / "manifest.json"
+    if not manifest_path.exists():
+        return {"scripts": [], "styles": []}
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.exception("Could not read Hub UI manifest")
+        return {"scripts": [], "styles": []}
+
+    entry = manifest.get("index.html") if isinstance(manifest, dict) else None
+    if not isinstance(entry, dict):
+        return {"scripts": [], "styles": []}
+    scripts = [entry["file"]] if isinstance(entry.get("file"), str) else []
+    styles = entry.get("css") if isinstance(entry.get("css"), list) else []
+    return {
+        "scripts": [f"/ui/assets/hub/{path}" for path in scripts],
+        "styles": [f"/ui/assets/hub/{path}" for path in styles if isinstance(path, str)],
+    }
+
+
+def _hub_redirect_if_configured(state) -> Optional[RedirectResponse]:
+    """Keep Hub-enabled demos on the product cockpit instead of legacy diagnostics."""
+    if getattr(state, "hub_lite", None) is None:
+        return None
+    return RedirectResponse(url="/ui/hub", status_code=307)
+
+
+def _require_ui_role(request: Request, state, *roles: str) -> None:
+    """Apply optional API RBAC roles to UI write handlers."""
+    from temms.inference.server import require_rbac_role
+
+    require_rbac_role(request, state, *roles)
 
 
 def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
@@ -44,22 +81,37 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         [Depends(control_auth_dependency)] if control_auth_dependency is not None else []
     )
 
-    # ---- Dashboard ----
+    # ---- Hub app and standalone diagnostic dashboard ----
+
+    @router.get("/assets/hub/{asset_path:path}")
+    async def hub_app_asset(asset_path: str):
+        """Serve compiled Vite assets for the React Hub app."""
+        candidate = (HUB_STATIC_DIR / asset_path).resolve()
+        static_root = HUB_STATIC_DIR.resolve()
+        if not candidate.is_file() or static_root not in candidate.parents:
+            raise HTTPException(status_code=404, detail="Hub UI asset not found")
+        headers = {}
+        if asset_path.startswith("assets/"):
+            headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return FileResponse(candidate, headers=headers)
 
     @router.get("/", response_class=HTMLResponse)
     async def dashboard(request: Request, state=Depends(get_state_func)):
         """Main UI entrypoint.
 
-        Hub-configured deployments land on the guided operator flow; standalone
-        agent installs keep the legacy technical dashboard as their root view.
+        Hub-configured deployments land on the React Hub. Standalone agent
+        installs keep the technical dashboard as their root view.
         """
         if getattr(state, "hub_lite", None) is not None:
-            return _template_response(request, "operate.html", _operate_ui_context(request, state))
+            return RedirectResponse(url="/ui/hub", status_code=307)
         return _template_response(request, "dashboard.html", _dashboard_ui_context(request, state))
 
     @router.get("/dashboard", response_class=HTMLResponse)
     async def dashboard_page(request: Request, state=Depends(get_state_func)):
         """Technical dashboard with system overview."""
+        hub_redirect = _hub_redirect_if_configured(state)
+        if hub_redirect is not None:
+            return hub_redirect
         return _template_response(request, "dashboard.html", _dashboard_ui_context(request, state))
 
     # ---- Slots ----
@@ -67,6 +119,9 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
     @router.get("/slots", response_class=HTMLResponse)
     async def slots_page(request: Request, state=Depends(get_state_func)):
         """List all slots."""
+        hub_redirect = _hub_redirect_if_configured(state)
+        if hub_redirect is not None:
+            return hub_redirect
         slots = state.slot_manager.list_slots()
         return _template_response(
             request,
@@ -84,6 +139,9 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         state=Depends(get_state_func),
     ):
         """Slot detail with override controls."""
+        hub_redirect = _hub_redirect_if_configured(state)
+        if hub_redirect is not None:
+            return hub_redirect
         slot = state.slot_manager.get_slot(slot_name)
         if slot is None:
             raise HTTPException(status_code=404, detail=f"Slot not found: {slot_name}")
@@ -122,6 +180,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         state=Depends(get_state_func),
     ):
         """Set operator override on a slot (HTMX form submission)."""
+        _require_ui_role(request, state, "operator")
         # Find model by name
         model = state.model_cache.find_model(model_name)
         if model is None:
@@ -130,6 +189,20 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
             )
 
         try:
+            trigger_detail = f"UI override: {reason}" if reason else "UI override"
+            conditions = state.condition_store.get_snapshot()
+            activation_preflight = None
+            controller = getattr(state, "controller", None)
+            controller_preflight = getattr(controller, "activation_preflight", None)
+            if callable(controller_preflight):
+                activation_preflight = controller_preflight(
+                    slot_name=slot_name,
+                    model_id=model.id,
+                    trigger_type="operator",
+                    trigger_detail=trigger_detail,
+                    conditions=conditions,
+                )
+
             # Load model
             await state.inference_runtime.load_model(slot_name, model.id)
 
@@ -142,21 +215,24 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
             )
 
             # Activate
+            audit_metadata = {
+                "model_id": model.id,
+                "model_name": model.name,
+                "model_version": model.version,
+                "model_format": model.format.value,
+                "model_sha256": model.sha256,
+                "package_id": model.package_id,
+                "provenance": model.metadata.get("provenance", {}),
+            }
+            if activation_preflight:
+                audit_metadata["activation_preflight"] = activation_preflight
             state.slot_manager.activate_model(
                 slot_name=slot_name,
                 model_id=model.id,
                 trigger_type="operator",
-                trigger_detail=f"UI override: {reason}" if reason else "UI override",
-                conditions=state.condition_store.get_snapshot(),
-                audit_metadata={
-                    "model_id": model.id,
-                    "model_name": model.name,
-                    "model_version": model.version,
-                    "model_format": model.format.value,
-                    "model_sha256": model.sha256,
-                    "package_id": model.package_id,
-                    "provenance": model.metadata.get("provenance", {}),
-                },
+                trigger_detail=trigger_detail,
+                conditions=conditions,
+                audit_metadata=audit_metadata,
             )
 
             return HTMLResponse(f'<div class="text-green-600 p-2">Override set: {model_name}</div>')
@@ -174,6 +250,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         state=Depends(get_state_func),
     ):
         """Clear operator override on a slot."""
+        _require_ui_role(request, state, "operator")
         state.slot_manager.clear_operator_override(slot_name)
         return HTMLResponse('<div class="text-green-600 p-2">Override cleared</div>')
 
@@ -182,6 +259,9 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
     @router.get("/conditions", response_class=HTMLResponse)
     async def conditions_page(request: Request, state=Depends(get_state_func)):
         """List all conditions with injection form."""
+        hub_redirect = _hub_redirect_if_configured(state)
+        if hub_redirect is not None:
+            return hub_redirect
         conditions = list(state.condition_store.get_all().values())
         return _template_response(
             request,
@@ -204,6 +284,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         state=Depends(get_state_func),
     ):
         """Inject a condition value (HTMX form submission)."""
+        _require_ui_role(request, state, "operator")
         # Try to parse value as number
         parsed_value: Any = value
         try:
@@ -235,6 +316,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         state=Depends(get_state_func),
     ):
         """Clear all operator condition overrides."""
+        _require_ui_role(request, state, "operator")
         count = state.condition_store.clear_operator_overrides()
         return HTMLResponse(
             f'<div class="text-green-600 p-2">Cleared {count} operator overrides</div>'
@@ -249,6 +331,9 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         state=Depends(get_state_func),
     ):
         """Decision log."""
+        hub_redirect = _hub_redirect_if_configured(state)
+        if hub_redirect is not None:
+            return hub_redirect
         if slot:
             decisions = state.slot_manager.get_decision_log(slot, limit=50)
         else:
@@ -278,6 +363,9 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
     @router.get("/models", response_class=HTMLResponse)
     async def models_page(request: Request, state=Depends(get_state_func)):
         """List cached models."""
+        hub_redirect = _hub_redirect_if_configured(state)
+        if hub_redirect is not None:
+            return hub_redirect
         models = state.model_cache.list_models()
         return _template_response(
             request,
@@ -293,6 +381,9 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
     @router.get("/import", response_class=HTMLResponse)
     async def import_page(request: Request, state=Depends(get_state_func)):
         """Package import page."""
+        hub_redirect = _hub_redirect_if_configured(state)
+        if hub_redirect is not None:
+            return hub_redirect
         packages = state.model_cache.list_packages()
         return _template_response(
             request,
@@ -314,6 +405,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         state=Depends(get_state_func),
     ):
         """Import a package from the given path."""
+        _require_ui_role(request, state, "operator")
         from temms.core.package import PackageImporter
         from temms.core.signing import read_signing_key
 
@@ -358,25 +450,25 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         except Exception as e:
             return HTMLResponse(f'<div class="text-red-600 p-2">Import failed: {e}</div>')
 
-    # ---- Guided Operations ----
+    # ---- Legacy UI redirects ----
 
     @router.get("/operate", response_class=HTMLResponse)
-    async def operate_page(request: Request, state=Depends(get_state_func)):
-        """Guided model-to-edge workflow for the primary MVP operator path."""
+    async def legacy_operate_redirect(request: Request, state=Depends(get_state_func)):
+        """Redirect the retired guided workflow to the product Hub cockpit."""
         hub = getattr(state, "hub_lite", None)
         if hub is None:
             raise HTTPException(status_code=404, detail="Hub Lite is not configured")
 
-        return _template_response(request, "operate.html", _operate_ui_context(request, state))
+        return RedirectResponse(url="/ui/hub", status_code=307)
 
     @router.get("/runtimes", response_class=HTMLResponse)
-    async def runtime_catalog_page(request: Request, state=Depends(get_state_func)):
-        """Runtime/container catalog for edge simulation targets."""
+    async def legacy_runtime_catalog_redirect(request: Request, state=Depends(get_state_func)):
+        """Redirect the retired runtime catalog page to the product Hub cockpit."""
         hub = getattr(state, "hub_lite", None)
         if hub is None:
             raise HTTPException(status_code=404, detail="Hub Lite is not configured")
 
-        return _template_response(request, "runtime_catalog.html", _hub_ui_context(request, state))
+        return RedirectResponse(url="/ui/hub", status_code=307)
 
     # ---- Hub Lite Operator Console ----
 
@@ -387,7 +479,14 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         if hub is None:
             raise HTTPException(status_code=404, detail="Hub Lite is not configured")
 
-        return _template_response(request, "hub.html", _hub_ui_context(request, state))
+        return _template_response(
+            request,
+            "hub.html",
+            {
+                "request": request,
+                "hub_assets": _hub_app_assets(),
+            },
+        )
 
     @router.post(
         "/hub/devices/enroll",
@@ -403,6 +502,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         state=Depends(get_state_func),
     ):
         """Enroll a simulated edge device from the UI."""
+        _require_ui_role(request, state, "operator", "edge")
         hub = getattr(state, "hub_lite", None)
         if hub is None:
             return _ui_error("Hub Lite is not configured")
@@ -447,6 +547,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         state=Depends(get_state_func),
     ):
         """Register a package artifact in Hub Lite from the UI."""
+        _require_ui_role(request, state, "operator")
         hub = getattr(state, "hub_lite", None)
         if hub is None:
             return _ui_error("Hub Lite is not configured")
@@ -464,6 +565,46 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
             )
         except Exception as e:
             return _ui_error(f"Package registration failed: {e}")
+
+    @router.post(
+        "/hub/packages/{package_id}/promote",
+        response_class=HTMLResponse,
+        dependencies=write_dependencies,
+    )
+    async def ui_promote_hub_package(
+        request: Request,
+        package_id: str,
+        promotion_state: str = Form(...),
+        reason: str = Form("package lifecycle gate"),
+        actor: str = Form("operator:web-ui"),
+        state=Depends(get_state_func),
+    ):
+        """Promote a package through the Hub lifecycle from the UI."""
+        requested_state = promotion_state.lower().strip()
+        if requested_state == "approved":
+            _require_ui_role(request, state, "approver")
+        else:
+            _require_ui_role(request, state, "operator")
+        hub = getattr(state, "hub_lite", None)
+        if hub is None:
+            return _ui_error("Hub Lite is not configured")
+
+        try:
+            package = hub.promote_package(
+                package_id,
+                requested_state,
+                actor=actor,
+                reason=reason or "package lifecycle gate",
+            )
+            promotion = (
+                package.get("promotion") if isinstance(package.get("promotion"), dict) else {}
+            )
+            return _ui_success(
+                f"Promoted package {package_id} to {promotion.get('state')}",
+                refresh=True,
+            )
+        except Exception as e:
+            return _ui_error(f"Package promotion failed: {e}")
 
     @router.post(
         "/hub/mlflow/package",
@@ -486,6 +627,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         state=Depends(get_state_func),
     ):
         """Build a signed TEMMS package from an MLflow model URI."""
+        _require_ui_role(request, state, "operator")
         try:
             from temms.core.package_builder import build_package_from_mlflow
 
@@ -537,6 +679,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         state=Depends(get_state_func),
     ):
         """Register a BYO container runtime target from the UI."""
+        _require_ui_role(request, state, "operator")
         hub = getattr(state, "hub_lite", None)
         if hub is None:
             return _ui_error("Hub Lite is not configured")
@@ -603,6 +746,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         state=Depends(get_state_func),
     ):
         """Validate or preview package validation inside a runtime target container."""
+        _require_ui_role(request, state, "operator")
         hub = getattr(state, "hub_lite", None)
         if hub is None:
             return _ui_error("Hub Lite is not configured")
@@ -660,10 +804,12 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         request: Request,
         device_id: str = Form(...),
         package_id: str = Form(...),
+        model_id: str = Form(""),
         runtime_target_id: str = Form(""),
         state=Depends(get_state_func),
     ):
         """Preview rollout compatibility without creating an assignment."""
+        _require_ui_role(request, state, "operator")
         hub = getattr(state, "hub_lite", None)
         if hub is None:
             return _ui_error("Hub Lite is not configured")
@@ -673,10 +819,43 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
                 device_id=device_id,
                 package_id=package_id,
                 runtime_target_id=runtime_target_id or None,
+                model_id=model_id or None,
             )
             return _ui_compatibility_preview_result(result)
         except Exception as e:
             return _ui_error(f"Compatibility preview failed: {e}")
+
+    @router.post(
+        "/hub/compatibility/matrix",
+        response_class=HTMLResponse,
+        dependencies=write_dependencies,
+    )
+    async def ui_rollout_compatibility_matrix(
+        request: Request,
+        device_id: str = Form(""),
+        package_id: str = Form(""),
+        model_id: str = Form(""),
+        runtime_target_id: str = Form(""),
+        include_device_inventory: bool = Form(False),
+        state=Depends(get_state_func),
+    ):
+        """Render a fleet/package/runtime compatibility matrix."""
+        _require_ui_role(request, state, "operator")
+        hub = getattr(state, "hub_lite", None)
+        if hub is None:
+            return _ui_error("Hub Lite is not configured")
+
+        try:
+            result = hub.compatibility_matrix(
+                device_ids=[device_id] if device_id else None,
+                package_ids=[package_id] if package_id else None,
+                model_ids=[model_id] if model_id else None,
+                runtime_target_ids=[runtime_target_id] if runtime_target_id else None,
+                include_device_inventory=include_device_inventory,
+            )
+            return _ui_compatibility_matrix_result(result)
+        except Exception as e:
+            return _ui_error(f"Compatibility matrix failed: {e}")
 
     @router.post(
         "/hub/deployment-drafts/active",
@@ -693,6 +872,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         state=Depends(get_state_func),
     ):
         """Save the active operator deployment candidate."""
+        _require_ui_role(request, state, "operator")
         hub = getattr(state, "hub_lite", None)
         if hub is None:
             return _ui_error("Hub Lite is not configured")
@@ -722,34 +902,199 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         request: Request,
         device_id: str = Form(...),
         package_id: str = Form(...),
+        model_id: str = Form(""),
         slot: str = Form(...),
         rollout_id: str = Form(""),
         runtime_target_id: str = Form(""),
         require_runtime_validation: bool = Form(False),
+        require_approval: bool = Form(False),
         actor: str = Form("operator:web-ui"),
+        reason: str = Form("operator assigned rollout from Hub UI"),
         state=Depends(get_state_func),
     ):
         """Assign a rollout to a target device."""
+        _require_ui_role(request, state, "operator")
         hub = getattr(state, "hub_lite", None)
         if hub is None:
             return _ui_error("Hub Lite is not configured")
 
         try:
+            _enforce_ui_rollout_package_policy(state, hub, package_id)
             rollout = hub.assign_rollout(
                 device_id=device_id,
                 package_id=package_id,
+                model_id=model_id or None,
                 slot=slot or None,
                 rollout_id=rollout_id or None,
                 runtime_target_id=runtime_target_id or None,
                 require_runtime_validation=require_runtime_validation,
+                require_approval=require_approval,
                 actor=actor,
+                reason=reason,
+            )
+            approval_note = " with approval gate" if require_approval else ""
+            message = (
+                f"Assigned rollout {rollout.get('rollout_id')} "
+                f"to {device_id}/{slot}{approval_note}"
             )
             return _ui_success(
-                f"Assigned rollout {rollout.get('rollout_id')} to {device_id}/{slot}",
+                message,
                 refresh=True,
             )
         except Exception as e:
             return _ui_error(f"Rollout assignment failed: {e}")
+
+    @router.post(
+        "/hub/rollout-plans",
+        response_class=HTMLResponse,
+        dependencies=write_dependencies,
+    )
+    async def ui_create_rollout_plan(
+        request: Request,
+        package_id: str = Form(...),
+        model_id: str = Form(""),
+        slot: str = Form("vision"),
+        runtime_target_id: str = Form(""),
+        batch_size: int = Form(1),
+        require_runtime_validation: bool = Form(False),
+        require_approval: bool = Form(False),
+        actor: str = Form("operator:web-ui"),
+        reason: str = Form("operator created rollout plan from Hub UI"),
+        state=Depends(get_state_func),
+    ):
+        """Create a coordinated rollout plan for all enrolled devices."""
+        _require_ui_role(request, state, "operator")
+        hub = getattr(state, "hub_lite", None)
+        if hub is None:
+            return _ui_error("Hub Lite is not configured")
+
+        try:
+            _enforce_ui_rollout_package_policy(state, hub, package_id)
+            devices = [device["device_id"] for device in hub.list_devices()]
+            plan = hub.create_rollout_plan(
+                package_id=package_id,
+                model_id=model_id or None,
+                device_ids=devices,
+                slot=slot or None,
+                runtime_target_id=runtime_target_id or None,
+                batch_size=batch_size,
+                require_runtime_validation=require_runtime_validation,
+                require_approval=require_approval,
+                actor=actor,
+                reason=reason,
+            )
+            counts = plan.get("counts") or {}
+            return _ui_success(
+                f"Created rollout plan {plan.get('plan_id')} "
+                f"({counts.get('pending', 0)} pending, {counts.get('blocked', 0)} blocked)",
+                refresh=True,
+            )
+        except Exception as e:
+            return _ui_error(f"Rollout plan creation failed: {e}")
+
+    @router.post(
+        "/hub/rollout-plans/{plan_id}/advance",
+        response_class=HTMLResponse,
+        dependencies=write_dependencies,
+    )
+    async def ui_advance_rollout_plan(
+        request: Request,
+        plan_id: str,
+        actor: str = Form("operator:web-ui"),
+        state=Depends(get_state_func),
+    ):
+        """Assign the next batch in a rollout plan."""
+        _require_ui_role(request, state, "operator")
+        hub = getattr(state, "hub_lite", None)
+        if hub is None:
+            return _ui_error("Hub Lite is not configured")
+
+        try:
+            plan = hub.advance_rollout_plan(plan_id, actor=actor)
+            counts = plan.get("counts") or {}
+            return _ui_success(
+                f"Advanced rollout plan {plan_id} "
+                f"({counts.get('assigned', 0)} assigned, {counts.get('pending', 0)} pending)",
+                refresh=True,
+            )
+        except Exception as e:
+            return _ui_error(f"Rollout plan advance failed: {e}")
+
+    @router.post(
+        "/hub/rollout-plans/{plan_id}/pause",
+        response_class=HTMLResponse,
+        dependencies=write_dependencies,
+    )
+    async def ui_pause_rollout_plan(
+        request: Request,
+        plan_id: str,
+        reason: str = Form("operator paused rollout plan"),
+        actor: str = Form("operator:web-ui"),
+        state=Depends(get_state_func),
+    ):
+        """Pause a rollout plan."""
+        _require_ui_role(request, state, "operator")
+        hub = getattr(state, "hub_lite", None)
+        if hub is None:
+            return _ui_error("Hub Lite is not configured")
+
+        try:
+            hub.pause_rollout_plan(plan_id, actor=actor, reason=reason)
+            return _ui_success(f"Paused rollout plan {plan_id}", refresh=True)
+        except Exception as e:
+            return _ui_error(f"Rollout plan pause failed: {e}")
+
+    @router.post(
+        "/hub/rollout-plans/{plan_id}/resume",
+        response_class=HTMLResponse,
+        dependencies=write_dependencies,
+    )
+    async def ui_resume_rollout_plan(
+        request: Request,
+        plan_id: str,
+        reason: str = Form("operator resumed rollout plan"),
+        actor: str = Form("operator:web-ui"),
+        state=Depends(get_state_func),
+    ):
+        """Resume a rollout plan."""
+        _require_ui_role(request, state, "operator")
+        hub = getattr(state, "hub_lite", None)
+        if hub is None:
+            return _ui_error("Hub Lite is not configured")
+
+        try:
+            hub.resume_rollout_plan(plan_id, actor=actor, reason=reason)
+            return _ui_success(f"Resumed rollout plan {plan_id}", refresh=True)
+        except Exception as e:
+            return _ui_error(f"Rollout plan resume failed: {e}")
+
+    @router.post(
+        "/hub/rollouts/{rollout_id}/approve",
+        response_class=HTMLResponse,
+        dependencies=write_dependencies,
+    )
+    async def ui_approve_rollout(
+        request: Request,
+        rollout_id: str,
+        reason: str = Form("policy approved for mission"),
+        actor: str = Form("operator:web-ui"),
+        state=Depends(get_state_func),
+    ):
+        """Approve a rollout before local edge apply."""
+        _require_ui_role(request, state, "approver")
+        hub = getattr(state, "hub_lite", None)
+        if hub is None:
+            return _ui_error("Hub Lite is not configured")
+
+        try:
+            hub.approve_rollout(
+                rollout_id,
+                actor=actor,
+                reason=reason or "policy approved for mission",
+            )
+            return _ui_success(f"Approved rollout {rollout_id}", refresh=True)
+        except Exception as e:
+            return _ui_error(f"Rollout approval failed: {e}")
 
     @router.post(
         "/hub/rollouts/{rollout_id}/apply",
@@ -763,6 +1108,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         state=Depends(get_state_func),
     ):
         """Apply a rollout on the local edge agent."""
+        _require_ui_role(request, state, "operator", "edge")
         try:
             from temms.inference.server import RolloutApplyRequest, apply_rollout
 
@@ -794,6 +1140,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         state=Depends(get_state_func),
     ):
         """Rollback a rollout on the local edge agent."""
+        _require_ui_role(request, state, "operator")
         try:
             from temms.inference.server import RolloutRollbackRequest, rollback_rollout
 
@@ -819,6 +1166,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
     )
     async def ui_export_evidence(request: Request, state=Depends(get_state_func)):
         """Render a compact evidence bundle preview for the operator console."""
+        _require_ui_role(request, state, "operator", "auditor")
         try:
             from temms.evidence import build_evidence_bundle
 
@@ -843,6 +1191,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         state=Depends(get_state_func),
     ):
         """Render a portable air-gap bundle for copy/export from the Hub UI."""
+        _require_ui_role(request, state, "operator")
         hub = getattr(state, "hub_lite", None)
         if hub is None:
             return _ui_error("Hub Lite is not configured")
@@ -864,6 +1213,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         state=Depends(get_state_func),
     ):
         """Import a pasted air-gap bundle from the Hub UI."""
+        _require_ui_role(request, state, "operator")
         hub = getattr(state, "hub_lite", None)
         if hub is None:
             return _ui_error("Hub Lite is not configured")
@@ -871,9 +1221,7 @@ def create_ui_router(get_state_func, control_auth_dependency=None) -> APIRouter:
         try:
             bundle = json.loads(bundle_json)
             counts = hub.import_bundle(bundle)
-            count_text = ", ".join(
-                f"{key}: {value}" for key, value in sorted(counts.items())
-            )
+            count_text = ", ".join(f"{key}: {value}" for key, value in sorted(counts.items()))
             return _ui_success(f"Imported air-gap bundle ({count_text})", refresh=True)
         except json.JSONDecodeError as e:
             return _ui_error(f"Air-gap import failed: invalid JSON ({e.msg})")
@@ -925,6 +1273,24 @@ def _ui_signature_policy(state) -> tuple[bool, Optional[str]]:
     from temms.inference.server import rollout_signature_policy
 
     return rollout_signature_policy(state)
+
+
+def _enforce_ui_rollout_package_policy(state, hub, package_id: str) -> None:
+    """Apply API-equivalent package trust checks to UI rollout actions."""
+    from temms.inference.server import (
+        package_signature_verified,
+        package_strict_metadata_verified,
+        rollout_signature_policy,
+    )
+
+    require_signature, _ = rollout_signature_policy(state, resolve_key=False)
+    package = hub.get_package(package_id)
+    if require_signature and package is not None and not package_signature_verified(package):
+        raise ValueError(f"Package {package_id} does not have a verified signature")
+    if require_signature and package is not None and not package_strict_metadata_verified(package):
+        raise ValueError(
+            f"Package {package_id} does not have strict production metadata validation"
+        )
 
 
 def _dashboard_ui_context(request: Request, state) -> Dict[str, Any]:
@@ -984,6 +1350,7 @@ def _hub_ui_context(request: Request, state) -> Dict[str, Any]:
         "devices": hub.list_devices(),
         "packages": hub.list_packages(),
         "rollouts": hub.list_rollouts(),
+        "rollout_plans": hub.list_rollout_plans(),
         "runtime_targets": hub.list_runtime_targets(),
         "runtime_validations": hub.list_runtime_validations(limit=10),
         "benchmarks": hub.list_benchmarks(limit=25),
@@ -993,405 +1360,6 @@ def _hub_ui_context(request: Request, state) -> Dict[str, Any]:
         "default_tracking_uri": _default_mlflow_tracking_uri(state),
         "default_package_output_dir": str(_default_package_output_dir(state)),
     }
-
-
-def _operate_ui_context(request: Request, state) -> Dict[str, Any]:
-    context = _hub_ui_context(request, state)
-    context.update(_mission_selection(request, context))
-    context["latest_rollout"] = _latest_rollout_for_mission(
-        context["rollouts"],
-        package_id=context.get("selected_package_id"),
-        runtime_target_id=context.get("selected_runtime_target_id"),
-        device_id=context.get("selected_device_id"),
-    )
-    if context["latest_rollout"] is None and not context.get("mission_selection_explicit"):
-        context["latest_rollout"] = _latest_rollout(context["rollouts"])
-    context["runtime_validation_ready"] = _runtime_validation_ready(context)
-    context["deployment_ready"] = bool(
-        context["devices"]
-        and context["packages"]
-        and context["runtime_targets"]
-        and context["runtime_validation_ready"]
-    )
-    context["deployment_flow"] = _deployment_flow(context)
-    context["operate_next_step"] = _operate_next_step(context)
-    context["operate_next_step_summary"] = _operate_next_step_summary(context)
-    context["proof_checklist"] = _proof_checklist(context)
-    return context
-
-
-def _mission_selection(request: Request, context: Dict[str, Any]) -> dict[str, Any]:
-    packages = context.get("packages") or []
-    runtime_targets = context.get("runtime_targets") or []
-    devices = context.get("devices") or []
-    deployment_draft = context.get("deployment_draft")
-    latest_rollout = _latest_rollout(context.get("rollouts") or [])
-    query = request.query_params
-    requested_package_id = (query.get("package_id") or "").strip()
-    requested_runtime_target_id = (query.get("runtime_target_id") or "").strip()
-    requested_device_id = (query.get("device_id") or "").strip()
-    explicit = bool(requested_package_id or requested_runtime_target_id or requested_device_id)
-
-    package_id = (
-        requested_package_id
-        or (
-            deployment_draft.get("package_id")
-            if isinstance(deployment_draft, dict)
-            else None
-        )
-        or (latest_rollout.get("package_id") if isinstance(latest_rollout, dict) else None)
-    )
-    runtime_target_id = (
-        requested_runtime_target_id
-        or (
-            deployment_draft.get("runtime_target_id")
-            if isinstance(deployment_draft, dict)
-            else None
-        )
-        or (
-            latest_rollout.get("runtime_target_id")
-            if isinstance(latest_rollout, dict)
-            else None
-        )
-    )
-    device_id = (
-        requested_device_id
-        or (
-            deployment_draft.get("device_id")
-            if isinstance(deployment_draft, dict)
-            else None
-        )
-        or (latest_rollout.get("device_id") if isinstance(latest_rollout, dict) else None)
-    )
-
-    selected_package = _find_by_id(packages, "package_id", package_id) or (
-        packages[0] if packages else None
-    )
-    selected_runtime_target = _find_by_id(
-        runtime_targets,
-        "runtime_target_id",
-        runtime_target_id,
-    ) or (runtime_targets[0] if runtime_targets else None)
-    selected_device = _find_by_id(devices, "device_id", device_id) or (
-        devices[0] if devices else None
-    )
-
-    return {
-        "mission_selection_explicit": explicit,
-        "mission_selection_saved": isinstance(deployment_draft, dict) and not explicit,
-        "selected_package": selected_package,
-        "selected_package_id": (
-            selected_package.get("package_id") if isinstance(selected_package, dict) else None
-        ),
-        "selected_runtime_target": selected_runtime_target,
-        "selected_runtime_target_id": (
-            selected_runtime_target.get("runtime_target_id")
-            if isinstance(selected_runtime_target, dict)
-            else None
-        ),
-        "selected_device": selected_device,
-        "selected_device_id": (
-            selected_device.get("device_id") if isinstance(selected_device, dict) else None
-        ),
-    }
-
-
-def _deployment_flow(context: Dict[str, Any]) -> list[dict[str, str]]:
-    latest_rollout = context.get("latest_rollout")
-    benchmarks = context.get("benchmarks") or []
-    package = context.get("selected_package")
-    runtime = context.get("selected_runtime_target")
-    device = context.get("selected_device")
-
-    rollout_state = str(latest_rollout.get("state", "")) if isinstance(latest_rollout, dict) else ""
-    evidence_ready = bool(benchmarks or rollout_state in {"activated", "rolled_back", "failed"})
-    return [
-        {
-            "label": "MLflow Registry",
-            "state": "linked",
-            "detail": context.get("default_tracking_uri") or "configure tracking URI",
-            "status": "ready",
-        },
-        {
-            "label": "Signed Package",
-            "state": "ready" if package else "missing",
-            "detail": (
-                f"{package.get('package_id')} v{package.get('version', '-')}"
-                if isinstance(package, dict)
-                else "build from MLflow"
-            ),
-            "status": "ready" if package else "waiting",
-        },
-        {
-            "label": "Runtime Image",
-            "state": (
-                "validated"
-                if context.get("runtime_validation_ready")
-                else ("needs validation" if runtime else "missing")
-            ),
-            "detail": (
-                f"{runtime.get('runtime_target_id')} ({runtime.get('os', 'linux')}/{runtime.get('arch', '-')})"
-                if isinstance(runtime, dict)
-                else "add container target"
-            ),
-            "status": "ready" if context.get("runtime_validation_ready") else "waiting",
-        },
-        {
-            "label": "Edge Device",
-            "state": str(device.get("status", "enrolled")) if isinstance(device, dict) else "missing",
-            "detail": (
-                f"{device.get('device_id')} ({device.get('profile', '-')})"
-                if isinstance(device, dict)
-                else "enroll or start agent"
-            ),
-            "status": "ready" if device else "waiting",
-        },
-        {
-            "label": "Rollout Evidence",
-            "state": rollout_state or ("recorded" if benchmarks else "pending"),
-            "detail": (
-                f"{latest_rollout.get('rollout_id')} -> {latest_rollout.get('state')}"
-                if isinstance(latest_rollout, dict)
-                else (
-                    f"{len(benchmarks)} benchmark{'s' if len(benchmarks) != 1 else ''}"
-                    if benchmarks
-                    else "apply rollout, then export proof"
-                )
-            ),
-            "status": "ready" if evidence_ready else "waiting",
-        },
-    ]
-
-
-def _operate_next_step(context: Dict[str, Any]) -> str:
-    if not context.get("packages"):
-        return "package"
-    if not context.get("runtime_targets"):
-        return "runtime"
-    if not context.get("runtime_validation_ready"):
-        return "validate"
-    if not context.get("devices"):
-        return "device"
-    if not context.get("latest_rollout"):
-        return "assign"
-    return "evidence"
-
-
-def _operate_next_step_summary(context: Dict[str, Any]) -> dict[str, str]:
-    next_step = _operate_next_step(context)
-    summaries = {
-        "package": {
-            "eyebrow": "Start here",
-            "label": "Package a registry model",
-            "detail": "Select the MLflow model that should become a signed, deployable TEMMS package.",
-            "primary": "Build signed package",
-            "secondary": "MLflow remains the source of truth; TEMMS adds edge metadata, signing, and rollout policy.",
-        },
-        "runtime": {
-            "eyebrow": "Runtime needed",
-            "label": "Choose the target environment",
-            "detail": "Add or select the container image that simulates the customer edge OS, architecture, and runtime stack.",
-            "primary": "Add runtime image",
-            "secondary": "Use default targets for the demo path, or register customer images for real hardware parity.",
-        },
-        "validate": {
-            "eyebrow": "Prove it runs",
-            "label": "Validate against a runtime image",
-            "detail": "Run the package inside the selected container image before assigning it to an edge device.",
-            "primary": "Run validation",
-            "secondary": "This is the compatibility gate between model registry and field deployment.",
-        },
-        "device": {
-            "eyebrow": "Target needed",
-            "label": "Enroll an edge target",
-            "detail": "Create a simulated edge device or wait for a real device heartbeat to report inventory.",
-            "primary": "Enroll simulated edge",
-            "secondary": "The demo can use a simulated node; production devices can report the same inventory contract.",
-        },
-        "assign": {
-            "eyebrow": "Ready to deploy",
-            "label": "Assign the package to an edge device",
-            "detail": "Pick the target device and runtime image, preview compatibility, then create the rollout.",
-            "primary": "Assign rollout",
-            "secondary": "Assignment records the intended model, device, runtime, slot, and validation evidence.",
-        },
-        "evidence": {
-            "eyebrow": "Operate",
-            "label": "Apply the rollout and export evidence",
-            "detail": "Activate the rollout locally, roll back if needed, and generate proof for the deployment record.",
-            "primary": "Apply or prove",
-            "secondary": "Evidence ties together registry source, package signature, runtime validation, and edge action.",
-        },
-    }
-    return summaries[next_step]
-
-
-def _runtime_validation_ready(context: Dict[str, Any]) -> bool:
-    validations = context.get("runtime_validations") or []
-    package_id = context.get("selected_package_id")
-    runtime_target_id = context.get("selected_runtime_target_id")
-    if not package_id or not runtime_target_id:
-        return False
-
-    return (
-        _matching_runtime_validation(
-            validations,
-            package_id=package_id,
-            runtime_target_id=runtime_target_id,
-        )
-        is not None
-    )
-
-
-def _proof_checklist(context: Dict[str, Any]) -> list[dict[str, str]]:
-    latest_rollout = context.get("latest_rollout")
-    validations = context.get("runtime_validations") or []
-    benchmarks = context.get("benchmarks") or []
-    package = context.get("selected_package")
-    runtime = context.get("selected_runtime_target")
-    device = context.get("selected_device")
-
-    package_id = package.get("package_id") if isinstance(package, dict) else None
-    runtime_target_id = (
-        runtime.get("runtime_target_id") if isinstance(runtime, dict) else None
-    )
-    device_id = device.get("device_id") if isinstance(device, dict) else None
-    package_validation = (
-        package.get("metadata", {}).get("validation", {})
-        if isinstance(package, dict) and isinstance(package.get("metadata"), dict)
-        else {}
-    )
-    signature_verified = bool(package_validation.get("signature_verified"))
-    strict_metadata = bool(package_validation.get("strict_metadata"))
-    runtime_validation = _matching_runtime_validation(
-        validations,
-        package_id=package_id,
-        runtime_target_id=runtime_target_id,
-    )
-    benchmark = _matching_benchmark(
-        benchmarks,
-        package_id=package_id,
-        runtime_target_id=runtime_target_id,
-        device_id=device_id,
-    )
-    rollout_state = (
-        str(latest_rollout.get("state", "")) if isinstance(latest_rollout, dict) else ""
-    )
-    rollout_proven = rollout_state in {"activated", "rolled_back", "failed"}
-
-    return [
-        {
-            "label": "Package trust",
-            "state": "verified" if signature_verified and strict_metadata else "pending",
-            "detail": (
-                "signed package, strict metadata"
-                if signature_verified and strict_metadata
-                else "needs verified signature and strict metadata"
-            ),
-            "status": "ready" if signature_verified and strict_metadata else "waiting",
-        },
-        {
-            "label": "Runtime validation",
-            "state": "passed" if runtime_validation else "pending",
-            "detail": (
-                f"{runtime_validation.get('validation_id')}"
-                if isinstance(runtime_validation, dict)
-                else "run package in target image"
-            ),
-            "status": "ready" if runtime_validation else "waiting",
-        },
-        {
-            "label": "Edge action",
-            "state": rollout_state or "pending",
-            "detail": (
-                f"{latest_rollout.get('rollout_id')} on {latest_rollout.get('device_id')}"
-                if isinstance(latest_rollout, dict)
-                else "assign and apply rollout"
-            ),
-            "status": "ready" if rollout_proven else "waiting",
-        },
-        {
-            "label": "Performance evidence",
-            "state": "recorded" if benchmark else "pending",
-            "detail": (
-                f"{benchmark.get('benchmark_id')}"
-                if isinstance(benchmark, dict)
-                else "publish hardware-aware benchmark"
-            ),
-            "status": "ready" if benchmark else "waiting",
-        },
-    ]
-
-
-def _matching_runtime_validation(
-    validations: list[dict[str, Any]],
-    *,
-    package_id: str | None,
-    runtime_target_id: str | None,
-) -> dict[str, Any] | None:
-    if not package_id or not runtime_target_id:
-        return None
-    for validation in validations:
-        result = validation.get("result") if isinstance(validation, dict) else {}
-        if not isinstance(result, dict):
-            result = {}
-        if (
-            validation.get("package_id") == package_id
-            and validation.get("runtime_target_id") == runtime_target_id
-            and result.get("ok") is True
-            and result.get("dry_run") is not True
-        ):
-            return validation
-    return None
-
-
-def _matching_benchmark(
-    benchmarks: list[dict[str, Any]],
-    *,
-    package_id: str | None,
-    runtime_target_id: str | None,
-    device_id: str | None,
-) -> dict[str, Any] | None:
-    for benchmark in benchmarks:
-        if package_id and benchmark.get("package_id") != package_id:
-            continue
-        if runtime_target_id and benchmark.get("runtime_target_id") != runtime_target_id:
-            continue
-        if device_id and benchmark.get("device_id") != device_id:
-            continue
-        return benchmark
-    return None
-
-
-def _find_by_id(items: list[dict[str, Any]], key: str, value: str | None) -> dict[str, Any] | None:
-    if not value:
-        return None
-    return next((item for item in items if item.get(key) == value), None)
-
-
-def _latest_rollout(rollouts: list[dict[str, Any]]) -> dict[str, Any] | None:
-    if not rollouts:
-        return None
-    return sorted(rollouts, key=lambda rollout: str(rollout.get("updated_at", "")))[-1]
-
-
-def _latest_rollout_for_mission(
-    rollouts: list[dict[str, Any]],
-    *,
-    package_id: str | None,
-    runtime_target_id: str | None,
-    device_id: str | None,
-) -> dict[str, Any] | None:
-    matches = []
-    for rollout in rollouts:
-        if package_id and rollout.get("package_id") != package_id:
-            continue
-        if runtime_target_id and rollout.get("runtime_target_id") != runtime_target_id:
-            continue
-        if device_id and rollout.get("device_id") != device_id:
-            continue
-        matches.append(rollout)
-    return _latest_rollout(matches)
 
 
 def _simulated_inventory_for_profile(profile: str) -> Dict[str, Any]:
@@ -1501,8 +1469,7 @@ def _ui_airgap_bundle_preview(bundle: dict[str, Any]) -> HTMLResponse:
         f"</div>"
         for label, value in counts.items()
     )
-    return HTMLResponse(
-        f"""
+    return HTMLResponse(f"""
         <div class="space-y-3 p-4">
             <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                 <div>
@@ -1516,8 +1483,7 @@ def _ui_airgap_bundle_preview(bundle: dict[str, Any]) -> HTMLResponse:
                 <pre class="max-h-96 overflow-auto border-t border-zinc-800 p-3 text-xs text-zinc-300">{bundle_text}</pre>
             </details>
         </div>
-        """
-    )
+        """)
 
 
 def _ui_runtime_validation_result(
@@ -1623,11 +1589,113 @@ def _ui_compatibility_preview_result(result: dict[str, Any]) -> HTMLResponse:
     return HTMLResponse(html)
 
 
+def _ui_compatibility_matrix_result(matrix: dict[str, Any]) -> HTMLResponse:
+    """Render a compact compatibility matrix for deployment planning."""
+    counts = matrix.get("counts") if isinstance(matrix.get("counts"), dict) else {}
+    cells = matrix.get("cells") if isinstance(matrix.get("cells"), list) else []
+    rows: list[str] = []
+    for cell in cells[:60]:
+        compatible = bool(cell.get("compatible"))
+        ready = bool(cell.get("assignment_ready"))
+        status_classes = (
+            "border-emerald-500/30 bg-emerald-500/10 text-emerald-700"
+            if ready
+            else (
+                "border-amber-500/30 bg-amber-500/10 text-amber-700"
+                if compatible
+                else "border-red-500/30 bg-red-500/10 text-red-700"
+            )
+        )
+        status = "ready" if ready else "needs release" if compatible else "blocked"
+        validation = (
+            "validated"
+            if cell.get("runtime_validation_ready")
+            else "missing validation" if cell.get("runtime_target_id") else "device inventory"
+        )
+        blockers = cell.get("assignment_blockers")
+        if not isinstance(blockers, list):
+            blockers = []
+        blockers_text = "; ".join(str(blocker) for blocker in blockers[:2]) or "ready"
+        if len(blockers) > 2:
+            blockers_text += f"; +{len(blockers) - 2} more"
+        rows.append(
+            '<tr class="border-t border-zinc-800">'
+            f"<td class=\"px-3 py-2 font-mono text-xs\">{_escape_html(str(cell.get('package_id') or ''))}</td>"
+            f"<td class=\"px-3 py-2 font-mono text-xs\">{_escape_html(str(cell.get('model_id') or 'package'))}</td>"
+            f"<td class=\"px-3 py-2 font-mono text-xs\">{_escape_html(str(cell.get('device_id') or ''))}</td>"
+            '<td class="px-3 py-2 font-mono text-xs">'
+            f"{_escape_html(str(cell.get('runtime_target_id') or 'device inventory'))}</td>"
+            '<td class="px-3 py-2">'
+            f'<span class="border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] {status_classes}">'
+            f"{_escape_html(status)}</span></td>"
+            f'<td class="px-3 py-2 text-xs text-zinc-500">{_escape_html(validation)}</td>'
+            f'<td class="px-3 py-2 text-xs text-zinc-500">{_escape_html(blockers_text)}</td>'
+            "</tr>"
+        )
+    if len(cells) > 60:
+        rows.append(
+            '<tr class="border-t border-zinc-800">'
+            '<td colspan="7" class="px-3 py-3 text-xs text-zinc-500">'
+            f"Showing 60 of {len(cells)} matrix cells."
+            "</td></tr>"
+        )
+    if not rows:
+        rows.append(
+            '<tr class="border-t border-zinc-800">'
+            '<td colspan="7" class="px-3 py-3 text-xs text-zinc-500">'
+            "No package, device, and runtime combinations found."
+            "</td></tr>"
+        )
+
+    html = f"""
+    <div class="border border-zinc-800 bg-[#090a0a] p-3 text-sm text-zinc-200">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+                <div class="font-semibold text-zinc-100">Compatibility Matrix</div>
+                <div class="mt-1 text-xs text-zinc-500">
+                    Assignment ready: {_escape_html(str(counts.get("assignment_ready", 0)))}
+                    / {_escape_html(str(counts.get("cells", 0)))} cells
+                </div>
+            </div>
+            <div class="font-mono text-xs text-zinc-500">
+                Compatible {_escape_html(str(counts.get("compatible", 0)))}
+                <span class="mx-1">/</span>
+                Blocked {_escape_html(str(counts.get("blocked", 0)))}
+            </div>
+        </div>
+        <div class="mt-3 overflow-auto">
+            <table class="min-w-full border border-zinc-800 text-left">
+                <thead class="bg-zinc-950 text-[10px] uppercase tracking-[0.12em] text-zinc-500">
+                    <tr>
+                        <th class="px-3 py-2">Package</th>
+                        <th class="px-3 py-2">Model</th>
+                        <th class="px-3 py-2">Device</th>
+                        <th class="px-3 py-2">Runtime</th>
+                        <th class="px-3 py-2">State</th>
+                        <th class="px-3 py-2">Validation</th>
+                        <th class="px-3 py-2">Blockers</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {''.join(rows)}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    """
+    return HTMLResponse(html)
+
+
 def _ui_evidence_preview(bundle: dict[str, Any]) -> HTMLResponse:
     """Render a mission-readable evidence summary with raw JSON available."""
+    from temms.evidence import build_mission_replay
+
     hub_lite = bundle.get("hub_lite") if isinstance(bundle.get("hub_lite"), dict) else {}
     devices = hub_lite.get("devices") if isinstance(hub_lite.get("devices"), dict) else {}
-    catalog_packages = hub_lite.get("packages") if isinstance(hub_lite.get("packages"), dict) else {}
+    catalog_packages = (
+        hub_lite.get("packages") if isinstance(hub_lite.get("packages"), dict) else {}
+    )
+    replay = build_mission_replay(bundle, limit=12)
     rollouts = hub_lite.get("rollouts") if isinstance(hub_lite.get("rollouts"), dict) else {}
     decisions = bundle.get("decisions") if isinstance(bundle.get("decisions"), list) else []
     timeline = bundle.get("timeline") if isinstance(bundle.get("timeline"), list) else []
@@ -1636,7 +1704,9 @@ def _ui_evidence_preview(bundle: dict[str, Any]) -> HTMLResponse:
         if isinstance(bundle.get("runtime_validations"), list)
         else []
     )
-    benchmarks = bundle.get("hub_benchmarks") if isinstance(bundle.get("hub_benchmarks"), list) else []
+    benchmarks = (
+        bundle.get("hub_benchmarks") if isinstance(bundle.get("hub_benchmarks"), list) else []
+    )
     package_imports = (
         bundle.get("package_imports") if isinstance(bundle.get("package_imports"), list) else []
     )
@@ -1645,14 +1715,25 @@ def _ui_evidence_preview(bundle: dict[str, Any]) -> HTMLResponse:
     model_cache = (
         diagnostics.get("model_cache") if isinstance(diagnostics.get("model_cache"), dict) else {}
     )
-    cache_health = (
-        model_cache.get("health") if isinstance(model_cache.get("health"), dict) else {}
-    )
+    cache_health = model_cache.get("health") if isinstance(model_cache.get("health"), dict) else {}
+    approval_rows = [
+        _evidence_approval_row(rollout)
+        for rollout in rollouts.values()
+        if isinstance(rollout, dict)
+        and (rollout.get("approval_required") or isinstance(rollout.get("approval"), dict))
+    ]
+    approvals_html = "".join(approval_rows)
+    if not approvals_html:
+        approvals_html = (
+            '<tr><td colspan="5" class="px-3 py-3 text-center text-xs text-zinc-500">'
+            "No rollout approval gates recorded</td></tr>"
+        )
 
     cards = [
         ("Devices", len(devices)),
         ("Packages", len(catalog_packages) or len(package_imports)),
         ("Rollouts", len(rollouts)),
+        ("Approvals", len(approval_rows)),
         ("Decisions", len(decisions)),
         ("Runtime checks", len(runtime_validations)),
         ("Benchmarks", len(benchmarks)),
@@ -1660,6 +1741,21 @@ def _ui_evidence_preview(bundle: dict[str, Any]) -> HTMLResponse:
         ("Cache", cache_health.get("status") or "unknown"),
     ]
     card_html = "".join(_evidence_metric_card(label, value) for label, value in cards)
+    replay_phase_cards = "".join(
+        _evidence_replay_phase_card(phase)
+        for phase in replay.get("phases", [])
+        if isinstance(phase, dict)
+    )
+    replay_event_rows = "".join(
+        _evidence_replay_event_row(event)
+        for event in replay.get("events", [])
+        if isinstance(event, dict)
+    )
+    if not replay_event_rows:
+        replay_event_rows = (
+            '<tr><td colspan="5" class="px-3 py-3 text-center text-xs text-zinc-500">'
+            "No mission replay events recorded</td></tr>"
+        )
 
     trust_rows = "".join(
         _evidence_package_row(package)
@@ -1673,7 +1769,9 @@ def _ui_evidence_preview(bundle: dict[str, Any]) -> HTMLResponse:
         )
 
     decision_cards = "".join(
-        _evidence_decision_card(decision) for decision in decisions[:5] if isinstance(decision, dict)
+        _evidence_decision_card(decision)
+        for decision in decisions[:5]
+        if isinstance(decision, dict)
     )
     if not decision_cards:
         decision_cards = (
@@ -1693,6 +1791,9 @@ def _ui_evidence_preview(bundle: dict[str, Any]) -> HTMLResponse:
     raw_json = _escape_html(json.dumps(bundle, indent=2, sort_keys=True))
     exported_at = _escape_html(str(bundle.get("exported_at") or ""))
     schema = _escape_html(str(bundle.get("schema_version") or ""))
+    approval_header_class = (
+        "px-3 py-2 text-left text-[10px] uppercase tracking-[0.14em] text-zinc-500"
+    )
     html = f"""
     <div class="space-y-4 p-4">
         <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -1712,6 +1813,30 @@ def _ui_evidence_preview(bundle: dict[str, Any]) -> HTMLResponse:
 
         <section class="border border-zinc-800 bg-[#090a0a]">
             <div class="border-b border-zinc-800 px-3 py-2">
+                <h3 class="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-100">Mission Replay</h3>
+                <div class="mt-1 text-xs text-zinc-500">{_escape_html(str(replay.get("headline") or "evidence captured"))}</div>
+            </div>
+            <div class="grid gap-px bg-zinc-800 md:grid-cols-3">
+                {replay_phase_cards}
+            </div>
+            <div class="overflow-x-auto border-t border-zinc-800">
+                <table class="min-w-full">
+                    <thead class="bg-[#0d0f0f]">
+                        <tr>
+                            <th class="px-3 py-2 text-left text-[10px] uppercase tracking-[0.14em] text-zinc-500">Seq</th>
+                            <th class="px-3 py-2 text-left text-[10px] uppercase tracking-[0.14em] text-zinc-500">Time</th>
+                            <th class="px-3 py-2 text-left text-[10px] uppercase tracking-[0.14em] text-zinc-500">Phase</th>
+                            <th class="px-3 py-2 text-left text-[10px] uppercase tracking-[0.14em] text-zinc-500">Slot</th>
+                            <th class="px-3 py-2 text-left text-[10px] uppercase tracking-[0.14em] text-zinc-500">Event</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-zinc-800">{replay_event_rows}</tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="border border-zinc-800 bg-[#090a0a]">
+            <div class="border-b border-zinc-800 px-3 py-2">
                 <h3 class="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-100">Package Trust Posture</h3>
             </div>
             <div class="overflow-x-auto">
@@ -1726,6 +1851,28 @@ def _ui_evidence_preview(bundle: dict[str, Any]) -> HTMLResponse:
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-zinc-800">{trust_rows}</tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="border border-zinc-800 bg-[#090a0a]">
+            <div class="border-b border-zinc-800 px-3 py-2">
+                <h3 class="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-100">
+                    Rollout Approval Gates
+                </h3>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full">
+                    <thead class="bg-[#0d0f0f]">
+                        <tr>
+                            <th class="{approval_header_class}">Rollout</th>
+                            <th class="{approval_header_class}">State</th>
+                            <th class="{approval_header_class}">Actor</th>
+                            <th class="{approval_header_class}">Reason</th>
+                            <th class="{approval_header_class}">Updated</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-zinc-800">{approvals_html}</tbody>
                 </table>
             </div>
         </section>
@@ -1767,6 +1914,51 @@ def _ui_evidence_preview(bundle: dict[str, Any]) -> HTMLResponse:
     return HTMLResponse(html)
 
 
+def _evidence_replay_phase_card(phase: dict[str, Any]) -> str:
+    status = str(phase.get("status") or "missing")
+    tone = {
+        "complete": "emerald",
+        "preview_only": "amber",
+        "missing": "zinc",
+    }.get(status, "cyan")
+    refs = phase.get("evidence_refs") if isinstance(phase.get("evidence_refs"), list) else []
+    ref_text = ", ".join(str(ref) for ref in refs[:3]) if refs else ""
+    if ref_text:
+        ref_text = (
+            f'<div class="mt-2 truncate font-mono text-[11px] text-zinc-500">'
+            f"{_escape_html(ref_text)}</div>"
+        )
+    return f"""
+    <div class="bg-[#090a0a] p-3">
+        <div class="flex items-start justify-between gap-2">
+            <div class="text-xs font-semibold text-zinc-100">{_escape_html(str(phase.get("label") or ""))}</div>
+            {_evidence_badge(status.replace("_", " "), tone)}
+        </div>
+        <div class="mt-2 text-xs text-zinc-400">{_escape_html(str(phase.get("summary") or ""))}</div>
+        {ref_text}
+    </div>
+    """
+
+
+def _evidence_replay_event_row(event: dict[str, Any]) -> str:
+    phase = str(event.get("phase") or "")
+    detail = event.get("detail")
+    detail_html = (
+        f'<div class="mt-1 text-[11px] text-zinc-500">{_escape_html(str(detail))}</div>'
+        if detail
+        else ""
+    )
+    return (
+        "<tr>"
+        f'<td class="px-3 py-2 font-mono text-xs text-zinc-400">{_escape_html(str(event.get("sequence") or ""))}</td>'
+        f'<td class="px-3 py-2 font-mono text-xs text-zinc-500">{_escape_html(str(event.get("timestamp") or ""))}</td>'
+        f'<td class="px-3 py-2">{_evidence_badge(phase.replace("_", " "), "cyan")}</td>'
+        f'<td class="px-3 py-2 font-mono text-xs text-zinc-400">{_escape_html(str(event.get("slot") or "-"))}</td>'
+        f'<td class="px-3 py-2 text-xs text-zinc-300">{_escape_html(str(event.get("summary") or ""))}{detail_html}</td>'
+        "</tr>"
+    )
+
+
 def _evidence_metric_card(label: str, value: Any) -> str:
     return (
         '<div class="bg-[#0d0f0f] p-3">'
@@ -1802,8 +1994,32 @@ def _evidence_package_row(package: dict[str, Any]) -> str:
     )
 
 
+def _evidence_approval_row(rollout: dict[str, Any]) -> str:
+    approval = rollout.get("approval") if isinstance(rollout.get("approval"), dict) else {}
+    state = approval.get("state") or (
+        "pending" if rollout.get("approval_required") else "not_required"
+    )
+    rollout_id = _escape_html(str(rollout.get("rollout_id") or ""))
+    state_badge = _evidence_status_badge(state == "approved", "approved", str(state))
+    actor = _escape_html(str(approval.get("actor") or "-"))
+    reason = _escape_html(str(approval.get("reason") or "-"))
+    updated = _escape_html(str(approval.get("updated_at") or rollout.get("updated_at") or ""))
+    mono_cell = "px-3 py-2 font-mono text-xs"
+    return (
+        "<tr>"
+        f'<td class="{mono_cell} text-zinc-100">{rollout_id}</td>'
+        f'<td class="px-3 py-2">{state_badge}</td>'
+        f'<td class="{mono_cell} text-zinc-300">{actor}</td>'
+        f'<td class="px-3 py-2 text-xs text-zinc-400">{reason}</td>'
+        f'<td class="{mono_cell} text-zinc-500">{updated}</td>'
+        "</tr>"
+    )
+
+
 def _evidence_decision_card(decision: dict[str, Any]) -> str:
-    audit = decision.get("audit_metadata") if isinstance(decision.get("audit_metadata"), dict) else {}
+    audit = (
+        decision.get("audit_metadata") if isinstance(decision.get("audit_metadata"), dict) else {}
+    )
     evaluation = (
         audit.get("policy_evaluation") if isinstance(audit.get("policy_evaluation"), dict) else {}
     )
@@ -1853,7 +2069,9 @@ def _decision_rule_label(
             f"priority {matched_rule.get('priority', '-')}"
         )
     if evaluation:
-        return str(evaluation.get("reason") or decision.get("trigger_detail") or "policy evaluation")
+        return str(
+            evaluation.get("reason") or decision.get("trigger_detail") or "policy evaluation"
+        )
     return str(decision.get("trigger_detail") or "manual or system decision")
 
 
@@ -1876,7 +2094,7 @@ def _evidence_condition_lines(matched_rule: dict[str, Any]) -> str:
             f'{_escape_html(str(item.get("metric") or ""))} '
             f'{_escape_html(str(item.get("operator") or ""))} '
             f'{_escape_html(str(item.get("expected") or ""))} '
-            f'= {_escape_html(str(actual))}{_escape_html(confidence_text)} '
+            f"= {_escape_html(str(actual))}{_escape_html(confidence_text)} "
             f'{_evidence_status_badge(bool(item.get("matched")), "matched", "miss")}'
             "</li>"
         )

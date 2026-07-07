@@ -1,0 +1,10119 @@
+import {
+  Activity,
+  ArrowLeft,
+  ArrowRight,
+  BadgeCheck,
+  Box,
+  CheckCircle2,
+  Clipboard,
+  Cpu,
+  Database,
+  Download,
+  FileCheck2,
+  GitBranch,
+  KeyRound,
+  PackageCheck,
+  PlayCircle,
+  RefreshCw,
+  Rocket,
+  ShieldCheck,
+  Terminal,
+  UploadCloud
+} from "lucide-react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  controlApi,
+  downloadEdgeRuntimeProof,
+  downloadMissionPackage,
+  executeReadinessCommand,
+  hubApi,
+  loadEdgeRuntimeProof,
+  loadReadiness,
+  loadSnapshot,
+  planMissionPackage,
+  stageMissionPackage
+} from "./api";
+import type {
+  EdgeProofDownloadHandoff,
+  MissionPackageDownloadHandoff,
+  MissionPackagePlanRequest,
+  ReadinessQuery
+} from "./api";
+import { Badge, Button, PreviewPanel, Submit, ToastView } from "./components/ui";
+import {
+  compactDate,
+  csv,
+  deviceId,
+  errorToast,
+  fieldValue,
+  isChecked,
+  nextPromotion,
+  packageId,
+  planId,
+  rolloutId,
+  runtimeTargetId,
+  saveToken,
+  storedToken
+} from "./lib/hub-format";
+import {
+  EDGE_PROOF_COMPONENT_DIGEST_TARGETS,
+  canonicalJsonStringify,
+  isSha256Digest,
+  sha256Hex,
+  shortProofDigest
+} from "./lib/proof-hash";
+import {
+  defaultMissionDraft,
+  missionDraftFromYaml,
+  missionSelectionFromYaml,
+  type MissionDraft
+} from "./lib/mission-spec";
+import type {
+  Benchmark,
+  DeploymentReadiness,
+  DeploymentReadinessCommand,
+  Device,
+  EdgeRecommendation,
+  EvidenceSummary,
+  EvidenceExportMode,
+  HubPackage,
+  HubSnapshot,
+  JsonObject,
+  MissionReplay,
+  MissionReplayPhase,
+  Preview,
+  Rollout,
+  RolloutPlan,
+  RuntimeValidation,
+  RuntimeTarget,
+  Toast
+} from "./types";
+
+const emptySnapshot: HubSnapshot = {
+  devices: [],
+  packages: [],
+  runtimeTargets: [],
+  rollouts: [],
+  rolloutPlans: [],
+  runtimeValidations: [],
+  benchmarks: [],
+  evidenceBundles: []
+};
+
+const DEFAULT_BENCHMARK_STALE_SECONDS = 86400;
+const EDGE_PROOF_MAX_AGE_SECONDS = 900;
+
+interface ModelRecord {
+  id: string;
+  name: string;
+  version: string;
+  format: string;
+  packageId: string;
+  packageName: string;
+  packageVersion: string;
+  packagePromotion: string;
+  profiles: string[];
+  runtimes: string[];
+  providers: string[];
+  latencyMs?: number;
+  throughputIps?: number;
+  maxLatencyP95Ms?: number;
+  minThroughputIps?: number;
+  maxBenchmarkAgeSeconds?: number;
+  minMemoryAvailableMb?: number;
+  minStorageAvailableMb?: number;
+  maxTemperatureC?: number;
+  minBatteryPercent?: number;
+  requiredPowerSource?: string;
+  artifactSizeMb?: number;
+  benchmarkDeviceId?: string;
+  benchmarkRuntimeId?: string;
+  benchmarkedAt?: string;
+  signed: boolean;
+  source: string;
+  updatedAt?: string;
+}
+
+type GateTone = "good" | "warn" | "bad" | "neutral";
+
+interface EdgeRuntimeFit {
+  label: string;
+  detail: string;
+  tone: GateTone;
+  failures: string[];
+}
+
+interface RuntimeFitDisplay extends EdgeRuntimeFit {
+  tileDetail: string;
+}
+
+interface EdgeMissionMetric {
+  label: string;
+  value: string;
+  detail: string;
+  tone: GateTone;
+}
+
+interface EdgeRuntimeMission {
+  headline: string;
+  detail: string;
+  tone: GateTone;
+  path: string;
+  metrics: EdgeMissionMetric[];
+  focus: string[];
+}
+
+interface EdgeProofWorkflow {
+  status: string;
+  detail: string;
+  tone: GateTone;
+  proofPath: string;
+  gatePolicy: string;
+  attestation: string;
+  capabilityLock: string;
+  capabilityLockDetail: string;
+  capabilityLockTone: GateTone;
+  runtimeFit: string;
+  generateCommand: string;
+  verifyCommand: string;
+  verifyJsonCommand: string;
+  missing: string[];
+}
+
+interface EdgeProofTraceStatus {
+  commandCount: number;
+  detail: string;
+  errors: string[];
+  rowCount: number;
+  schema: string;
+  status: "consistent" | "mismatch" | "missing" | "not_generated" | "stale";
+  tone: GateTone;
+  value: string;
+}
+
+interface EdgeProofComponentDigestStatus {
+  detail: string;
+  digestCount: number;
+  digests: Array<{ key: string; label: string; value: string }>;
+  errors: string[];
+  schema: string;
+  status: "consistent" | "mismatch" | "retained" | "missing" | "not_generated" | "stale" | "verifying";
+  tone: GateTone;
+  value: string;
+}
+
+interface RuntimeWorkbenchRow {
+  actionKind: string;
+  actionLabel: string;
+  actionRequiresEdge: boolean;
+  benchmark: string;
+  best: boolean;
+  capabilitySha256: string;
+  compatible: boolean;
+  detail: string;
+  inventory: string;
+  lane: string;
+  penalties: string[];
+  rank?: number;
+  reasons: string[];
+  remediation: JsonObject;
+  score?: number;
+  selected: boolean;
+  status: string;
+  target: RuntimeTarget;
+  targetId: string;
+  tone: GateTone;
+  traceMetrics: RuntimeWorkbenchTraceMetric[];
+  validated: boolean;
+}
+
+interface RuntimeWorkbenchTraceMetric {
+  detail: string;
+  label: string;
+  tone: GateTone;
+  value: string;
+}
+
+interface RuntimeRepairProof {
+  actor: string;
+  benchmarkId: string;
+  bestRuntime: string;
+  blockedTargetCount?: number;
+  capabilityLockStatus: string;
+  capabilitySha256: string;
+  detail: string;
+  eligibleTargetCount?: number;
+  headline: string;
+  occurredAt: string;
+  operation?: Record<string, unknown>;
+  previousRuntime: string;
+  proofStatus: string;
+  reason: string;
+  runtimeFitScore?: number;
+  selectedIsBest?: boolean;
+  selectedRuntime: string;
+  source: "pending" | "replayed" | "mission";
+  status: "repair_available" | "proved";
+  targetCount?: number;
+  targetSelectionStatus: string;
+  tone: GateTone;
+  validationId: string;
+  workbenchSchema: string;
+}
+
+interface RuntimeRemediationContext {
+  packageId: string;
+  modelId: string;
+  deviceId: string;
+  slot: string;
+}
+
+interface RuntimeRemediationCommand {
+  action: string;
+  label: string;
+  command: string;
+  note: string;
+  edgeRun: boolean;
+}
+
+type WorkflowTarget = "model" | "deployment" | "plans" | "rollouts" | "ddil" | "evidence" | "assets";
+type HubStage = "mission" | "model" | "runtime" | "handling" | "package" | "deploy" | "field";
+
+interface HubStageItem {
+  id: HubStage;
+  label: string;
+  value: string;
+  detail: string;
+  decision: string;
+  outcome: string;
+  tone: GateTone;
+}
+
+interface HubStageRunbookAction {
+  label: string;
+  detail: string;
+  disabled?: boolean;
+  icon: "activity" | "arrow" | "cpu" | "download" | "package" | "refresh" | "rocket" | "shield";
+  onClick: () => void;
+  variant?: "primary" | "secondary";
+}
+
+interface HubStageRunbook {
+  objective: string;
+  ready: string;
+  risk: string;
+  status: string;
+  tone: GateTone;
+  actions: HubStageRunbookAction[];
+}
+
+interface MissionWorkflowSignal {
+  label: string;
+  value: string;
+  detail: string;
+  tone: GateTone;
+}
+
+interface MissionPackageStageStatus {
+  detail: string;
+  downloaded: boolean;
+  gateStatus: string;
+  planned: boolean;
+  stageable: boolean;
+  tone: GateTone;
+  value: string;
+}
+
+interface ReadinessGateAction {
+  id: string;
+  label: string;
+  kind: string;
+  gateId: string;
+  refs?: JsonObject;
+  command?: DeploymentReadinessCommand;
+}
+
+interface ReadinessGate {
+  label: string;
+  state: string;
+  detail: string;
+  tone: GateTone;
+  actions?: ReadinessGateAction[];
+}
+
+interface ReadinessVerdict {
+  label: string;
+  headline: string;
+  detail: string;
+  nextAction: string;
+  tone: GateTone;
+  gates: ReadinessGate[];
+}
+
+export function App(): JSX.Element {
+  const [snapshot, setSnapshot] = useState<HubSnapshot>(emptySnapshot);
+  const [token, setToken] = useState(storedToken);
+  const [loading, setLoading] = useState(false);
+  const [hasLoadedSnapshot, setHasLoadedSnapshot] = useState(false);
+  const [toast, setToast] = useState<Toast | undefined>();
+  const [preview, setPreview] = useState<Preview | undefined>();
+  const [missionDraft, setMissionDraft] = useState<MissionDraft>(defaultMissionDraft);
+  const [selectedModelId, setSelectedModelId] = useState("");
+  const [selectedDeviceId, setSelectedDeviceId] = useState("");
+  const [selectedRuntimeId, setSelectedRuntimeId] = useState("");
+  const [contextReadiness, setContextReadiness] = useState<DeploymentReadiness | undefined>();
+  const [lastEdgeProof, setLastEdgeProof] = useState<JsonObject | undefined>();
+  const [lastEdgeProofHandoff, setLastEdgeProofHandoff] = useState<EdgeProofDownloadHandoff | undefined>();
+  const [missionPackagePlan, setMissionPackagePlan] = useState<JsonObject | undefined>();
+  const [lastMissionPackageHandoff, setLastMissionPackageHandoff] = useState<MissionPackageDownloadHandoff | undefined>();
+  const [readinessRefreshVersion, setReadinessRefreshVersion] = useState(0);
+  const [focusedWorkflow, setFocusedWorkflow] = useState<WorkflowTarget | undefined>();
+  const [activeHubStage, setActiveHubStage] = useState<HubStage>("mission");
+  const [pendingReadinessAction, setPendingReadinessAction] = useState<ReadinessGateAction | undefined>();
+  const stageFlowRef = useRef<HTMLDivElement>(null);
+  const ddilWorkflowRef = useRef<HTMLElement>(null);
+  const modelWorkflowRef = useRef<HTMLElement>(null);
+  const deploymentWorkflowRef = useRef<HTMLElement>(null);
+  const plansWorkflowRef = useRef<HTMLElement>(null);
+  const rolloutsWorkflowRef = useRef<HTMLElement>(null);
+  const evidenceWorkflowRef = useRef<HTMLElement>(null);
+  const assetsWorkflowRef = useRef<HTMLDetailsElement>(null);
+
+  const refresh = useCallback(async (options?: { quiet?: boolean }) => {
+    setLoading(true);
+    try {
+      const nextSnapshot = await loadSnapshot(token);
+      setSnapshot(nextSnapshot);
+      setHasLoadedSnapshot(true);
+      setReadinessRefreshVersion((version) => version + 1);
+      if (!options?.quiet) setToast({ tone: "success", title: "Hub refreshed" });
+    } catch (error) {
+      setToast(errorToast("Refresh failed", error));
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    void refresh({ quiet: true });
+  }, [refresh]);
+
+  const packageModels = useMemo(() => snapshot.packages.flatMap(modelsForPackage), [snapshot.packages]);
+  const models = useMemo(
+    () => withBenchmarkEvidence(packageModels, snapshot.benchmarks),
+    [packageModels, snapshot.benchmarks]
+  );
+  const selectedModel = models.find((model) => model.id === selectedModelId) ?? models[0];
+  const selectedPackage = selectedModel
+    ? snapshot.packages.find((pkg) => packageId(pkg) === selectedModel.packageId)
+    : undefined;
+  const selectedDevice =
+    snapshot.devices.find((device) => deviceId(device) === selectedDeviceId) ?? snapshot.devices[0];
+  const selectedRuntime =
+    snapshot.runtimeTargets.find((target) => runtimeTargetId(target) === selectedRuntimeId) ??
+    runtimeForModel(snapshot.runtimeTargets, selectedModel);
+  const activeSlots = Array.isArray(snapshot.evidenceSummary?.active_slots)
+    ? snapshot.evidenceSummary.active_slots.map(asRecord)
+    : [];
+  const activeSlot = activeSlots[0];
+  const missionRollouts = selectedModel
+    ? snapshot.rollouts.filter(
+        (rollout) =>
+          rollout.package_id === selectedModel.packageId && rollout.model_id === selectedModel.id
+      )
+    : snapshot.rollouts;
+  const missionRolloutPlans = selectedModel
+    ? snapshot.rolloutPlans.filter(
+        (plan) =>
+          plan.package_id === selectedModel.packageId &&
+          (!plan.model_id || plan.model_id === selectedModel.id)
+      )
+    : snapshot.rolloutPlans;
+  const latestRollout = latestByTime(missionRollouts);
+  const pendingApprovals = missionRollouts.filter(
+    (rollout) => rollout.approval_required && !rollout.approval?.approved
+  ).length;
+  const rolloutDetail = pendingApprovals
+    ? `${pendingApprovals} waiting approval`
+    : latestRollout?.state ?? "for selected model";
+  const releasedPackages = snapshot.packages.filter((pkg) => pkg.promotion?.state === "released").length;
+  const signedPackages = snapshot.packages.filter((pkg) => isSigned(pkg)).length;
+  const compatibleTargets = selectedModel
+    ? snapshot.runtimeTargets.filter((target) => targetSupportsModel(target, selectedModel)).length
+    : snapshot.runtimeTargets.length;
+  const modelValidationCount = selectedModel
+    ? snapshot.runtimeValidations.filter((validation) => validation.package_id === selectedModel.packageId).length
+    : snapshot.runtimeValidations.length;
+  const selectedRuntimeValidation = selectedModel
+    ? runtimeValidationForModel(selectedModel, selectedRuntime, snapshot.runtimeValidations)
+    : undefined;
+  const edgeRuntimeFit = edgeRuntimeCapabilityFit(
+    selectedModel,
+    selectedDevice,
+    selectedRuntime,
+    selectedRuntimeValidation
+  );
+  const edgeRecommendations = snapshot.compatibilityMatrix?.recommendations ?? [];
+  const resourceEnvelopeFit = resourceEnvelopeCapabilityFit(selectedModel, selectedDevice);
+  const proofEvents = numberOf(asRecord(snapshot.evidenceSummary?.counts).timeline_entries) ?? 0;
+  const missionPhases = Array.isArray(snapshot.missionReplay?.phases) ? snapshot.missionReplay.phases : [];
+  const missionOutcome = asRecord(snapshot.missionReplay?.outcome);
+  const completedMissionPhases =
+    numberOf(missionOutcome.completed_phases) ??
+    missionPhases.filter((phase) => phase.status === "complete").length;
+  const incompleteMissionPhases = stringsOf(missionOutcome.incomplete_phases);
+  const missionPhaseTotal = missionPhases.length;
+  const missionProofComplete = missionPhaseTotal > 0 && incompleteMissionPhases.length === 0;
+  const signedEvidenceImports = numberOf(asRecord(snapshot.evidenceSummary?.trust).signed_package_imports) ?? 0;
+  const evidenceRuntime = asRecord(snapshot.evidenceSummary?.runtime);
+  const deploymentState = asRecord(evidenceRuntime.deployment_state);
+  const offlineMode = evidenceRuntime.offline_mode === true;
+  const pendingOperations = numberOf(evidenceRuntime.pending_operations_count) ?? 0;
+  const pendingOperationTypes = stringsOf(evidenceRuntime.pending_operation_types);
+  const pendingOperationLedger = Array.isArray(evidenceRuntime.pending_operations)
+    ? evidenceRuntime.pending_operations.map(asRecord)
+    : [];
+  const runtimeRepairProof = useMemo(
+    () =>
+      latestRuntimeRepairProofFor({
+        evidenceSummary: snapshot.evidenceSummary,
+        missionReplay: snapshot.missionReplay,
+        pendingOperationLedger
+      }),
+    [pendingOperationLedger, snapshot.evidenceSummary, snapshot.missionReplay]
+  );
+  const pendingOperationVerification = asRecord(evidenceRuntime.pending_operation_verification);
+  const verifiedPendingOperations = numberOf(pendingOperationVerification.verified) ?? 0;
+  const invalidPendingOperations = numberOf(pendingOperationVerification.invalid) ?? 0;
+  const pendingOperationPreflight = asRecord(evidenceRuntime.pending_operation_preflight);
+  const replayReadyOperations = numberOf(pendingOperationPreflight.ready) ?? 0;
+  const replayBlockedOperations = numberOf(pendingOperationPreflight.blocked) ?? 0;
+  const supersededOperations = numberOf(pendingOperationPreflight.superseded) ?? 0;
+  const runtimeOptimizationAdvisories =
+    numberOf(pendingOperationPreflight.optimization_advisories) ?? 0;
+  const totalDeadLetteredOperations = numberOf(evidenceRuntime.pending_operation_dead_letters_count) ?? 0;
+  const deadLetteredOperations =
+    numberOf(evidenceRuntime.pending_operation_dead_letters_unresolved_count) ?? totalDeadLetteredOperations;
+  const allDeadLetteredOperations = Array.isArray(evidenceRuntime.pending_operation_dead_letters)
+    ? evidenceRuntime.pending_operation_dead_letters.map(asRecord)
+    : [];
+  const deadLetteredOperationLedger = allDeadLetteredOperations.filter(
+    (operation) => operation.acknowledged !== true && operation.requeued !== true
+  );
+  const deploymentStateName = stringOf(deploymentState.state, "UNKNOWN");
+  const deploymentReason = stringOf(
+    deploymentState.reason,
+    pendingOperationTypes.length ? pendingOperationTypes.join(", ") : "reconciled"
+  );
+  const activeModelId = stringOf(activeSlot?.active_model, "");
+  const deploymentDetail =
+    deploymentStateName === "READY" && activeModelId ? `activated ${activeModelId}` : deploymentReason;
+  const connectivityState = offlineMode ? "offline" : "online";
+  const latestEvents = prioritizedEvidenceEvents(
+    snapshot.evidenceSummary?.timeline,
+    activeModelId || selectedModel?.id || ""
+  );
+  const evidenceValue = snapshot.evidenceBundles.length || proofEvents;
+  const evidenceDetail = missionPhaseTotal
+    ? `${completedMissionPhases}/${missionPhaseTotal} phases complete`
+    : proofEvents
+      ? `${proofEvents} proof events`
+      : `${snapshot.benchmarks.length} benchmarks`;
+  const ddilDetail = ddilStatusDetail({
+    deploymentStateName,
+    invalidPendingOperations,
+    pendingOperations,
+    replayBlockedOperations,
+    replayReadyOperations,
+    runtimeOptimizationAdvisories,
+    supersededOperations,
+    verifiedPendingOperations
+  });
+  const nextPackageState = selectedPackage ? nextPromotion(selectedPackage.promotion?.state ?? "candidate") : "";
+  const derivedReadinessVerdict = buildReadinessVerdict({
+    deadLetteredOperations,
+    evidenceValue,
+    invalidPendingOperations,
+    latestRollout,
+    missionPhaseTotal,
+    missionProofComplete,
+    offlineMode,
+    pendingOperations,
+    proofEvents,
+    replayBlockedOperations,
+    runtimeOptimizationAdvisories,
+    selectedDevice,
+    edgeRuntimeFit,
+    resourceEnvelopeFit,
+    selectedModel,
+    selectedRuntime,
+    selectedRuntimeValidation,
+    signedEvidenceImports
+  });
+  const readinessContext = useMemo(
+    () => ({
+      package_id: selectedModel?.packageId,
+      model_id: selectedModel?.id,
+      device_id: selectedDevice ? deviceId(selectedDevice) : undefined,
+      runtime_target_id: selectedRuntime ? runtimeTargetId(selectedRuntime) : undefined,
+      slot: missionDraft.slot || "vision"
+    }),
+    [missionDraft.slot, selectedDevice, selectedModel, selectedRuntime]
+  );
+  const readinessKey = [
+    readinessContext.package_id,
+    readinessContext.model_id,
+    readinessContext.device_id,
+    readinessContext.runtime_target_id,
+    readinessContext.slot
+  ].join("|");
+  const scopedReadiness = readinessMatchesContext(contextReadiness, readinessContext)
+    ? contextReadiness
+    : readinessMatchesContext(snapshot.readiness, readinessContext)
+      ? snapshot.readiness
+      : undefined;
+  const runtimeDecision = asRecord(scopedReadiness?.runtime_decision);
+  const edgeExecutionContract = asRecord(scopedReadiness?.edge_execution_contract);
+  const runtimeFitDisplay = runtimeFitDisplayFor(scopedReadiness, edgeRuntimeFit, selectedRuntime);
+  const targetFitValue = selectedModel ? runtimeFitDisplay.label : compatibleTargets;
+  const targetFitDetail = selectedModel
+    ? `${selectedRuntime ? runtimeTargetId(selectedRuntime) : "runtime target"}; ${compatibleTargets}/${snapshot.runtimeTargets.length} eligible`
+    : "runtime targets available";
+  const readinessVerdict =
+    !hasLoadedSnapshot
+      ? syncingReadinessVerdict()
+      : scopedReadiness?.gates?.length
+      ? readinessVerdictFromApi(scopedReadiness)
+      : derivedReadinessVerdict;
+  const edgeRuntimeMission = buildEdgeRuntimeMission({
+    device: selectedDevice,
+    edgeRuntimeFit,
+    missionReplay: snapshot.missionReplay,
+    model: selectedModel,
+    pendingOperationLedger,
+    pendingOperations,
+    readiness: scopedReadiness,
+    readinessVerdict,
+    replayBlockedOperations,
+    resourceEnvelopeFit,
+    runtime: selectedRuntime,
+    runtimeFitDisplay,
+    runtimeValidation: selectedRuntimeValidation
+  });
+  const edgeProofWorkflow = buildEdgeProofWorkflow({
+    device: selectedDevice,
+    model: selectedModel,
+    readiness: scopedReadiness,
+    readinessVerdict,
+    runtime: selectedRuntime,
+    runtimeFitDisplay
+  });
+  const draftMissionPackageManifest = buildMissionPackageManifest({
+    device: selectedDevice,
+    draft: missionDraft,
+    model: selectedModel,
+    runtime: selectedRuntime
+  });
+  const missionPackageManifest = missionPackagePlan ?? draftMissionPackageManifest;
+  const missionReady = Boolean((missionDraft.goal || missionDraft.yaml).trim());
+  const missionPackageStageStatus = buildMissionPackageStageStatus({
+    handoff: lastMissionPackageHandoff,
+    manifest: missionPackageManifest,
+    missionReady,
+    plan: missionPackagePlan
+  });
+  const hubStages: HubStageItem[] = [
+    {
+      id: "mission",
+      label: "Mission",
+      value: missionReady ? (missionDraft.yaml ? "YAML loaded" : "goal defined") : "define goal",
+      detail: missionReady ? missionDraft.goal || "mission YAML ready" : "goal or mission YAML",
+      decision: "Describe the field objective or paste the mission YAML.",
+      outcome: "Mission intent is ready to bind to model, runtime, handling, and package evidence.",
+      tone: missionReady ? "good" : "warn"
+    },
+    {
+      id: "model",
+      label: "Model Plan",
+      value: selectedModel?.name ?? "select model",
+      detail: selectedModel ? `${selectedModel.format}; ${formatPerformanceSlo(selectedModel)}` : "choose candidate models",
+      decision: "Choose the model package that should satisfy the mission.",
+      outcome: "A signed model candidate is selected for runtime fit and edge deployment.",
+      tone: selectedModel ? "good" : "warn"
+    },
+    {
+      id: "runtime",
+      label: "Runtime Fit",
+      value: selectedRuntime ? runtimeTargetId(selectedRuntime) : "select runtime",
+      detail: runtimeFitDisplay.detail,
+      decision: "Pick the on-device runtime target with proof of compatibility and SLO fit.",
+      outcome: "The model has a concrete runtime target and capability proof path.",
+      tone: selectedRuntime ? runtimeFitDisplay.tone : "warn"
+    },
+    {
+      id: "handling",
+      label: "Sensor Handling",
+      value: missionDraft.sensor || "sensor pending",
+      detail: `${missionDraft.switchPolicy.replace(/_/g, " ")}; fallback ${missionDraft.fallbackModelId || "auto"}; ${missionDraft.ddilMode.replace(/_/g, " ")}`,
+      decision: "Set sensor input, confidence switching, fallback model, and DDIL behavior.",
+      outcome: "The edge daemon knows when to run, switch, queue, or require review.",
+      tone: missionDraft.sensor && missionDraft.slot ? "good" : "warn"
+    },
+    {
+      id: "package",
+      label: "Package Handoff",
+      value: missionPackageStageStatus.value,
+      detail: missionPackageStageStatus.detail,
+      decision: "Hash the mission, model, runtime plan, and handling policy into one deployable handoff.",
+      outcome: "A signed mission package and deployment intent can be staged on the edge device.",
+      tone: missionPackageStageStatus.tone
+    },
+    {
+      id: "deploy",
+      label: "Edge Deploy",
+      value: latestRollout?.state ?? (missionRollouts.length ? `${missionRollouts.length} rollouts` : "not assigned"),
+      detail: replayBlockedOperations ? `${replayBlockedOperations} DDIL replay blocked` : rolloutDetail,
+      decision: "Stage the planned mission package to the selected edge device or rollout batch.",
+      outcome: "The edge deployment is assigned, approved, activated, or blocked with explicit evidence.",
+      tone: replayBlockedOperations ? "bad" : latestRollout?.state === "failed" ? "bad" : latestRollout ? "good" : "warn"
+    },
+    {
+      id: "field",
+      label: "Field Ops",
+      value: String(evidenceValue || `${snapshot.evidenceBundles.length} bundles`),
+      detail: offlineMode ? `DDIL offline; ${ddilDetail}` : evidenceDetail,
+      decision: "Monitor evidence, DDIL queues, rollback, and runtime repair while the mission runs.",
+      outcome: "Operators can prove what happened and recover safely under connectivity loss.",
+      tone: replayBlockedOperations || deadLetteredOperations ? "bad" : missionProofComplete || proofEvents ? "good" : "warn"
+    }
+  ];
+  const showProductStage =
+    activeHubStage === "model" || activeHubStage === "deploy" || activeHubStage === "field";
+  const missionPackageDeploymentIntent = asRecord(missionPackageManifest.deployment_intent);
+  const missionPackageDeploymentCommand = asRecord(missionPackageDeploymentIntent.command);
+  const hasMissionPackageDeploymentIntent = Boolean(
+    missionPackageDeploymentIntent.rollout_id && missionPackageDeploymentCommand.path
+  );
+  const canStageMissionPackage =
+    hasMissionPackageDeploymentIntent && missionPackageStageStatus.stageable;
+  const edgeProofTrace = useMemo(
+    () => edgeProofTraceStatus(lastEdgeProof, readinessContext),
+    [lastEdgeProof, readinessKey]
+  );
+  const baseEdgeProofComponentDigests = useMemo(
+    () => edgeProofComponentDigestStatus(lastEdgeProof, readinessContext),
+    [lastEdgeProof, readinessKey]
+  );
+  const [verifiedEdgeProofComponentDigests, setVerifiedEdgeProofComponentDigests] = useState<EdgeProofComponentDigestStatus | undefined>();
+  const edgeProofComponentDigests = verifiedEdgeProofComponentDigests ?? baseEdgeProofComponentDigests;
+
+  useEffect(() => {
+    let cancelled = false;
+    setVerifiedEdgeProofComponentDigests(undefined);
+    if (!lastEdgeProof || baseEdgeProofComponentDigests.status !== "retained") return () => {
+      cancelled = true;
+    };
+    setVerifiedEdgeProofComponentDigests({
+      ...baseEdgeProofComponentDigests,
+      detail: "Browser is recomputing runtime workbench, trace, and manifest hashes.",
+      status: "verifying",
+      tone: "neutral",
+      value: "verifying digests"
+    });
+    void verifyEdgeProofComponentDigestStatus(lastEdgeProof, baseEdgeProofComponentDigests)
+      .then((status) => {
+        if (!cancelled) setVerifiedEdgeProofComponentDigests(status);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          const detail = error instanceof Error ? error.message : String(error);
+          setVerifiedEdgeProofComponentDigests({
+            ...baseEdgeProofComponentDigests,
+            detail,
+            errors: [detail],
+            status: "mismatch",
+            tone: "bad",
+            value: "digest verification failed"
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [baseEdgeProofComponentDigests, lastEdgeProof]);
+
+  useEffect(() => {
+    if (selectedModelId) return;
+    const activeModel = activeModelId ? models.find((model) => model.id === activeModelId) : undefined;
+    if (activeModel) {
+      setSelectedModelId(activeModel.id);
+      return;
+    }
+    if (models[0]) setSelectedModelId(models[0].id);
+  }, [activeModelId, models, selectedModelId]);
+
+  useEffect(() => {
+    if (!selectedDeviceId && snapshot.devices[0]) setSelectedDeviceId(deviceId(snapshot.devices[0]));
+  }, [snapshot.devices, selectedDeviceId]);
+
+  useEffect(() => {
+    if (!selectedRuntimeId && selectedRuntime) setSelectedRuntimeId(runtimeTargetId(selectedRuntime));
+  }, [selectedRuntime, selectedRuntimeId]);
+
+  useEffect(() => {
+    if (!readinessContext.package_id && !readinessContext.device_id && !readinessContext.runtime_target_id) {
+      setContextReadiness(undefined);
+      return;
+    }
+    let cancelled = false;
+    setContextReadiness(undefined);
+    void loadReadiness(token, readinessContext)
+      .then((readiness) => {
+        if (!cancelled) setContextReadiness(readiness);
+      })
+      .catch(() => {
+        if (!cancelled) setContextReadiness(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [readinessKey, readinessRefreshVersion, token]);
+
+  useEffect(() => {
+    setMissionPackagePlan(undefined);
+    setLastMissionPackageHandoff(undefined);
+  }, [missionDraft, readinessKey]);
+
+  async function run(title: string, action: () => Promise<unknown>, shouldRefresh = true): Promise<void> {
+    setLoading(true);
+    try {
+      const payload = await action();
+      setPreview(payload === undefined ? undefined : { title, payload });
+      if (shouldRefresh) {
+        const nextSnapshot = await loadSnapshot(token);
+        setSnapshot(nextSnapshot);
+        setReadinessRefreshVersion((version) => version + 1);
+      }
+      setToast({ tone: "success", title });
+    } catch (error) {
+      setToast(errorToast(title, error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function persistToken(): void {
+    const trimmed = token.trim();
+    saveToken(trimmed);
+    setToken(trimmed);
+    setToast({ tone: "success", title: trimmed ? "API token saved" : "API token cleared" });
+  }
+
+  function importMissionYaml(yaml: string, fileName: string): void {
+    const selection = missionSelectionFromYaml(yaml);
+    const selectedYamlModel =
+      (selection.modelId ? models.find((model) => model.id === selection.modelId) : undefined) ??
+      (selection.packageId ? models.find((model) => model.packageId === selection.packageId) : undefined);
+    const selectedYamlDevice = selection.deviceId
+      ? snapshot.devices.find((device) => deviceId(device) === selection.deviceId)
+      : undefined;
+    const selectedYamlRuntime = selection.runtimeTargetId
+      ? snapshot.runtimeTargets.find((target) => runtimeTargetId(target) === selection.runtimeTargetId)
+      : undefined;
+    const appliedSelection: string[] = [];
+    const missingSelection: string[] = [];
+
+    if (selectedYamlModel) {
+      setSelectedModelId(selectedYamlModel.id);
+      appliedSelection.push(`model ${selectedYamlModel.id}`);
+    } else {
+      if (selection.modelId) missingSelection.push(`model ${selection.modelId}`);
+      if (!selection.modelId && selection.packageId) missingSelection.push(`package ${selection.packageId}`);
+    }
+    if (selectedYamlDevice) {
+      setSelectedDeviceId(deviceId(selectedYamlDevice));
+      appliedSelection.push(`edge ${deviceId(selectedYamlDevice)}`);
+    } else if (selection.deviceId) {
+      missingSelection.push(`edge ${selection.deviceId}`);
+    }
+    if (selectedYamlRuntime) {
+      setSelectedRuntimeId(runtimeTargetId(selectedYamlRuntime));
+      appliedSelection.push(`runtime ${runtimeTargetId(selectedYamlRuntime)}`);
+    } else if (selection.runtimeTargetId) {
+      missingSelection.push(`runtime ${selection.runtimeTargetId}`);
+    }
+
+    setMissionDraft((current) => missionDraftFromYaml(current, yaml));
+    setMissionPackagePlan(undefined);
+    setLastMissionPackageHandoff(undefined);
+    const detailParts = [`${fileName} populated mission, SLO, handling, and DDIL fields.`];
+    if (appliedSelection.length) {
+      detailParts.push(`Selected ${appliedSelection.join(", ")} from the spec.`);
+    }
+    if (missingSelection.length) {
+      detailParts.push(`Unmatched hints: ${missingSelection.join(", ")}.`);
+    }
+    setToast({
+      tone: "success",
+      title: "Mission YAML imported",
+      detail: detailParts.join(" ")
+    });
+    navigateHubStage("mission");
+  }
+
+  function reportMissionYamlImportError(fileName: string): void {
+    setToast({
+      tone: "error",
+      title: "Mission YAML import failed",
+      detail: `${fileName} could not be read by the browser.`
+    });
+  }
+
+  async function copyCommand(label: string, command: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(command);
+      setToast({ tone: "success", title: `${label} copied` });
+    } catch {
+      setPreview({ title: label, payload: { command } });
+      setToast({
+        tone: "info",
+        title: `${label} ready`,
+        detail: "Command opened in the payload panel."
+      });
+    }
+  }
+
+  function missionPackagePlanPayload(): MissionPackagePlanRequest {
+    const latencyBudget = Number(missionDraft.latencyBudgetMs);
+    const minThroughput = Number(missionDraft.throughputMinIps);
+    const confidenceThreshold = Number(missionDraft.confidenceThreshold);
+    return {
+      ...readinessContext,
+      confidence_threshold: Number.isFinite(confidenceThreshold) ? confidenceThreshold : undefined,
+      ddil_mode: missionDraft.ddilMode || undefined,
+      fallback_model_id: missionDraft.fallbackModelId || undefined,
+      goal: missionDraft.goal || undefined,
+      latency_budget_ms: Number.isFinite(latencyBudget) ? latencyBudget : undefined,
+      min_throughput_ips: Number.isFinite(minThroughput) ? minThroughput : undefined,
+      mission_yaml: missionDraft.yaml || undefined,
+      require_best_runtime: true,
+      require_capability_lock: true,
+      require_go: false,
+      require_proof_signature: true,
+      sensor: missionDraft.sensor || undefined,
+      slot: missionDraft.slot || readinessContext.slot,
+      switch_policy: missionDraft.switchPolicy || undefined,
+      min_runtime_fit: 95
+    };
+  }
+
+  function planMissionPackageArtifact(): void {
+    void run(
+      "Plan mission package",
+      async () => {
+        const plan = await planMissionPackage(token, missionPackagePlanPayload());
+        setMissionPackagePlan(plan);
+        setLastMissionPackageHandoff(undefined);
+        return plan;
+      },
+      false
+    );
+  }
+
+  function downloadMissionPackageArtifact(): void {
+    void run(
+      "Download mission package",
+      async () => {
+        const artifact = await downloadMissionPackage(token, missionPackagePlanPayload());
+        setMissionPackagePlan(artifact.payload);
+        setLastMissionPackageHandoff(artifact.handoff);
+        downloadJson(artifact.fileName, artifact.payload);
+        return {
+          fileName: artifact.fileName,
+          handoff: artifact.handoff,
+          package: artifact.payload
+        };
+      },
+      false
+    );
+  }
+
+  function stageMissionPackageRollout(): void {
+    const deploymentIntent = asRecord(missionPackageManifest.deployment_intent);
+    if (!deploymentIntent.rollout_id) {
+      setToast({
+        tone: "info",
+        title: "Plan package first",
+        detail: "Stage rollout uses the mission package deployment intent."
+      });
+      navigateHubStage("package");
+      return;
+    }
+    if (!missionPackageStageStatus.stageable) {
+      setToast({
+        tone: "info",
+        title: "Proof gate blocks staging",
+        detail:
+          missionPackageStageStatus.gateStatus === "failed"
+            ? "Refresh package planning after resolving runtime readiness blockers."
+            : "Run readiness/proof planning until the package proof gate passes."
+      });
+      navigateHubStage("package");
+      return;
+    }
+    void run(
+      "Stage package rollout",
+      async () => {
+        const stage = await stageMissionPackage(
+          token,
+          {
+            actor: "operator:mission-package-workbench",
+            mission_package: missionPackageManifest,
+            reason: "mission package deployment handoff",
+            rollout_id: missionPackageRolloutId(missionPackageManifest)
+          }
+        );
+        navigateHubStage("deploy", { workflowTarget: "rollouts" });
+        return stage;
+      },
+      true
+    );
+  }
+
+  function copyMissionPackageManifest(): void {
+    void copyCommand(
+      "Mission package manifest",
+      JSON.stringify(missionPackageManifest, null, 2)
+    );
+  }
+
+  function generateEdgeProofArtifact(): void {
+    void run(
+      "Generate edge runtime proof",
+      async () => {
+        const proof = await loadEdgeRuntimeProof(token, {
+          ...readinessContext,
+          source_action: "edge-runtime-mission",
+          require_go: true,
+          min_runtime_fit: 95,
+          require_best_runtime: true,
+          require_capability_lock: true
+        });
+        adoptEdgeProofReadiness(proof);
+        setLastEdgeProof(proof);
+        setLastEdgeProofHandoff(undefined);
+        return proof;
+      },
+      false
+    );
+  }
+
+  function downloadEdgeProofArtifact(): void {
+    void run(
+      "Download edge runtime proof",
+      async () => {
+        const artifact = await downloadEdgeRuntimeProof(token, {
+          ...readinessContext,
+          source_action: "edge-runtime-mission",
+          require_go: true,
+          min_runtime_fit: 95,
+          require_best_runtime: true,
+          require_capability_lock: true
+        });
+        adoptEdgeProofReadiness(artifact.payload);
+        setLastEdgeProof(artifact.payload);
+        setLastEdgeProofHandoff(artifact.handoff);
+        downloadJson(artifact.fileName, artifact.payload);
+        return artifact.payload;
+      },
+      false
+    );
+  }
+
+  function adoptEdgeProofReadiness(proof: unknown): void {
+    const record = asRecord(proof);
+    if (record.schema_version !== "temms-edge-runtime-proof/v1") return;
+    const readiness = asRecord(record.readiness) as DeploymentReadiness;
+    if (!selectionMatchesContext(asRecord(record.selection), readinessContext)) return;
+    if (!readinessMatchesContext(readiness, readinessContext)) return;
+    setContextReadiness(readiness);
+    setSnapshot((current) => ({ ...current, readiness }));
+  }
+
+  function submitForm(name: string, event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const actor = fieldValue(form, "actor") || "operator:react-ui";
+    const handlers: Record<string, () => Promise<unknown>> = {
+      "enroll-device": () =>
+        hubApi.enrollDevice(
+          {
+            device_id: fieldValue(form, "device_id"),
+            profile: fieldValue(form, "profile"),
+            labels: { site: fieldValue(form, "site"), source: "react-ui" },
+            actor
+          },
+          token
+        ),
+      "register-package": () =>
+        hubApi.registerPackage(
+          {
+            package_path: fieldValue(form, "package_path"),
+            strict_metadata: isChecked(form, "strict_metadata"),
+            actor
+          },
+          token
+        ),
+      "compatibility-preview": () =>
+        hubApi.previewCompatibility(
+          {
+            device_id: fieldValue(form, "device_id"),
+            package_id: fieldValue(form, "package_id"),
+            model_id: fieldValue(form, "model_id") || undefined,
+            runtime_target_id: fieldValue(form, "runtime_target_id") || undefined
+          },
+          token
+        ),
+      "assign-rollout": () =>
+        hubApi.assignRollout(
+          {
+            rollout_id: fieldValue(form, "rollout_id") || undefined,
+            device_id: fieldValue(form, "device_id"),
+            package_id: fieldValue(form, "package_id"),
+            model_id: fieldValue(form, "model_id") || undefined,
+            slot: fieldValue(form, "slot") || undefined,
+            runtime_target_id: fieldValue(form, "runtime_target_id") || undefined,
+            require_approval: isChecked(form, "require_approval"),
+            reason: "operator assigned rollout from Mission Package Workbench",
+            actor
+          },
+          token
+        ),
+      "create-rollout-plan": () =>
+        hubApi.createRolloutPlan(
+          {
+            plan_id: fieldValue(form, "plan_id") || undefined,
+            package_id: fieldValue(form, "package_id"),
+            model_id: fieldValue(form, "model_id") || undefined,
+            device_ids: csv(fieldValue(form, "device_ids")),
+            slot: fieldValue(form, "slot") || undefined,
+            runtime_target_id: fieldValue(form, "runtime_target_id") || undefined,
+            batch_size: Number(fieldValue(form, "batch_size") || "1"),
+            require_approval: isChecked(form, "require_approval"),
+            require_runtime_validation: isChecked(form, "require_runtime_validation"),
+            reason: "operator created rollout plan from Mission Package Workbench",
+            actor
+          },
+          token
+        ),
+      "airgap-import": () => hubApi.importAirgap(JSON.parse(fieldValue(form, "bundle")) as JsonObject, token)
+    };
+    const handler = handlers[name];
+    if (handler) void run(actionTitle(name), handler, name !== "compatibility-preview");
+  }
+
+  function promoteSelectedPackage(): void {
+    if (!selectedPackage || !nextPackageState) return;
+    const id = packageId(selectedPackage);
+    void run(`Promote ${id}`, () =>
+      hubApi.promotePackage(
+        id,
+        {
+          state: nextPackageState,
+          actor: "operator:react-ui",
+          reason: `promoted to ${nextPackageState} from Mission Package Workbench`
+        },
+        token
+      )
+    );
+  }
+
+  function applyEdgeRecommendation(recommendation: EdgeRecommendation): void {
+    if (recommendation.model_id) setSelectedModelId(String(recommendation.model_id));
+    if (recommendation.device_id) setSelectedDeviceId(String(recommendation.device_id));
+    if (recommendation.runtime_target_id) setSelectedRuntimeId(String(recommendation.runtime_target_id));
+    setFocusedWorkflow("deployment");
+  }
+
+  function approveRollout(id: string): void {
+    void run(`Approve ${id}`, () =>
+      hubApi.approveRollout(
+        id,
+        {
+          actor: "operator:approver-ui",
+          reason: "mission policy approved from Mission Package Workbench"
+        },
+        token
+      )
+    );
+  }
+
+  function applyRollout(id: string): void {
+    const rollout = snapshot.rollouts.find((candidate) => rolloutId(candidate) === id);
+    void run(`Apply ${id}`, () =>
+      hubApi.applyRollout(
+        id,
+        {
+          actor: "operator:react-ui",
+          model_id: rollout?.model_id || selectedModel?.id
+        },
+        token
+      )
+    );
+  }
+
+  function rollbackRollout(id: string): void {
+    void run(`Rollback ${id}`, () =>
+      hubApi.rollbackRollout(
+        id,
+        {
+          actor: "operator:mission-package-workbench",
+          reason: "operator requested rollback from Mission Package Workbench"
+        },
+        token
+      )
+    );
+  }
+
+  function advanceRolloutPlan(id: string): void {
+    void run(`Advance ${id}`, () =>
+      hubApi.advanceRolloutPlan(
+        id,
+        {
+          actor: "operator:mission-package-workbench"
+        },
+        token
+      )
+    );
+  }
+
+  function pauseRolloutPlan(id: string): void {
+    void run(`Pause ${id}`, () =>
+      hubApi.pauseRolloutPlan(
+        id,
+        {
+          actor: "operator:mission-package-workbench",
+          reason: "operator paused rollout plan from Mission Package Workbench"
+        },
+        token
+      )
+    );
+  }
+
+  function resumeRolloutPlan(id: string): void {
+    void run(`Resume ${id}`, () =>
+      hubApi.resumeRolloutPlan(
+        id,
+        {
+          actor: "operator:mission-package-workbench",
+          reason: "operator resumed rollout plan from Mission Package Workbench"
+        },
+        token
+      )
+    );
+  }
+
+  function exportEvidence(mode: EvidenceExportMode): void {
+    const body =
+      mode === "summary"
+        ? { summary: true, summary_limit: 20 }
+        : mode === "replay"
+          ? { replay: true, replay_limit: 50 }
+          : { decision_limit: 100, include_benchmarks: true };
+    void run(`Evidence ${mode}`, () => hubApi.exportEvidence(body, token), false);
+  }
+
+  function exportAirgap(includePackages: boolean): void {
+    void run(
+      includePackages ? "Export air-gap bundle with packages" : "Export air-gap bundle",
+      () => hubApi.exportAirgap({ include_packages: includePackages }, token),
+      false
+    );
+  }
+
+  function enterOfflineMode(): void {
+    void run("Enter DDIL offline mode", () => controlApi.setOffline(token));
+  }
+
+  function restoreOnlineMode(): void {
+    void run("Restore online mode", () => controlApi.setOnline(token));
+  }
+
+  function syncPendingOperations(): void {
+    void run(
+      "Sync pending DDIL operations",
+      async () => {
+        const payload = await controlApi.syncPending(token);
+        const nextSnapshot = await loadSnapshotAfterReconciliation(token);
+        setSnapshot(nextSnapshot);
+        setReadinessRefreshVersion((version) => version + 1);
+        return payload;
+      },
+      false
+    );
+  }
+
+  function quarantineBlockedOperations(): void {
+    void run(
+      "Quarantine blocked DDIL operations",
+      () =>
+        controlApi.quarantineBlocked(
+          {
+            actor: "operator:mission-package-workbench",
+            reason: "operator quarantined blocked DDIL preflight"
+          },
+          token
+        ),
+      true
+    );
+  }
+
+  function acknowledgeDeadLetteredOperations(): void {
+    void run(
+      "Acknowledge quarantined DDIL operations",
+      () =>
+        controlApi.acknowledgeDeadLetters(
+          {
+            actor: "operator:mission-package-workbench",
+            reason: "operator reviewed quarantined DDIL intents"
+          },
+          token
+        ),
+      true
+    );
+  }
+
+  function requeueDeadLetteredOperations(): void {
+    void run(
+      "Requeue quarantined DDIL operations",
+      () =>
+        controlApi.requeueDeadLetters(
+          {
+            actor: "operator:mission-package-workbench",
+            reason: "operator requeued remediated DDIL intents",
+            require_ready: true
+          },
+          token
+        ),
+      true
+    );
+  }
+
+  function requeueDeadLetteredOperation(operation: Record<string, unknown>): void {
+    const digest = stringOf(operation.payload_sha256, "");
+    if (!digest) {
+      setToast({
+        tone: "info",
+        title: "Requeue unavailable",
+        detail: "This quarantined DDIL intent does not include a payload hash."
+      });
+      return;
+    }
+    void run(
+      "Requeue quarantined DDIL intent",
+      () =>
+        controlApi.requeueDeadLetters(
+          {
+            actor: "operator:mission-package-workbench",
+            reason: "operator requeued remediated DDIL intent",
+            payload_sha256s: [digest],
+            require_ready: true
+          },
+          token
+        ),
+      true
+    );
+  }
+
+  function retargetPendingRuntime(operation: Record<string, unknown>): void {
+    const payloadSha256 = stringOf(operation.payload_sha256, "");
+    const runtimeTargetId =
+      stringOf(operation.runtime_remediation_runtime_target_id, "") ||
+      stringOf(operation.best_runtime_target_id, "");
+    if (!payloadSha256 || !runtimeTargetId) {
+      setToast({
+        tone: "info",
+        title: "Runtime retarget unavailable",
+        detail: "This pending DDIL intent does not include a measured runtime target candidate."
+      });
+      return;
+    }
+    void run("Retarget pending runtime", () =>
+      controlApi.retargetRuntime(
+        {
+          payload_sha256: payloadSha256,
+          runtime_target_id: runtimeTargetId,
+          actor: "operator:mission-package-workbench",
+          reason: "operator selected measured best runtime target"
+        },
+        token
+      )
+    );
+  }
+
+  function queueDeploymentIntent(): void {
+    void run("Queue DDIL deployment intent", () =>
+      controlApi.requestDeploy(
+        {
+          actor: "operator:mission-package-workbench",
+          source: "hub-ddil-drill",
+          package_id: selectedModel?.packageId,
+          model_id: selectedModel?.id,
+          device_id: selectedDevice ? deviceId(selectedDevice) : undefined,
+          runtime_target_id: selectedRuntime ? runtimeTargetId(selectedRuntime) : undefined,
+          slot: "vision",
+          requested_at: new Date().toISOString()
+        },
+        token
+      )
+    );
+  }
+
+  function workflowClass(target: WorkflowTarget, className: string): string {
+    return focusedWorkflow === target ? `${className} workflow-target-active` : className;
+  }
+
+  function workflowRefForTarget(target: WorkflowTarget) {
+    return {
+      model: modelWorkflowRef,
+      deployment: deploymentWorkflowRef,
+      plans: plansWorkflowRef,
+      rollouts: rolloutsWorkflowRef,
+      ddil: ddilWorkflowRef,
+      evidence: evidenceWorkflowRef,
+      assets: assetsWorkflowRef
+    }[target];
+  }
+
+  function navigateHubStage(stage: HubStage, options: { workflowTarget?: WorkflowTarget } = {}): void {
+    setActiveHubStage(stage);
+    setFocusedWorkflow(options.workflowTarget);
+    window.setTimeout(() => {
+      const section = options.workflowTarget ? workflowRefForTarget(options.workflowTarget).current : stageFlowRef.current;
+      if (!section) return;
+      section.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (options.workflowTarget) {
+        section.focus({ preventScroll: true });
+        return;
+      }
+      const activeStep = stageFlowRef.current?.querySelector<HTMLElement>(`[data-stage-id="${stage}"]`);
+      activeStep?.focus({ preventScroll: true });
+    }, 0);
+  }
+
+  function focusWorkflow(target: WorkflowTarget, actionLabel: string, contextLabel = ""): void {
+    navigateHubStage(hubStageForWorkflowTarget(target), { workflowTarget: target });
+    setToast({
+      tone: "success",
+      title: actionLabel,
+      detail: `${workflowTargetLabel(target)} is focused${
+        contextLabel ? ` for ${contextLabel}` : ""
+      }.`
+    });
+  }
+
+  function handleReadinessAction(action: ReadinessGateAction): void {
+    const command = readinessCommand(action);
+    applyReadinessActionSelection(action);
+    focusWorkflow(
+      workflowTargetForReadinessAction(action),
+      action.label,
+      readinessActionContext(action)
+    );
+    if (command) setPendingReadinessAction(action);
+  }
+
+  function applyReadinessActionSelection(action: ReadinessGateAction): void {
+    if (!["select_context", "select_runtime_target"].includes(action.kind)) return;
+    const refs = asRecord(action.refs);
+    const model = stringOf(refs.model_id, "");
+    const device = stringOf(refs.device_id, "");
+    const runtime = stringOf(refs.runtime_target_id, "");
+    if (model) setSelectedModelId(model);
+    if (device) setSelectedDeviceId(device);
+    if (runtime) setSelectedRuntimeId(runtime);
+  }
+
+function executePendingReadinessAction(): void {
+  const action = pendingReadinessAction;
+  const command = action ? readinessCommand(action) : undefined;
+  if (!action || !command) return;
+  if (command.requires_edge_execution) {
+    setToast({
+      tone: "info",
+      title: "Run this on the edge node",
+      detail: edgeReadinessCommandReason(action, command)
+    });
+    return;
+  }
+    setPendingReadinessAction(undefined);
+    void run(
+      `Run ${action.label}`,
+      async () => {
+        const payload = await executeReadinessCommand(command, token);
+        if (command.path === "/v1/control/sync") {
+          const nextSnapshot = await loadSnapshotAfterReconciliation(token);
+          setSnapshot(nextSnapshot);
+          setReadinessRefreshVersion((version) => version + 1);
+        }
+        return payload;
+      },
+      command.path !== "/v1/control/sync"
+    );
+  }
+
+  const activeStageRunbook = hubStageRunbookFor({
+    activeStage: activeHubStage,
+    currentStage: hubStages.find((stage) => stage.id === activeHubStage) ?? hubStages[0],
+    deadLetteredOperations,
+    latestRollout,
+    missionPackageStageStatus,
+    missionProofComplete,
+    missionReady,
+    offlineMode,
+    proofEvents,
+    replayBlockedOperations,
+    runtimeFitDisplay,
+    selectedDevice,
+    selectedModel,
+    selectedRuntime,
+    onDownloadPackage: downloadMissionPackageArtifact,
+    onGenerateProof: generateEdgeProofArtifact,
+    onGoDeploy: () => navigateHubStage("deploy"),
+    onGoFieldOps: () => navigateHubStage("field"),
+    onGoHandling: () => navigateHubStage("handling"),
+    onGoModels: () => navigateHubStage("model"),
+    onGoPackage: () => navigateHubStage("package"),
+    onGoRuntime: () => navigateHubStage("runtime"),
+    onPlanPackage: planMissionPackageArtifact,
+    onStageDeploy: stageMissionPackageRollout,
+    onSync: () => void refresh()
+  });
+  const workflowSignals: MissionWorkflowSignal[] = [
+    {
+      label: "Mission",
+      value: missionDraft.yaml ? "YAML loaded" : missionDraft.goal ? "goal defined" : "mission pending",
+      detail: missionDraft.sensor ? `${missionDraft.sensor} / ${missionDraft.slot || "vision"}` : "sensor pending",
+      tone: missionReady ? "good" : "warn"
+    },
+    {
+      label: "Model",
+      value: selectedModel?.name ?? "select model",
+      detail: selectedModel?.packageId ?? "signed package pending",
+      tone: selectedModel ? "good" : "warn"
+    },
+    {
+      label: "Runtime",
+      value: selectedRuntime ? runtimeTargetId(selectedRuntime) : "select runtime",
+      detail: selectedDevice ? `${deviceId(selectedDevice)} / ${runtimeFitDisplay.label}` : runtimeFitDisplay.detail,
+      tone: selectedRuntime && selectedDevice ? runtimeFitDisplay.tone : "warn"
+    },
+    {
+      label: "Handling",
+      value: missionDraft.switchPolicy.replace(/_/g, " "),
+      detail: `fallback ${missionDraft.fallbackModelId || "auto"} / ${missionDraft.ddilMode.replace(/_/g, " ")}`,
+      tone: missionDraft.sensor && missionDraft.slot ? "good" : "warn"
+    },
+    {
+      label: "Package",
+      value: missionPackageStageStatus.value,
+      detail: missionPackageStageStatus.detail,
+      tone: missionPackageStageStatus.tone
+    }
+  ];
+
+  return (
+    <div className="app-shell">
+      <header className="topbar">
+        <div className="brand-block">
+          <span className="eyebrow">TEMMS</span>
+          <h1>Mission Package Workbench</h1>
+          <p>
+            Turn a mission spec into a model/runtime plan, sensor handling policy, signed package, and edge deploy
+            intent with on-device SLO, DDIL, and evidence gates attached.
+          </p>
+        </div>
+        <div className="access-strip">
+          <label className="token-field">
+            <span>API token</span>
+            <input
+              type="password"
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+              placeholder="optional bearer token"
+            />
+          </label>
+          <Button icon={<KeyRound size={16} />} variant="secondary" onClick={persistToken}>
+            Save
+          </Button>
+          <Button icon={<RefreshCw size={16} />} onClick={() => void refresh()} disabled={loading}>
+            {loading ? "Syncing" : "Sync"}
+          </Button>
+        </div>
+      </header>
+
+      {toast ? <ToastView toast={toast} /> : null}
+
+      <div className="mission-workflow-shell" ref={stageFlowRef}>
+        <MissionWorkflowCockpit
+          activeStage={activeHubStage}
+          contextState={offlineMode ? "offline" : "online"}
+          runbook={activeStageRunbook}
+          signals={workflowSignals}
+          stages={hubStages}
+          onSelect={navigateHubStage}
+        >
+          <section className="mission-strip" aria-label="Mission status">
+            <StatusTile label="Models" value={models.length} detail={`${signedPackages} signed`} icon={<Box size={18} />} />
+            <StatusTile
+              label="Released"
+              value={releasedPackages}
+              detail={`${modelValidationCount} validations`}
+              icon={<BadgeCheck size={18} />}
+            />
+            <StatusTile
+              label="Runtime Fit"
+              value={targetFitValue}
+              detail={targetFitDetail}
+              icon={<Cpu size={18} />}
+            />
+            <StatusTile
+              label="Rollouts"
+              value={missionRollouts.length}
+              detail={rolloutDetail}
+              icon={<GitBranch size={18} />}
+            />
+            <StatusTile
+              label="Evidence"
+              value={evidenceValue}
+              detail={evidenceDetail}
+              icon={<ShieldCheck size={18} />}
+            />
+            <StatusTile
+              label="DDIL"
+              value={offlineMode ? "Offline" : "Online"}
+              detail={ddilDetail}
+              icon={<Activity size={18} />}
+            />
+          </section>
+        </MissionWorkflowCockpit>
+      </div>
+
+      {activeHubStage === "mission" ? (
+        <div className="stage-stack" data-testid="hub-stage-mission">
+          <MissionDesignPanel
+            draft={missionDraft}
+            manifest={missionPackageManifest}
+            selectedDevice={selectedDevice}
+            selectedModel={selectedModel}
+            selectedRuntime={selectedRuntime}
+            onChange={setMissionDraft}
+            onCopyManifest={copyMissionPackageManifest}
+            onImportYaml={importMissionYaml}
+            onImportYamlError={reportMissionYamlImportError}
+            onPlanPackage={planMissionPackageArtifact}
+          />
+        </div>
+      ) : null}
+
+      {activeHubStage === "runtime" ? (
+        <div className="stage-stack" data-testid="hub-stage-runtime">
+          <EdgeRuntimeWorkbench
+            devices={snapshot.devices}
+            edgeExecutionContract={edgeExecutionContract}
+            models={models}
+            readiness={scopedReadiness}
+            resourceEnvelopeFit={resourceEnvelopeFit}
+            runtimeDecision={runtimeDecision}
+            runtimeFitDisplay={runtimeFitDisplay}
+            runtimeTargets={snapshot.runtimeTargets}
+            runtimeValidations={snapshot.runtimeValidations}
+            selectedDevice={selectedDevice}
+            selectedModel={selectedModel}
+            selectedRuntime={selectedRuntime}
+            onCopyCommand={(label, command) => void copyCommand(label, command)}
+            onGenerateProof={generateEdgeProofArtifact}
+            onGoModels={() => navigateHubStage("model")}
+            onSelectDevice={setSelectedDeviceId}
+            onSelectRuntime={setSelectedRuntimeId}
+          />
+
+          <EdgeOperatorCommandPanel
+            device={selectedDevice}
+            edgeExecutionContract={edgeExecutionContract}
+            model={selectedModel}
+            proofWorkflow={edgeProofWorkflow}
+            readiness={scopedReadiness}
+            runtime={selectedRuntime}
+            runtimeDecision={runtimeDecision}
+            runtimeFitDisplay={runtimeFitDisplay}
+          />
+        </div>
+      ) : null}
+
+      {activeHubStage === "handling" ? (
+        <div className="stage-stack" data-testid="hub-stage-handling">
+          <HandlingPolicyPanel
+            draft={missionDraft}
+            manifest={missionPackageManifest}
+            models={models}
+            selectedDevice={selectedDevice}
+            selectedModel={selectedModel}
+            selectedRuntime={selectedRuntime}
+            onChange={setMissionDraft}
+            onPlanPackage={planMissionPackageArtifact}
+          />
+        </div>
+      ) : null}
+
+      {activeHubStage === "package" ? (
+        <div className="stage-stack" data-testid="hub-stage-package">
+          <EdgePackagePlanPanel
+            canStageDeploy={canStageMissionPackage}
+            manifest={missionPackageManifest}
+            readinessVerdict={readinessVerdict}
+            workflow={edgeProofWorkflow}
+            onCopyManifest={copyMissionPackageManifest}
+            onDownloadPackage={downloadMissionPackageArtifact}
+            onPlanPackage={planMissionPackageArtifact}
+            onStageDeploy={stageMissionPackageRollout}
+          />
+          <MissionPackageDownloadHandoffCard
+            handoff={lastMissionPackageHandoff}
+            manifest={missionPackageManifest}
+          />
+
+          <details className="package-verification-drawer" data-testid="package-advanced-verification">
+            <summary>
+              <span className="package-verification-summary-copy">
+                <span className="section-kicker">Advanced verification</span>
+                <strong>Proof, readiness, and execution contract</strong>
+                <small>Open when an operator needs to inspect why this package can or cannot deploy.</small>
+              </span>
+              <Badge value={readinessVerdict.label} />
+            </summary>
+
+            <div className="package-verification-stack">
+              <ReadinessVerdictPanel verdict={readinessVerdict} onAction={handleReadinessAction} />
+
+              <EdgeRuntimeMissionPanel mission={edgeRuntimeMission} />
+
+              <EdgeProofPanel
+                componentDigests={edgeProofComponentDigests}
+                disabled={loading}
+                handoff={lastEdgeProofHandoff}
+                proof={lastEdgeProof}
+                trace={edgeProofTrace}
+                workflow={edgeProofWorkflow}
+                onGenerate={generateEdgeProofArtifact}
+                onDownload={downloadEdgeProofArtifact}
+                onCopy={(label, command) => void copyCommand(label, command)}
+              />
+
+              <EdgeExecutionContractPanel
+                device={selectedDevice}
+                edgeRuntimeFit={edgeRuntimeFit}
+                edgeExecutionContract={edgeExecutionContract}
+                model={selectedModel}
+                readiness={scopedReadiness}
+                readinessVerdict={readinessVerdict}
+                resourceEnvelopeFit={resourceEnvelopeFit}
+                runtime={selectedRuntime}
+                runtimeDecision={runtimeDecision}
+                runtimeFitDisplay={runtimeFitDisplay}
+                runtimeValidation={selectedRuntimeValidation}
+                onCopyRemediation={(label, command) => void copyCommand(label, command)}
+                onSelectRuntimeTarget={(runtimeTargetIdValue) => setSelectedRuntimeId(runtimeTargetIdValue)}
+              />
+            </div>
+          </details>
+        </div>
+      ) : null}
+
+      {pendingReadinessAction ? (
+        <ReadinessCommandPanel
+          action={pendingReadinessAction}
+          disabled={loading}
+          onCopy={(label, command) => void copyCommand(label, command)}
+          onClose={() => setPendingReadinessAction(undefined)}
+          onRun={executePendingReadinessAction}
+        />
+      ) : null}
+
+      {showProductStage ? (
+      <main className={`product-grid product-grid-stage-${activeHubStage}`} data-testid={`hub-stage-${activeHubStage}`}>
+        {activeHubStage === "field" ? (
+        <section
+          className={workflowClass("ddil", "section section-wide readiness-section repair-section")}
+          aria-labelledby="readiness-heading"
+          ref={ddilWorkflowRef}
+          tabIndex={-1}
+        >
+          <div className="section-header">
+            <div>
+              <span className="section-kicker">DDIL readiness</span>
+              <h2 id="readiness-heading">Field operating picture</h2>
+            </div>
+            <Badge value={offlineMode ? "offline" : pendingOperations ? "pending" : "ready"} />
+          </div>
+
+          <div className="readiness-grid">
+            <ReadinessCard
+              title="Connectivity"
+              value={connectivityState}
+              detail={
+                offlineMode
+                  ? "link unavailable"
+                  : pendingOperations
+                    ? `${pendingOperations} pending operations`
+                    : "network available"
+              }
+              state={offlineMode ? "warn" : "good"}
+            />
+            <ReadinessCard
+              title="Deployment"
+              value={deploymentStateName}
+              detail={deploymentDetail}
+              state={deploymentStateName === "READY" ? "good" : "warn"}
+            />
+            <ReadinessCard
+              title="Active slot"
+              value={stringOf(activeSlot?.slot, "vision")}
+              detail={stringOf(activeSlot?.active_model, selectedModel?.id ?? "no active model")}
+              state={activeSlot?.active_model ? "good" : "warn"}
+            />
+            <ReadinessCard
+              title="Evidence chain"
+              value={`${proofEvents} events`}
+              detail={
+                deadLetteredOperations
+                  ? `${deadLetteredOperations} quarantined intent${deadLetteredOperations === 1 ? "" : "s"}`
+                  : missionPhaseTotal
+                    ? `${completedMissionPhases}/${missionPhaseTotal} replay phases`
+                    : `${signedEvidenceImports} signed package${signedEvidenceImports === 1 ? "" : "s"}`
+              }
+              state={
+                missionProofComplete || (proofEvents && signedEvidenceImports && !missionPhaseTotal)
+                  ? "good"
+                  : "warn"
+              }
+            />
+	          </div>
+
+	          {runtimeRepairProof ? (
+	            <RuntimeRepairProofPanel
+	              proof={runtimeRepairProof}
+	              onRetargetRuntime={
+	                runtimeRepairProof.operation ? retargetPendingRuntime : undefined
+	              }
+	            />
+	          ) : null}
+
+	          {latestEvents.length ? (
+	            <div className="readiness-timeline" aria-label="Latest evidence events">
+	              {latestEvents.map((event, index) => (
+                <EvidenceEventRow key={`${stringOf(event.timestamp, "event")}-${index}`} event={event} />
+              ))}
+            </div>
+          ) : null}
+
+          {pendingOperationLedger.length ? (
+            <div className="pending-operation-ledger" aria-label="Pending DDIL operations">
+              {pendingOperationLedger.map((operation, index) => (
+                <PendingOperationRow
+                  key={`${stringOf(operation.payload_sha256, "pending")}-${index}`}
+                  operation={operation}
+                  onCopyCommand={(label, command) => void copyCommand(label, command)}
+                  onRetargetRuntime={retargetPendingRuntime}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {deadLetteredOperationLedger.length ? (
+            <div className="dead-letter-operation-ledger" aria-label="Quarantined DDIL operations">
+              <div className="ddil-ledger-heading">
+                <span>Quarantined DDIL intents</span>
+                <strong>{deadLetteredOperations}</strong>
+              </div>
+              {deadLetteredOperationLedger.map((operation, index) => (
+                <DeadLetteredOperationRow
+                  key={`${stringOf(operation.payload_sha256, "dead-letter")}-${index}`}
+                  operation={operation}
+                  onCopyCommand={(label, command) => void copyCommand(label, command)}
+                  onRequeue={requeueDeadLetteredOperation}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          <div className="ddil-controls" aria-label="DDIL drill controls">
+            <Button icon={<Activity size={16} />} variant="secondary" disabled={offlineMode} onClick={enterOfflineMode}>
+              Link loss
+            </Button>
+            <Button icon={<RefreshCw size={16} />} variant="secondary" disabled={!offlineMode} onClick={restoreOnlineMode}>
+              Restore link
+            </Button>
+            <Button
+              icon={<Rocket size={16} />}
+              variant="secondary"
+              disabled={!selectedModel || !selectedDevice}
+              onClick={queueDeploymentIntent}
+            >
+              Queue intent
+            </Button>
+            <Button
+              icon={<UploadCloud size={16} />}
+              variant="secondary"
+              disabled={!pendingOperations || Boolean(replayBlockedOperations)}
+              onClick={syncPendingOperations}
+            >
+              Sync pending
+            </Button>
+            <Button
+              icon={<Database size={16} />}
+              variant="secondary"
+              disabled={!replayBlockedOperations}
+              onClick={quarantineBlockedOperations}
+            >
+              Quarantine blocked
+            </Button>
+            <Button
+              icon={<FileCheck2 size={16} />}
+              variant="secondary"
+              disabled={!deadLetteredOperations}
+              onClick={requeueDeadLetteredOperations}
+            >
+              Requeue quarantined
+            </Button>
+            <Button
+              icon={<CheckCircle2 size={16} />}
+              variant="secondary"
+              disabled={!deadLetteredOperations}
+              onClick={acknowledgeDeadLetteredOperations}
+            >
+              Acknowledge quarantine
+            </Button>
+          </div>
+        </section>
+        ) : null}
+
+        {activeHubStage === "model" ? (
+        <section className="section section-primary model-inventory-section" aria-labelledby="models-heading">
+          <div className="section-header">
+            <div>
+              <span className="section-kicker">Mission model plan</span>
+              <h2 id="models-heading">Select the model that will ship to the edge</h2>
+            </div>
+            <Badge value={selectedModel?.packagePromotion ?? "no models"} />
+          </div>
+
+          <div className="model-list">
+            {models.length ? (
+              models.map((model) => (
+                <button
+                  className={model.id === selectedModel?.id ? "model-row model-row-active" : "model-row"}
+                  key={`${model.packageId}-${model.id}`}
+                  type="button"
+                  onClick={() => setSelectedModelId(model.id)}
+                >
+                  <span className="model-main">
+                    <strong>{model.name}</strong>
+                    <small>{model.id}</small>
+                  </span>
+                  <span>{model.format}</span>
+                  <span>{model.profiles.join(", ") || "any profile"}</span>
+                  <span>{formatBenchmark(model)}</span>
+                  <Badge value={model.signed ? "signed" : "unsigned"} />
+                </button>
+              ))
+            ) : (
+              <EmptyState title="No models registered" detail="Register a signed TEMMS package to populate the model inventory." />
+            )}
+          </div>
+        </section>
+        ) : null}
+
+        {activeHubStage === "model" ? (
+        <section
+          className={workflowClass("model", "section selected-model-section")}
+          aria-labelledby="selected-model-heading"
+          ref={modelWorkflowRef}
+          tabIndex={-1}
+        >
+          <div className="section-header">
+            <div>
+              <span className="section-kicker">Model decision</span>
+              <h2 id="selected-model-heading">{selectedModel?.name ?? "No model selected"}</h2>
+            </div>
+            {selectedModel ? <Badge value={selectedModel.packagePromotion} /> : null}
+          </div>
+          {selectedModel ? (
+            <div className="facts">
+              <Fact label="Package" value={selectedModel.packageId} />
+              <Fact label="Version" value={`${selectedModel.packageName} ${selectedModel.packageVersion}`} />
+              <Fact label="Runtime" value={selectedModel.runtimes.join(", ") || "not declared"} />
+              <Fact label="Provider" value={providerDisplayForModel(selectedModel, selectedRuntime)} />
+              <Fact label="Performance SLO" value={formatPerformanceSlo(selectedModel)} />
+              <Fact label="Resource envelope" value={formatResourceEnvelope(selectedModel)} />
+              <Fact label="Benchmark" value={formatBenchmark(selectedModel)} />
+              <Fact label="Benchmark age" value={formatBenchmarkFreshness(selectedModel)} />
+              <Fact label="Tested on" value={formatBenchmarkTarget(selectedModel)} />
+              <Fact label="Validation" value={selectedRuntimeValidation ? "passed runtime check" : "not validated"} />
+              <Fact label="Runtime fit" value={`${runtimeFitDisplay.label}: ${runtimeFitDisplay.detail}`} />
+              <Fact label="Resource fit" value={`${resourceEnvelopeFit.label}: ${resourceEnvelopeFit.detail}`} />
+              <Fact label="Source" value={selectedModel.source} />
+              <Fact label="Updated" value={compactDate(selectedModel.updatedAt)} />
+            </div>
+          ) : null}
+          <div className="button-row">
+            <Button
+              icon={<PackageCheck size={16} />}
+              variant="secondary"
+              disabled={!nextPackageState}
+              onClick={promoteSelectedPackage}
+            >
+              {nextPackageState ? `Promote to ${nextPackageState}` : "Released"}
+            </Button>
+          </div>
+        </section>
+        ) : null}
+
+        {activeHubStage === "deploy" ? (
+        <section
+          className={workflowClass("deployment", "section section-wide deployment-section")}
+          aria-labelledby="deploy-heading"
+          ref={deploymentWorkflowRef}
+          tabIndex={-1}
+        >
+          <div className="section-header">
+            <div>
+              <span className="section-kicker">Edge deploy</span>
+              <h2 id="deploy-heading">Stage the planned mission package</h2>
+            </div>
+            <Badge value={latestRollout?.state ?? "not assigned"} />
+          </div>
+
+          <div className="deploy-primary-lane" aria-label="Mission package deploy path">
+            <CapabilityMetric
+              label="Package handoff"
+              value={missionPackageStageStatus.value}
+              detail={missionPackageStageStatus.detail}
+              tone={missionPackageStageStatus.tone}
+            />
+            <CapabilityMetric
+              label="Deploy intent"
+              value={
+                hasMissionPackageDeploymentIntent
+                  ? String(missionPackageDeploymentIntent.rollout_id)
+                  : "plan package first"
+              }
+              detail={
+                hasMissionPackageDeploymentIntent
+                  ? String(missionPackageDeploymentCommand.path || "/v1/hub/rollouts")
+                  : "Deploy is bound only after the mission package is hashed."
+              }
+              tone={canStageMissionPackage ? "good" : "warn"}
+            />
+            <CapabilityMetric
+              label="Edge target"
+              value={selectedDevice ? deviceId(selectedDevice) : "select edge"}
+              detail={`${selectedRuntime ? runtimeTargetId(selectedRuntime) : "runtime pending"}; ${selectedModel?.name ?? "model pending"}`}
+              tone={selectedDevice && selectedRuntime && selectedModel ? "good" : "warn"}
+            />
+            <Button
+              icon={<Rocket size={16} />}
+              disabled={!canStageMissionPackage}
+              onClick={stageMissionPackageRollout}
+            >
+              Stage package rollout
+            </Button>
+          </div>
+
+          <EdgeRecommendationPanel
+            recommendations={edgeRecommendations}
+            selectedDeviceId={selectedDevice ? deviceId(selectedDevice) : ""}
+            selectedModelId={selectedModel?.id ?? ""}
+            selectedRuntimeId={selectedRuntime ? runtimeTargetId(selectedRuntime) : ""}
+            onSelect={applyEdgeRecommendation}
+          />
+
+          <CapabilityDossier
+            edgeRuntimeFit={edgeRuntimeFit}
+            model={selectedModel}
+            readiness={scopedReadiness}
+            readinessVerdict={readinessVerdict}
+            resourceEnvelopeFit={resourceEnvelopeFit}
+            runtime={selectedRuntime}
+            runtimeValidation={selectedRuntimeValidation}
+            device={selectedDevice}
+          />
+
+          <div className="path-line" aria-label="Deployment readiness">
+            <PathStep title="Model" value={selectedModel?.name ?? "Missing"} state={selectedModel ? "ready" : "blocked"} />
+            <PathStep title="Runtime" value={selectedRuntime ? runtimeTargetId(selectedRuntime) : "Missing"} state={selectedRuntime ? "ready" : "blocked"} />
+            <PathStep title="Edge" value={selectedDevice ? deviceId(selectedDevice) : "Missing"} state={selectedDevice ? "ready" : "blocked"} />
+            <PathStep title="Runtime fit" value={runtimeFitDisplay.label} state={runtimeFitDisplay.tone} />
+            <PathStep title="Resources" value={resourceEnvelopeFit.label} state={resourceEnvelopeFit.tone} />
+            <PathStep title="Rollout" value={latestRollout?.state ?? "Not assigned"} state={latestRollout ? latestRollout.state ?? "pending" : "pending"} />
+            <PathStep
+              title="Evidence"
+              value={proofEvents ? `${proofEvents} proof events` : `${snapshot.evidenceBundles.length} bundles`}
+              state={evidenceValue ? "ready" : "pending"}
+            />
+          </div>
+
+          <div className="readiness-grid edge-fit-grid" aria-label="On-device runtime capability fit">
+            <ReadinessCard
+              title="On-device runtime fit"
+              value={runtimeFitDisplay.label}
+              detail={runtimeFitDisplay.detail}
+              state={runtimeFitDisplay.tone}
+            />
+            <ReadinessCard
+              title="Runtime inventory"
+              value={runtimeInventoryLabel(selectedDevice)}
+              detail={runtimeInventoryDetail(selectedDevice)}
+              state={edgeRuntimeFit.failures.length ? "bad" : runtimeInventoryTone(selectedDevice)}
+            />
+            <ReadinessCard
+              title="Runtime target"
+              value={selectedRuntime ? runtimeTargetId(selectedRuntime) : "missing"}
+              detail={runtimeTargetCapabilityDetail(selectedRuntime)}
+              state={selectedRuntime ? edgeRuntimeFit.tone : "bad"}
+            />
+            <ReadinessCard
+              title="Performance SLO"
+              value={performanceSloLabel(selectedModel)}
+              detail={selectedModel ? performanceSloDetail(selectedModel) : "select a model"}
+              state={performanceSloTone(selectedModel)}
+            />
+            <ReadinessCard
+              title="Resource envelope"
+              value={resourceEnvelopeFit.label}
+              detail={resourceEnvelopeFit.detail}
+              state={resourceEnvelopeFit.tone}
+            />
+            <ReadinessCard
+              title="Field proof"
+              value={
+                selectedRuntimeValidation
+                  ? "validated"
+                  : selectedModel?.benchmarkDeviceId && benchmarkFreshness(selectedModel).state === "fresh"
+                    ? "benchmarked"
+                    : selectedModel?.benchmarkDeviceId
+                      ? "stale proof"
+                      : "pending"
+              }
+              detail={
+                selectedRuntimeValidation
+                  ? "package passed selected runtime target validation"
+                  : selectedModel
+                    ? `${formatBenchmark(selectedModel)}; ${formatBenchmarkFreshness(selectedModel)}`
+                    : "no benchmark"
+              }
+              state={
+                selectedRuntimeValidation ||
+                (selectedModel?.benchmarkDeviceId && benchmarkFreshness(selectedModel).state === "fresh")
+                  ? "good"
+                  : "warn"
+              }
+            />
+          </div>
+
+          <details className="stage-inline-drawer">
+            <summary>
+              <span>
+                <span className="section-kicker">Manual controls</span>
+                <strong>Direct rollout and compatibility tools</strong>
+              </span>
+              <Badge value="advanced" />
+            </summary>
+            <div className="stage-inline-drawer-body">
+              <form className="deploy-form" onSubmit={(event) => submitForm("assign-rollout", event)}>
+                <input name="package_id" type="hidden" value={selectedModel?.packageId ?? ""} />
+                <input name="model_id" type="hidden" value={selectedModel?.id ?? ""} />
+                <label className="field">
+                  <span>Edge node</span>
+                  <select name="device_id" value={selectedDevice ? deviceId(selectedDevice) : ""} onChange={(event) => setSelectedDeviceId(event.target.value)} required>
+                    {snapshot.devices.length ? null : <option value="">No edge nodes</option>}
+                    {snapshot.devices.map((device) => (
+                      <option key={deviceId(device)} value={deviceId(device)}>
+                        {deviceId(device)} - {device.profile ?? "unknown profile"}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Runtime target</span>
+                  <select name="runtime_target_id" value={selectedRuntime ? runtimeTargetId(selectedRuntime) : ""} onChange={(event) => setSelectedRuntimeId(event.target.value)}>
+                    {snapshot.runtimeTargets.length ? null : <option value="">No runtime targets</option>}
+                    {snapshot.runtimeTargets.map((target) => (
+                      <option key={runtimeTargetId(target)} value={runtimeTargetId(target)}>
+                        {runtimeTargetId(target)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Slot</span>
+                  <input name="slot" defaultValue="vision" />
+                </label>
+                <label className="field">
+                  <span>Rollout ID</span>
+                  <input name="rollout_id" placeholder="auto-generated" />
+                </label>
+                <input name="actor" type="hidden" value="operator:mission-package-workbench" />
+                <label className="check deploy-check">
+                  <input name="require_approval" type="checkbox" defaultChecked />
+                  <span>Require approval</span>
+                </label>
+                <Submit icon={<Rocket size={16} />} disabled={!selectedModel || !selectedDevice}>
+                  Create rollout
+                </Submit>
+              </form>
+
+              <form className="preview-form" onSubmit={(event) => submitForm("compatibility-preview", event)}>
+                <input name="device_id" type="hidden" value={selectedDevice ? deviceId(selectedDevice) : ""} />
+                <input name="package_id" type="hidden" value={selectedModel?.packageId ?? ""} />
+                <input name="model_id" type="hidden" value={selectedModel?.id ?? ""} />
+                <input name="runtime_target_id" type="hidden" value={selectedRuntime ? runtimeTargetId(selectedRuntime) : ""} />
+                <Submit icon={<ShieldCheck size={16} />} variant="secondary" disabled={!selectedModel || !selectedDevice}>
+                  Preview compatibility
+                </Submit>
+              </form>
+            </div>
+          </details>
+        </section>
+        ) : null}
+
+        {activeHubStage === "deploy" ? (
+        <section
+          className={workflowClass("plans", "section section-wide rollout-plan-section deploy-secondary-section")}
+          aria-labelledby="plans-heading"
+          ref={plansWorkflowRef}
+          tabIndex={-1}
+        >
+          <div className="section-header">
+            <div>
+              <span className="section-kicker">Rollout coordination</span>
+              <h2 id="plans-heading">Stage selected model across the fleet</h2>
+            </div>
+            <span className="section-count">{missionRolloutPlans.length}</span>
+          </div>
+
+          <form className="rollout-plan-form" onSubmit={(event) => submitForm("create-rollout-plan", event)}>
+            <input name="package_id" type="hidden" value={selectedModel?.packageId ?? ""} />
+            <input name="model_id" type="hidden" value={selectedModel?.id ?? ""} />
+            <input name="runtime_target_id" type="hidden" value={selectedRuntime ? runtimeTargetId(selectedRuntime) : ""} />
+            <input name="actor" type="hidden" value="operator:mission-package-workbench" />
+            <label className="field">
+              <span>Plan ID</span>
+              <input name="plan_id" placeholder="auto-generated" />
+            </label>
+            <label className="field">
+              <span>Device IDs</span>
+              <input name="device_ids" defaultValue={snapshot.devices.map(deviceId).join(",")} required />
+            </label>
+            <label className="field">
+              <span>Slot</span>
+              <input name="slot" defaultValue="vision" />
+            </label>
+            <label className="field">
+              <span>Batch size</span>
+              <input name="batch_size" type="number" min="1" defaultValue="1" />
+            </label>
+            <label className="check deploy-check">
+              <input name="require_approval" type="checkbox" defaultChecked />
+              <span>Require approval</span>
+            </label>
+            <label className="check deploy-check">
+              <input name="require_runtime_validation" type="checkbox" />
+              <span>Require validation</span>
+            </label>
+            <Submit icon={<GitBranch size={16} />} disabled={!selectedModel || !selectedDevice || !snapshot.devices.length}>
+              Create plan
+            </Submit>
+          </form>
+
+          <div className="rollout-list rollout-plan-list">
+            {missionRolloutPlans.length ? (
+              missionRolloutPlans.slice(0, 4).map((plan) => (
+                <RolloutPlanRow
+                  key={planId(plan)}
+                  plan={plan}
+                  onAdvance={advanceRolloutPlan}
+                  onPause={pauseRolloutPlan}
+                  onResume={resumeRolloutPlan}
+                />
+              ))
+            ) : (
+              <EmptyState title="No coordinated rollout plans" detail="Create a plan to stage selected models through approval and batch assignment." />
+            )}
+          </div>
+        </section>
+        ) : null}
+
+        {activeHubStage === "deploy" ? (
+        <section
+          className={workflowClass("rollouts", "section rollout-section deploy-secondary-section")}
+          aria-labelledby="rollouts-heading"
+          ref={rolloutsWorkflowRef}
+          tabIndex={-1}
+        >
+          <div className="section-header">
+            <div>
+              <span className="section-kicker">Rollouts</span>
+              <h2 id="rollouts-heading">Approval and activation</h2>
+            </div>
+            <span className="section-count">{missionRollouts.length}</span>
+          </div>
+          <div className="rollout-list">
+            {missionRollouts.length ? (
+              missionRollouts.slice(0, 6).map((rollout) => (
+                <RolloutRow
+                  key={rolloutId(rollout)}
+                  rollout={rollout}
+                  onApprove={approveRollout}
+                  onApply={applyRollout}
+                  onRollback={rollbackRollout}
+                />
+              ))
+            ) : (
+              <EmptyState title="No rollouts assigned" detail="Create a rollout from the selected model to start activation." />
+            )}
+          </div>
+        </section>
+        ) : null}
+
+        {activeHubStage === "deploy" ? (
+        <section className="section fleet-section deploy-secondary-section" aria-labelledby="fleet-heading">
+          <div className="section-header">
+            <div>
+              <span className="section-kicker">Fleet and runtimes</span>
+              <h2 id="fleet-heading">Deployment targets</h2>
+            </div>
+            <span className="section-count">{snapshot.devices.length}</span>
+          </div>
+          <div className="compact-list">
+            {snapshot.devices.map((device) => (
+              <TargetRow key={deviceId(device)} label={deviceId(device)} detail={device.profile ?? "unknown profile"} status={device.status ?? "registered"} />
+            ))}
+            {snapshot.runtimeTargets.slice(0, 4).map((target) => (
+              <TargetRow
+                key={runtimeTargetId(target)}
+                label={runtimeTargetId(target)}
+                detail={`${target.arch ?? "arch unknown"} - ${target.device_profiles?.join(", ") || "any profile"}`}
+                status="runtime"
+              />
+            ))}
+          </div>
+        </section>
+        ) : null}
+
+        {activeHubStage === "field" ? (
+        <section
+          className={workflowClass("evidence", "section evidence-section")}
+          aria-labelledby="evidence-heading"
+          ref={evidenceWorkflowRef}
+          tabIndex={-1}
+        >
+          <div className="section-header">
+            <div>
+              <span className="section-kicker">Evidence</span>
+              <h2 id="evidence-heading">Mission proof</h2>
+            </div>
+            <span className="section-count">
+              {missionPhaseTotal ? `${completedMissionPhases}/${missionPhaseTotal}` : snapshot.evidenceBundles.length}
+            </span>
+          </div>
+          <div className="button-row">
+            <Button icon={<ShieldCheck size={16} />} onClick={() => exportEvidence("summary")}>
+              Summary
+            </Button>
+            <Button icon={<GitBranch size={16} />} variant="secondary" onClick={() => exportEvidence("replay")}>
+              Replay
+            </Button>
+            <Button icon={<Download size={16} />} variant="secondary" onClick={() => exportEvidence("full")}>
+              Full bundle
+            </Button>
+            <Button icon={<Database size={16} />} variant="secondary" onClick={() => exportAirgap(true)}>
+              Air-gap bundle
+            </Button>
+          </div>
+          {missionPhases.length ? (
+            <div className="mission-phase-list" aria-label="Mission replay phases">
+              <div className="mission-phase-heading">
+                <span>{snapshot.missionReplay?.headline ?? "mission replay"}</span>
+                <strong>
+                  {incompleteMissionPhases.length
+                    ? `${incompleteMissionPhases.length} remaining`
+                    : "complete"}
+                </strong>
+              </div>
+              {missionPhases.map((phase) => (
+                <MissionPhaseRow key={phase.phase ?? phase.label ?? phase.summary} phase={phase} />
+	              ))}
+	            </div>
+	          ) : null}
+	          {runtimeRepairProof ? <RuntimeRepairProofPanel compact proof={runtimeRepairProof} /> : null}
+	          <div className="compact-list evidence-list">
+            {snapshot.evidenceBundles.length ? (
+              snapshot.evidenceBundles.slice(0, 4).map((record) => (
+                <TargetRow
+                  key={record.evidence_id ?? `${record.device_id}-${record.created_at}`}
+                  label={record.evidence_id ?? "evidence"}
+                  detail={`${record.device_id ?? "unknown device"} - ${compactDate(record.created_at)}`}
+                  status={record.schema_version ?? "evidence"}
+                />
+              ))
+            ) : proofEvents ? (
+              <EvidenceSummaryRow
+                headline={snapshot.evidenceSummary?.headline ?? "mission proof ready"}
+                events={proofEvents}
+                signedImports={signedEvidenceImports}
+              />
+            ) : (
+              <EmptyState title="No evidence yet" detail="Export or ingest evidence after rollout activity." />
+            )}
+          </div>
+        </section>
+        ) : null}
+
+        {activeHubStage === "model" ? (
+        <details
+          className={workflowClass("assets", "section section-wide utility-section assets-section stage-advanced-drawer")}
+          aria-labelledby="ingest-heading"
+          ref={assetsWorkflowRef}
+          tabIndex={-1}
+          open={focusedWorkflow === "assets"}
+        >
+          <summary className="section-header">
+            <div>
+              <span className="section-kicker">Advanced intake</span>
+              <h2 id="ingest-heading">Register packages, enroll edge nodes, or import bundles</h2>
+            </div>
+            <Badge value="setup" />
+          </summary>
+          <div className="utility-grid">
+            <form className="stack" onSubmit={(event) => submitForm("register-package", event)}>
+              <label className="field">
+                <span>Signed package path</span>
+                <input name="package_path" placeholder="/path/to/package" required />
+              </label>
+              <input name="actor" type="hidden" value="operator:mission-package-workbench" />
+              <label className="check">
+                <input name="strict_metadata" type="checkbox" defaultChecked />
+                <span>Strict metadata</span>
+              </label>
+              <Submit icon={<PackageCheck size={16} />}>Register package</Submit>
+            </form>
+            <form className="stack" onSubmit={(event) => submitForm("enroll-device", event)}>
+              <label className="field">
+                <span>Device ID</span>
+                <input name="device_id" defaultValue="edge-demo" required />
+              </label>
+              <label className="field">
+                <span>Profile</span>
+                <input name="profile" defaultValue="x86_64-cpu" required />
+              </label>
+              <label className="field">
+                <span>Site</span>
+                <input name="site" defaultValue="local-lab" />
+              </label>
+              <Submit icon={<Activity size={16} />}>Enroll edge</Submit>
+            </form>
+            <form className="stack" onSubmit={(event) => submitForm("airgap-import", event)}>
+              <label className="field">
+                <span>Air-gap bundle JSON</span>
+                <textarea name="bundle" rows={7} placeholder='{"schema_version":"temms-hub-lite-bundle/v1"}' />
+              </label>
+              <Submit icon={<UploadCloud size={16} />} variant="secondary">
+                Import bundle
+              </Submit>
+            </form>
+          </div>
+        </details>
+        ) : null}
+      </main>
+      ) : null}
+
+      {preview ? <PreviewPanel preview={preview} onClear={() => setPreview(undefined)} /> : null}
+    </div>
+  );
+}
+
+function MissionWorkflowCockpit({
+  activeStage,
+  children,
+  contextState,
+  runbook,
+  signals,
+  stages,
+  onSelect
+}: {
+  activeStage: HubStage;
+  children: JSX.Element;
+  contextState: string;
+  runbook: HubStageRunbook;
+  signals: MissionWorkflowSignal[];
+  stages: HubStageItem[];
+  onSelect: (stage: HubStage) => void;
+}): JSX.Element {
+  const activeIndex = Math.max(0, stages.findIndex((stage) => stage.id === activeStage));
+  const current = stages[activeIndex] ?? stages[0];
+  const previous = activeIndex > 0 ? stages[activeIndex - 1] : undefined;
+  const next = activeIndex < stages.length - 1 ? stages[activeIndex + 1] : undefined;
+  const primaryAction = runbook.actions.find((action) => action.variant !== "secondary") ?? runbook.actions[0];
+  const secondaryActions = runbook.actions.filter((action) => action !== primaryAction);
+
+  return (
+    <section
+      className={`mission-workflow-cockpit mission-workflow-cockpit-${current.tone}`}
+      aria-label="Mission package workflow cockpit"
+      data-testid="mission-workflow-cockpit"
+    >
+      <nav className="operator-path-rail" aria-label="Mission package operator path">
+        {stages.map((stage, index) => (
+          <button
+            aria-label={`${index + 1}. ${stage.label}. ${stage.value}. ${stage.detail}`}
+            aria-current={activeStage === stage.id ? "step" : undefined}
+            className={`operator-path-step operator-path-step-${stage.tone}${
+              activeStage === stage.id ? " operator-path-step-active" : ""
+            }`}
+            data-stage-id={stage.id}
+            data-testid={`operator-flow-${stage.id}`}
+            key={stage.id}
+            type="button"
+            onClick={() => onSelect(stage.id)}
+          >
+            <span className="operator-path-index">{index + 1}</span>
+            <span className="operator-path-copy">
+              <strong>{stage.label}</strong>
+              <small>{stage.value}</small>
+            </span>
+          </button>
+        ))}
+      </nav>
+
+      <div className="stage-focus-panel" data-testid="stage-focus-panel">
+        <div className="stage-focus-copy">
+          <span className="section-kicker">Current stage</span>
+          <h2>{current.label}</h2>
+          <strong>{current.value}</strong>
+          <p>{current.decision}</p>
+        </div>
+
+        <div className="stage-focus-outcome">
+          <StageRunbookFact label="Ready when" value={runbook.ready} tone={runbook.tone} />
+          <StageRunbookFact label="Risk" value={runbook.risk} tone={runbook.tone === "good" ? "neutral" : runbook.tone} />
+        </div>
+
+        <div className="stage-focus-actions" aria-label="Primary stage actions">
+          <button
+            className="button button-secondary"
+            disabled={!previous}
+            type="button"
+            onClick={() => previous && onSelect(previous.id)}
+          >
+            <ArrowLeft size={16} />
+            <span>{previous ? previous.label : "Start"}</span>
+          </button>
+          {primaryAction ? (
+            <button
+              className={`button${primaryAction.variant === "secondary" ? " button-secondary" : ""}`}
+              disabled={primaryAction.disabled}
+              type="button"
+              onClick={primaryAction.onClick}
+              title={primaryAction.detail}
+            >
+              {runbookActionIcon(primaryAction.icon)}
+              <span>{primaryAction.label}</span>
+            </button>
+          ) : null}
+          <button
+            className="button"
+            disabled={!next}
+            type="button"
+            onClick={() => next && onSelect(next.id)}
+          >
+            <span>{next ? `Next: ${next.label}` : "Complete"}</span>
+            <ArrowRight size={16} />
+          </button>
+        </div>
+
+        {secondaryActions.length ? (
+          <div className="stage-secondary-actions" aria-label="Secondary stage actions">
+            {secondaryActions.map((action) => (
+              <button
+                className="button-mini"
+                disabled={action.disabled}
+                key={action.label}
+                type="button"
+                onClick={action.onClick}
+                title={action.detail}
+              >
+                {runbookActionIcon(action.icon)}
+                <span>{action.label}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <aside className="mission-signal-panel" aria-label="Mission package signals">
+        <div className="mission-signal-header">
+          <span className="section-kicker">Package path</span>
+          <Badge value={contextState} />
+        </div>
+        <div className="mission-signal-grid">
+          {signals.map((signal) => (
+            <div className={`mission-signal mission-signal-${signal.tone}`} key={signal.label}>
+              <span>{signal.label}</span>
+              <strong>{signal.value}</strong>
+              <small>{signal.detail}</small>
+            </div>
+          ))}
+        </div>
+        <details className="mission-context-drawer">
+          <summary>
+            <span>Live context</span>
+            <Badge value="inventory" />
+          </summary>
+          {children}
+        </details>
+      </aside>
+    </section>
+  );
+}
+
+function StageRunbookFact({
+  label,
+  tone,
+  value
+}: {
+  label: string;
+  tone: GateTone;
+  value: string;
+}): JSX.Element {
+  return (
+    <div className={`stage-fact stage-fact-${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function runbookActionIcon(icon: HubStageRunbookAction["icon"]): JSX.Element {
+  const size = 16;
+  switch (icon) {
+    case "activity":
+      return <Activity size={size} />;
+    case "cpu":
+      return <Cpu size={size} />;
+    case "download":
+      return <Download size={size} />;
+    case "package":
+      return <PackageCheck size={size} />;
+    case "refresh":
+      return <RefreshCw size={size} />;
+    case "rocket":
+      return <Rocket size={size} />;
+    case "shield":
+      return <ShieldCheck size={size} />;
+    case "arrow":
+    default:
+      return <ArrowRight size={size} />;
+  }
+}
+
+function MissionDesignPanel({
+  draft,
+  manifest,
+  selectedDevice,
+  selectedModel,
+  selectedRuntime,
+  onChange,
+  onCopyManifest,
+  onImportYaml,
+  onImportYamlError,
+  onPlanPackage
+}: {
+  draft: MissionDraft;
+  manifest: JsonObject;
+  selectedDevice: Device | undefined;
+  selectedModel: ModelRecord | undefined;
+  selectedRuntime: RuntimeTarget | undefined;
+  onChange: (draft: MissionDraft) => void;
+  onCopyManifest: () => void;
+  onImportYaml: (yaml: string, fileName: string) => void;
+  onImportYamlError: (fileName: string) => void;
+  onPlanPackage: () => void;
+}): JSX.Element {
+  const yamlFileInputRef = useRef<HTMLInputElement>(null);
+  const update = (key: keyof MissionDraft, value: string): void => {
+    onChange({ ...draft, [key]: value });
+  };
+  const importMissionYamlFile = (file: File | undefined): void => {
+    if (!file) return;
+    void file
+      .text()
+      .then((yaml) => onImportYaml(yaml, file.name))
+      .catch(() => onImportYamlError(file.name));
+  };
+  const selectedRuntimeId = selectedRuntime ? runtimeTargetId(selectedRuntime) : "runtime pending";
+  const selectedDeviceId = selectedDevice ? deviceId(selectedDevice) : "edge pending";
+  const manifestMission = asRecord(manifest.mission);
+  const manifestHandling = asRecord(manifest.model_handling);
+
+  return (
+    <section className="mission-builder" aria-labelledby="mission-builder-heading">
+      <div className="mission-builder-header">
+        <div>
+          <span className="section-kicker">Mission spec</span>
+          <h2 id="mission-builder-heading">Define what the edge system must accomplish</h2>
+        </div>
+        <div className="mission-builder-actions">
+          <input
+            ref={yamlFileInputRef}
+            className="visually-hidden"
+            type="file"
+            accept=".yaml,.yml,text/yaml,application/x-yaml,text/plain"
+            onChange={(event) => {
+              importMissionYamlFile(event.currentTarget.files?.[0]);
+              event.currentTarget.value = "";
+            }}
+          />
+          <Badge value="temms-edge-mission-package/v1" />
+          <button
+            className="button button-secondary"
+            type="button"
+            onClick={() => yamlFileInputRef.current?.click()}
+          >
+            <UploadCloud size={16} />
+            <span>Import YAML</span>
+          </button>
+          <button className="button" type="button" onClick={onPlanPackage}>
+            <PackageCheck size={16} />
+            <span>Plan package</span>
+          </button>
+          <button className="button button-secondary" type="button" onClick={onCopyManifest}>
+            <Clipboard size={16} />
+            <span>Copy package manifest</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="mission-builder-grid">
+        <div className="mission-builder-form">
+          <label className="field">
+            <span>Mission goal</span>
+            <textarea
+              rows={4}
+              value={draft.goal}
+              onChange={(event) => update("goal", event.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span>Mission YAML</span>
+            <textarea
+              rows={8}
+              placeholder="schema_version: temms-edge-mission/v1"
+              value={draft.yaml}
+              onChange={(event) => update("yaml", event.target.value)}
+            />
+          </label>
+        </div>
+
+        <div className="mission-package-preview">
+          <div className="mission-preview-header">
+            <span className="section-kicker">Package plan</span>
+            <strong>{selectedModel?.name ?? "model pending"}</strong>
+            <small>{selectedRuntimeId} on {selectedDeviceId}</small>
+          </div>
+          <div className="mission-preview-grid">
+            <CapabilityMetric
+              label="Goal"
+              value={draft.goal ? "defined" : draft.yaml ? "yaml loaded" : "pending"}
+              detail={String(manifestMission.goal || "mission goal pending")}
+              tone={draft.goal || draft.yaml ? "good" : "warn"}
+            />
+            <CapabilityMetric
+              label="Sensor"
+              value={draft.sensor}
+              detail={`slot ${draft.slot || "vision"}`}
+              tone={draft.sensor ? "good" : "warn"}
+            />
+            <CapabilityMetric
+              label="Switching"
+              value={String(manifestHandling.switch_policy || "pending").replace(/_/g, " ")}
+              detail={`threshold ${draft.confidenceThreshold}; fallback ${draft.fallbackModelId || "auto"}`}
+              tone="good"
+            />
+            <CapabilityMetric
+              label="Edge package"
+              value={selectedModel && selectedRuntime && selectedDevice ? "ready to prove" : "needs context"}
+              detail={`${selectedModel?.packageId ?? "package"} -> ${selectedRuntimeId} -> ${selectedDeviceId}`}
+              tone={selectedModel && selectedRuntime && selectedDevice ? "good" : "warn"}
+            />
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function HandlingPolicyPanel({
+  draft,
+  manifest,
+  models,
+  selectedDevice,
+  selectedModel,
+  selectedRuntime,
+  onChange,
+  onPlanPackage
+}: {
+  draft: MissionDraft;
+  manifest: JsonObject;
+  models: ModelRecord[];
+  selectedDevice: Device | undefined;
+  selectedModel: ModelRecord | undefined;
+  selectedRuntime: RuntimeTarget | undefined;
+  onChange: (draft: MissionDraft) => void;
+  onPlanPackage: () => void;
+}): JSX.Element {
+  const update = (key: keyof MissionDraft, value: string): void => {
+    onChange({ ...draft, [key]: value });
+  };
+  const selectedRuntimeId = selectedRuntime ? runtimeTargetId(selectedRuntime) : "runtime pending";
+  const selectedDeviceId = selectedDevice ? deviceId(selectedDevice) : "edge pending";
+  const manifestHandling = asRecord(manifest.model_handling);
+  const manifestSlo = asRecord(manifest.slo);
+  const manifestDdil = asRecord(manifest.ddil);
+
+  return (
+    <section className="mission-builder handling-policy" aria-labelledby="handling-policy-heading">
+      <div className="mission-builder-header">
+        <div>
+          <span className="section-kicker">Sensor and model handling</span>
+          <h2 id="handling-policy-heading">Define how the edge should switch, fallback, and operate through DDIL</h2>
+        </div>
+        <div className="mission-builder-actions">
+          <Badge value={draft.slot || "slot pending"} />
+          <button className="button" type="button" onClick={onPlanPackage}>
+            <PackageCheck size={16} />
+            <span>Plan package</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="handling-policy-grid">
+        <div className="mission-params">
+          <label className="field">
+            <span>Sensor input</span>
+            <select value={draft.sensor} onChange={(event) => update("sensor", event.target.value)}>
+              <option value="camera.rgb">camera.rgb</option>
+              <option value="camera.lowlight">camera.lowlight</option>
+              <option value="thermal.stream">thermal.stream</option>
+              <option value="audio.array">audio.array</option>
+              <option value="multisensor.fusion">multisensor.fusion</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Slot</span>
+            <input value={draft.slot} onChange={(event) => update("slot", event.target.value)} />
+          </label>
+          <label className="field">
+            <span>Latency budget p95 ms</span>
+            <input value={draft.latencyBudgetMs} onChange={(event) => update("latencyBudgetMs", event.target.value)} />
+          </label>
+          <label className="field">
+            <span>Min throughput ips</span>
+            <input value={draft.throughputMinIps} onChange={(event) => update("throughputMinIps", event.target.value)} />
+          </label>
+          <label className="field">
+            <span>Model switch policy</span>
+            <select value={draft.switchPolicy} onChange={(event) => update("switchPolicy", event.target.value)}>
+              <option value="condition_and_confidence">condition and confidence</option>
+              <option value="sensor_degradation">sensor degradation</option>
+              <option value="runtime_health">runtime health</option>
+              <option value="operator_approval">operator approval</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Switch confidence threshold</span>
+            <input value={draft.confidenceThreshold} onChange={(event) => update("confidenceThreshold", event.target.value)} />
+          </label>
+          <label className="field">
+            <span>Fallback model</span>
+            <select value={draft.fallbackModelId} onChange={(event) => update("fallbackModelId", event.target.value)}>
+              <option value="">auto-select compatible fallback</option>
+              {models.map((model) => (
+                <option key={`${model.packageId}-${model.id}`} value={model.id}>
+                  {model.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>DDIL behavior</span>
+            <select value={draft.ddilMode} onChange={(event) => update("ddilMode", event.target.value)}>
+              <option value="queue_signed_intents">queue signed intents</option>
+              <option value="require_local_proof">require local proof</option>
+              <option value="fail_closed">fail closed</option>
+              <option value="operator_repair">operator repair</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="mission-package-preview">
+          <div className="mission-preview-header">
+            <span className="section-kicker">Handling plan</span>
+            <strong>{selectedModel?.name ?? "model pending"}</strong>
+            <small>{selectedRuntimeId} on {selectedDeviceId}</small>
+          </div>
+          <div className="mission-preview-grid">
+            <CapabilityMetric
+              label="Sensor"
+              value={draft.sensor}
+              detail={`slot ${draft.slot || "vision"}`}
+              tone={draft.sensor && draft.slot ? "good" : "warn"}
+            />
+            <CapabilityMetric
+              label="SLO"
+              value={`${stringOf(manifestSlo.latency_budget_ms, draft.latencyBudgetMs)} ms`}
+              detail={`${stringOf(manifestSlo.min_throughput_ips, draft.throughputMinIps)} ips minimum`}
+              tone={draft.latencyBudgetMs && draft.throughputMinIps ? "good" : "warn"}
+            />
+            <CapabilityMetric
+              label="Switching"
+              value={String(manifestHandling.switch_policy || draft.switchPolicy).replace(/_/g, " ")}
+              detail={`threshold ${draft.confidenceThreshold}; fallback ${draft.fallbackModelId || "auto"}`}
+              tone="good"
+            />
+            <CapabilityMetric
+              label="DDIL"
+              value={String(manifestDdil.mode || draft.ddilMode).replace(/_/g, " ")}
+              detail="policy is embedded into the mission package handoff"
+              tone="good"
+            />
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function EdgePackagePlanPanel({
+  canStageDeploy,
+  manifest,
+  readinessVerdict,
+  workflow,
+  onCopyManifest,
+  onDownloadPackage,
+  onPlanPackage,
+  onStageDeploy
+}: {
+  canStageDeploy: boolean;
+  manifest: JsonObject;
+  readinessVerdict: ReadinessVerdict;
+  workflow: EdgeProofWorkflow;
+  onCopyManifest: () => void;
+  onDownloadPackage: () => void;
+  onPlanPackage: () => void;
+  onStageDeploy: () => void;
+}): JSX.Element {
+  const mission = asRecord(manifest.mission);
+  const selection = asRecord(manifest.selection);
+  const handling = asRecord(manifest.model_handling);
+  const slo = asRecord(manifest.slo);
+  const ddil = asRecord(manifest.ddil);
+  const deploymentIntent = asRecord(manifest.deployment_intent);
+  const deploymentCommand = asRecord(deploymentIntent.command);
+  const hasEdgePath = Boolean(
+    selection.package_id &&
+    selection.model_id &&
+    selection.device_id &&
+    selection.runtime_target_id
+  );
+  const hasPlannedDeploymentIntent = Boolean(deploymentIntent.rollout_id && deploymentCommand.path);
+  const draftRolloutId = hasEdgePath ? missionPackageRolloutId(manifest) : "";
+  const deployRolloutId = String(deploymentIntent.rollout_id || draftRolloutId || "rollout pending");
+  const deployCommandPath = String(
+    deploymentCommand.path || (hasEdgePath ? "/v1/hub/rollouts" : "deployment intent pending")
+  );
+  const deployTone: GateTone = canStageDeploy ? "good" : hasPlannedDeploymentIntent || hasEdgePath ? "warn" : "warn";
+  const deployDetail = deploymentIntent.rollout_id
+    ? canStageDeploy
+      ? deployCommandPath
+      : `${deployCommandPath}; proof gate must pass before staging`
+    : hasEdgePath
+      ? `${deployCommandPath}; plan package to hash mission handoff`
+      : deployCommandPath;
+
+  return (
+    <section className={`edge-package-plan edge-package-plan-${workflow.tone}`} aria-labelledby="edge-package-plan-heading">
+      <div className="edge-package-plan-header">
+        <div>
+          <span className="section-kicker">Edge package</span>
+          <h2 id="edge-package-plan-heading">Package mission, models, runtime, policy, and proof gates</h2>
+          <p>{readinessVerdict.nextAction}</p>
+        </div>
+        <div className="edge-package-plan-actions">
+          <Badge value={workflow.gatePolicy} />
+          <button className="button" type="button" onClick={onPlanPackage}>
+            <PackageCheck size={16} />
+            <span>Plan package</span>
+          </button>
+          <button className="button" type="button" disabled={!canStageDeploy} onClick={onStageDeploy}>
+            <Rocket size={16} />
+            <span>Stage rollout</span>
+          </button>
+          <button className="button button-secondary" type="button" onClick={onDownloadPackage}>
+            <Download size={16} />
+            <span>Download package</span>
+          </button>
+          <button className="button button-secondary" type="button" onClick={onCopyManifest}>
+            <Clipboard size={16} />
+            <span>Copy manifest</span>
+          </button>
+        </div>
+      </div>
+      <div className="package-binding-strip" aria-label="Mission package binding chain" data-testid="mission-package-binding">
+        <PackageBindingStep
+          label="Mission"
+          value={String(mission.goal || mission.source_yaml ? "specified" : "pending")}
+          detail={String(mission.goal || mission.source_yaml || "mission goal or YAML required")}
+          tone={mission.goal || mission.source_yaml ? "good" : "warn"}
+        />
+        <PackageBindingStep
+          label="Model/runtime"
+          value={String(selection.model_id || "model pending")}
+          detail={`${String(selection.package_id || "package pending")} / ${String(selection.runtime_target_id || "runtime pending")} / ${String(selection.device_id || "edge pending")}`}
+          tone={selection.model_id && selection.runtime_target_id && selection.device_id ? "good" : "warn"}
+        />
+        <PackageBindingStep
+          label="Handling"
+          value={String(handling.switch_policy || "policy pending").replace(/_/g, " ")}
+          detail={`${String(mission.sensor || "sensor pending")} / fallback ${String(handling.fallback_model_id || "auto")} / ${String(ddil.mode || "ddil pending").replace(/_/g, " ")}`}
+          tone={handling.switch_policy && mission.sensor && ddil.mode ? "good" : "warn"}
+        />
+        <PackageBindingStep
+          label="Deploy"
+          value={deployRolloutId}
+          detail={deployDetail}
+          tone={deployTone}
+        />
+      </div>
+      <div className="edge-package-plan-grid">
+        <CapabilityMetric
+          label="Mission"
+          value={String(mission.sensor || "sensor pending")}
+          detail={String(mission.goal || "mission goal pending")}
+          tone={mission.goal || mission.source_yaml ? "good" : "warn"}
+        />
+        <CapabilityMetric
+          label="Model"
+          value={String(selection.model_id || "model pending")}
+          detail={String(selection.package_id || "package pending")}
+          tone={selection.model_id ? "good" : "warn"}
+        />
+        <CapabilityMetric
+          label="Runtime"
+          value={String(selection.runtime_target_id || "runtime pending")}
+          detail={String(selection.device_id || "edge pending")}
+          tone={selection.runtime_target_id && selection.device_id ? "good" : "warn"}
+        />
+        <CapabilityMetric
+          label="Handling"
+          value={String(handling.switch_policy || "policy pending").replace(/_/g, " ")}
+          detail={`fallback ${String(handling.fallback_model_id || "auto")}; threshold ${String(handling.confidence_threshold || "pending")}`}
+          tone={handling.switch_policy ? "good" : "warn"}
+        />
+        <CapabilityMetric
+          label="SLO"
+          value={`p95 <= ${String(slo.latency_budget_ms || "pending")} ms`}
+          detail={`throughput >= ${String(slo.min_throughput_ips || "pending")} ips`}
+          tone={slo.latency_budget_ms ? "good" : "warn"}
+        />
+        <CapabilityMetric
+          label="Proof gate"
+          value={workflow.status}
+          detail={workflow.detail}
+          tone={workflow.tone}
+        />
+        <CapabilityMetric
+          label="Deploy intent"
+          value={deployRolloutId}
+          detail={deployDetail}
+          tone={deployTone}
+        />
+      </div>
+    </section>
+  );
+}
+
+function PackageBindingStep({
+  label,
+  value,
+  detail,
+  tone
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  tone: GateTone;
+}): JSX.Element {
+  return (
+    <div className={`package-binding-step package-binding-step-${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </div>
+  );
+}
+
+function MissionPackageDownloadHandoffCard({
+  handoff,
+  manifest
+}: {
+  handoff: MissionPackageDownloadHandoff | undefined;
+  manifest: JsonObject;
+}): JSX.Element {
+  const integrity = asRecord(manifest.integrity);
+  const packageIdentity = asRecord(manifest.package_identity);
+  const componentDigests = asRecord(manifest.component_digests);
+  const identityDigest = stringOf(
+    integrity.package_identity_sha256,
+    stringOf(packageIdentity.package_identity_sha256, "")
+  );
+  const payloadDigest = stringOf(integrity.payload_sha256, "");
+  const headerDigests = [
+    {
+      body: stringOf(componentDigests.mission_sha256, ""),
+      key: "mission",
+      label: "Mission",
+      value: handoff?.missionSha256 || ""
+    },
+    {
+      body: stringOf(componentDigests.runtime_plan_sha256, ""),
+      key: "runtime_plan",
+      label: "Runtime plan",
+      value: handoff?.runtimePlanSha256 || ""
+    },
+    {
+      body: stringOf(componentDigests.deployment_intent_sha256, ""),
+      key: "deployment_intent",
+      label: "Deploy intent",
+      value: handoff?.deploymentIntentSha256 || ""
+    }
+  ];
+  const mismatched = handoff
+    ? headerDigests.filter((digest) =>
+        digest.value &&
+        digest.body &&
+        normalizeSha256Digest(digest.value) !== normalizeSha256Digest(digest.body)
+      )
+    : [];
+  const missing = handoff
+    ? headerDigests.filter((digest) => !digest.value).map((digest) => digest.label)
+    : [];
+  const payloadMatches = Boolean(
+    handoff?.payloadSha256 &&
+    payloadDigest &&
+    normalizeSha256Digest(handoff.payloadSha256) === normalizeSha256Digest(payloadDigest)
+  );
+  const identityMatches = Boolean(
+    handoff?.packageIdentitySha256 &&
+    identityDigest &&
+    normalizeSha256Digest(handoff.packageIdentitySha256) === normalizeSha256Digest(identityDigest)
+  );
+  const identityMismatch = Boolean(
+    handoff?.packageIdentitySha256 &&
+    identityDigest &&
+    !identityMatches
+  );
+  const identityMissing = Boolean(handoff && !handoff.packageIdentitySha256);
+  const tone: GateTone = !handoff
+    ? "neutral"
+    : identityMismatch || mismatched.length || (handoff.payloadSha256 && payloadDigest && !payloadMatches)
+      ? "bad"
+      : identityMissing || missing.length
+        ? "warn"
+        : "good";
+  const value = !handoff
+    ? "package not downloaded"
+    : identityMismatch || mismatched.length
+      ? "header mismatch"
+      : identityMissing || missing.length
+        ? "headers incomplete"
+        : "package handoff retained";
+  const detail = !handoff
+    ? "Download the mission package to retain filename and digest headers."
+    : identityMismatch
+      ? "Package identity header disagrees with package body"
+      : mismatched.length
+        ? `${mismatched.map((digest) => digest.label).join(", ")} header disagrees with package body`
+        : identityMissing || missing.length
+          ? `${["Package identity", ...missing].filter((label) => identityMissing || label !== "Package identity").join(", ")} header missing from download response`
+        : "Download response headers match package body digests.";
+
+  return (
+    <article className={`edge-proof-trace edge-proof-handoff edge-proof-trace-${tone}`} data-testid="mission-package-download-handoff">
+      <div className="edge-proof-trace-header">
+        <div>
+          <span>Mission package handoff</span>
+          <strong>{value}</strong>
+          <small>{detail}</small>
+        </div>
+        <Badge value={handoff ? "downloaded" : "not downloaded"} />
+      </div>
+      <div className="edge-proof-trace-grid">
+        <CapabilityMetric
+          detail={handoff?.fileName || "package filename header pending"}
+          label="Filename"
+          tone={handoff?.fileName ? "good" : "neutral"}
+          value={handoff?.fileName ? "retained" : "pending"}
+        />
+        <CapabilityMetric
+          detail={handoff?.packageIdentitySha256 ? `sha256 ${shortProofDigest(handoff.packageIdentitySha256)}` : "identity hash header pending"}
+          label="Package identity"
+          tone={identityMatches ? "good" : handoff?.packageIdentitySha256 ? "warn" : "neutral"}
+          value={identityMatches ? "matches body" : handoff?.packageIdentitySha256 ? "retained" : "pending"}
+        />
+        <CapabilityMetric
+          detail={handoff?.payloadSha256 ? `sha256 ${shortProofDigest(handoff.payloadSha256)}` : "payload hash header pending"}
+          label="Payload hash"
+          tone={payloadMatches ? "good" : handoff?.payloadSha256 ? "warn" : "neutral"}
+          value={payloadMatches ? "matches body" : handoff?.payloadSha256 ? "retained" : "pending"}
+        />
+        {headerDigests.map((digest) => {
+          const matches =
+            digest.value &&
+            digest.body &&
+            normalizeSha256Digest(digest.value) === normalizeSha256Digest(digest.body);
+          return (
+            <CapabilityMetric
+              detail={digest.value ? `sha256 ${shortProofDigest(digest.value)}` : `${digest.label.toLowerCase()} header pending`}
+              key={digest.key}
+              label={`${digest.label} header`}
+              tone={matches ? "good" : digest.value ? "warn" : handoff ? "warn" : "neutral"}
+              value={matches ? "matches body" : digest.value ? "retained" : "pending"}
+            />
+          );
+        })}
+      </div>
+    </article>
+  );
+}
+
+function StatusTile({
+  label,
+  value,
+  detail,
+  icon
+}: {
+  label: string;
+  value: number | string;
+  detail: string;
+  icon: JSX.Element;
+}): JSX.Element {
+  return (
+    <div className="status-tile">
+      <span className="status-icon">{icon}</span>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </div>
+  );
+}
+
+function EdgeRuntimeWorkbench({
+  devices,
+  edgeExecutionContract,
+  models,
+  onCopyCommand,
+  onGenerateProof,
+  onGoModels,
+  onSelectDevice,
+  onSelectRuntime,
+  readiness,
+  resourceEnvelopeFit,
+  runtimeDecision,
+  runtimeFitDisplay,
+  runtimeTargets,
+  runtimeValidations,
+  selectedDevice,
+  selectedModel,
+  selectedRuntime
+}: {
+  devices: Device[];
+  edgeExecutionContract: JsonObject;
+  models: ModelRecord[];
+  onCopyCommand: (label: string, command: string) => void;
+  onGenerateProof: () => void;
+  onGoModels: () => void;
+  onSelectDevice: (id: string) => void;
+  onSelectRuntime: (id: string) => void;
+  readiness: DeploymentReadiness | undefined;
+  resourceEnvelopeFit: EdgeRuntimeFit;
+  runtimeDecision: JsonObject;
+  runtimeFitDisplay: RuntimeFitDisplay;
+  runtimeTargets: RuntimeTarget[];
+  runtimeValidations: RuntimeValidation[];
+  selectedDevice: Device | undefined;
+  selectedModel: ModelRecord | undefined;
+  selectedRuntime: RuntimeTarget | undefined;
+}): JSX.Element {
+  const contract = Object.keys(edgeExecutionContract).length ? edgeExecutionContract : runtimeDecision;
+  const runtimeFit = asRecord(readiness?.runtime_fit);
+  const targetSelection = Object.keys(asRecord(contract.target_selection)).length
+    ? asRecord(contract.target_selection)
+    : asRecord(runtimeFit.target_selection);
+  const selectedRuntimeTargetId = stringOf(
+    targetSelection.selected_runtime_target_id,
+    selectedRuntime ? runtimeTargetId(selectedRuntime) : ""
+  );
+  const explicitBestRuntimeTargetId = stringOf(targetSelection.best_runtime_target_id, "");
+  const candidates = runtimeDecisionCandidates(
+    contract,
+    runtimeFit,
+    selectedRuntimeTargetId,
+    explicitBestRuntimeTargetId || selectedRuntimeTargetId
+  );
+  const assessments = runtimeTargetAssessments(contract, runtimeFit, candidates);
+  const runtimeWorkbench = asRecord(readiness?.runtime_workbench);
+  const rows = runtimeWorkbenchRows({
+    assessments,
+    device: selectedDevice,
+    model: selectedModel,
+    runtimeFit,
+    runtimeWorkbench,
+    runtimeTargets,
+    runtimeValidations,
+    selectedRuntimeTargetId,
+    bestRuntimeTargetId: explicitBestRuntimeTargetId
+  });
+  const bestRow = rows.find((row) => row.best) ?? rows[0];
+  const selectedRow = rows.find((row) => row.selected);
+  const remediationContext: RuntimeRemediationContext = {
+    packageId: selectedModel?.packageId ?? "",
+    modelId: selectedModel?.id ?? "",
+    deviceId: selectedDevice ? deviceId(selectedDevice) : "",
+    slot: "vision"
+  };
+  const proofDisabled = !selectedModel || !selectedDevice || !selectedRuntime;
+  const modelRuntimeRequirements = [
+    selectedModel?.runtimes.length ? `runtime ${selectedModel.runtimes.join(", ")}` : "",
+    selectedModel?.providers.length ? `provider ${selectedModel.providers.join(", ")}` : "",
+    selectedModel?.profiles.length ? `profile ${selectedModel.profiles.join(", ")}` : "",
+    formatArtifactSizeMb(selectedModel?.artifactSizeMb)
+  ].filter(Boolean);
+  const selectedLane = selectedRow ? asRecord(selectedRow.target.runtime_lane) : runtimeLaneFor(runtimeFit, selectedRuntime);
+  const artifactLane = asRecord(runtimeFit.artifact_lane);
+  const capabilityLock = runtimeCapabilityLockForProof(readiness);
+
+  return (
+    <section className="runtime-workbench" aria-labelledby="runtime-workbench-heading" data-testid="runtime-workbench">
+      <div className="runtime-workbench-header">
+        <div>
+          <span className="section-kicker">Runtime workbench</span>
+          <h2 id="runtime-workbench-heading">Target the model to the edge runtime</h2>
+          <p>
+            Compare the model selected in Model Plan against live edge inventory, runtime target validation,
+            benchmark freshness, resource limits, and signed-proof gates.
+          </p>
+        </div>
+        <div className="runtime-workbench-verdict">
+          <Badge value={bestRow ? `best ${bestRow.targetId}` : "target pending"} />
+          <strong>{selectedRow?.score !== undefined ? `${selectedRow.score}/100` : runtimeFitDisplay.label}</strong>
+          <small>{selectedRow?.detail ?? runtimeFitDisplay.detail}</small>
+        </div>
+      </div>
+
+      <div className="runtime-workbench-controls" aria-label="Runtime path controls">
+        <div
+          aria-label="Selected model from Model Plan"
+          className="runtime-workbench-model-context"
+          data-testid="runtime-workbench-model"
+          id="runtime-workbench-model"
+        >
+          <div>
+            <span>Selected model</span>
+            <strong>{selectedModel?.name ?? "Model pending"}</strong>
+            <small>
+              {selectedModel
+                ? `${selectedModel.id} / ${selectedModel.packageId}`
+                : models.length
+                  ? "Open Model Plan to choose a signed model"
+                  : "No signed models registered"}
+            </small>
+          </div>
+          <Button icon={<ArrowLeft size={16} />} variant="secondary" onClick={onGoModels}>
+            Model Plan
+          </Button>
+        </div>
+        <label className="field" htmlFor="runtime-workbench-edge-node">
+          <span>Edge node</span>
+          <select
+            aria-label="Edge node"
+            data-testid="runtime-workbench-edge-node"
+            id="runtime-workbench-edge-node"
+            value={selectedDevice ? deviceId(selectedDevice) : ""}
+            onChange={(event) => onSelectDevice(event.target.value)}
+          >
+            {devices.length ? null : <option value="">No edge nodes</option>}
+            {devices.map((device) => (
+              <option key={deviceId(device)} value={deviceId(device)}>
+                {deviceId(device)} - {device.profile ?? "unknown profile"}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field" htmlFor="runtime-workbench-target-runtime">
+          <span>Target runtime</span>
+          <select
+            aria-label="Target runtime"
+            data-testid="runtime-workbench-target-runtime"
+            id="runtime-workbench-target-runtime"
+            value={selectedRuntime ? runtimeTargetId(selectedRuntime) : ""}
+            onChange={(event) => onSelectRuntime(event.target.value)}
+          >
+            {runtimeTargets.length ? null : <option value="">No runtime targets</option>}
+            {runtimeTargets.map((target) => (
+              <option key={runtimeTargetId(target)} value={runtimeTargetId(target)}>
+                {runtimeTargetId(target)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <Button
+          ariaLabel="Generate runtime proof for selected edge path"
+          icon={<FileCheck2 size={16} />}
+          testId="runtime-workbench-generate-proof"
+          disabled={proofDisabled}
+          onClick={onGenerateProof}
+        >
+          Generate proof
+        </Button>
+      </div>
+
+      <div className="runtime-capability-strip" aria-label="On-device runtime capability vector">
+        <CapabilityMetric
+          label="Runtime image"
+          value={runtimeTargetImageValue(selectedRuntime)}
+          detail={runtimeTargetImageDetail(selectedRuntime)}
+          tone={selectedRuntime ? "good" : "bad"}
+        />
+        <CapabilityMetric
+          label="Provider match"
+          value={runtimeProviderValue(selectedLane)}
+          detail={runtimeProviderDetail(selectedLane, selectedDevice)}
+          tone={runtimeProviderTone(selectedLane, selectedDevice)}
+        />
+        <CapabilityMetric
+          label="Artifact lane"
+          value={artifactLaneValue(artifactLane)}
+          detail={artifactLaneDetail(artifactLane)}
+          tone={artifactLaneTone(artifactLane)}
+        />
+        <CapabilityMetric
+          label="Capability lock"
+          value={capabilityLockValue(capabilityLock)}
+          detail={capabilityLockDetail(capabilityLock)}
+          tone={capabilityLockTone(capabilityLock)}
+        />
+      </div>
+
+      <div className="runtime-workbench-summary" aria-label="Selected edge runtime summary">
+        <CapabilityMetric
+          label="Selected fit"
+          value={selectedRow?.score !== undefined ? `${selectedRow.score}/100` : runtimeFitDisplay.label}
+          detail={selectedRow?.detail ?? runtimeFitDisplay.detail}
+          tone={selectedRow?.tone ?? runtimeFitDisplay.tone}
+        />
+        <CapabilityMetric
+          label="Best target"
+          value={bestRow?.targetId ?? "pending"}
+          detail={bestRow ? `${bestRow.status}; ${bestRow.detail}` : "runtime alternatives pending"}
+          tone={bestRow?.tone ?? "neutral"}
+        />
+        <CapabilityMetric
+          label="Model constraints"
+          value={selectedModel?.format ?? "missing"}
+          detail={modelRuntimeRequirements.join(" / ") || "model runtime constraints not declared"}
+          tone={selectedModel ? "good" : "bad"}
+        />
+        <CapabilityMetric
+          label="Edge inventory"
+          value={runtimeInventoryLabel(selectedDevice)}
+          detail={runtimeInventoryDetail(selectedDevice)}
+          tone={runtimeInventoryTone(selectedDevice)}
+        />
+        <CapabilityMetric
+          label="Resources"
+          value={resourceEnvelopeFit.label}
+          detail={resourceEnvelopeFit.detail}
+          tone={resourceEnvelopeFit.tone}
+        />
+      </div>
+
+      <div className="runtime-workbench-table" aria-label="Ranked target runtimes">
+        <div className="runtime-workbench-table-head">
+          <span>Target</span>
+          <span>Fit</span>
+          <span>Lane</span>
+          <span>Proof</span>
+          <span>Action</span>
+        </div>
+        {rows.length ? (
+          rows.map((row) => (
+            <div
+              aria-label={`${row.targetId} runtime target ${row.status}`}
+              aria-selected={row.selected}
+              className={`runtime-workbench-row runtime-workbench-row-${row.tone}${
+                row.selected ? " runtime-workbench-row-selected" : ""
+              }`}
+              data-runtime-target-id={row.targetId}
+              data-testid={`runtime-workbench-row-${row.targetId}`}
+              key={row.targetId}
+            >
+              <div>
+                <strong>{row.targetId}</strong>
+                <small>
+                  {row.selected ? "selected" : row.best ? "best alternate" : row.status}
+                  {row.best && row.selected ? " best" : ""}
+                </small>
+              </div>
+              <div>
+                <strong>{row.score !== undefined ? `${row.score}/100` : row.status}</strong>
+                <small>{row.detail}</small>
+              </div>
+              <div>
+                <strong>{row.lane}</strong>
+                <small>{runtimeTargetCapabilityDetail(row.target)}</small>
+              </div>
+              <div>
+                <strong>{row.validated ? "validated" : row.compatible ? "needs proof" : "blocked"}</strong>
+                <small>{row.benchmark} / {row.inventory}</small>
+              </div>
+              <div className="runtime-workbench-row-action">
+                <button
+                  aria-label={
+                    row.selected
+                      ? `${row.targetId} is the selected runtime target`
+                      : `Select runtime target ${row.targetId}`
+                  }
+                  className="button-mini"
+                  data-testid={`runtime-workbench-select-${row.targetId}`}
+                  disabled={row.selected}
+                  type="button"
+                  onClick={() => onSelectRuntime(row.targetId)}
+                >
+                  {row.selected ? "Selected" : "Select"}
+                </button>
+              </div>
+            </div>
+          ))
+        ) : (
+          <EmptyState title="No runtime targets" detail="Register target runtimes to compare deployment paths." />
+        )}
+      </div>
+
+      {rows.length ? (
+        <RuntimeDecisionTrace
+          context={remediationContext}
+          onCopyCommand={onCopyCommand}
+          rows={rows}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function RuntimeDecisionTrace({
+  context,
+  onCopyCommand,
+  rows
+}: {
+  context: RuntimeRemediationContext;
+  onCopyCommand: (label: string, command: string) => void;
+  rows: RuntimeWorkbenchRow[];
+}): JSX.Element {
+  return (
+    <details className="runtime-decision-trace" data-testid="runtime-decision-trace">
+      <summary className="runtime-decision-trace-header">
+        <div>
+          <span className="section-kicker">Runtime decision trace</span>
+          <strong>Ranked on-device capability proof</strong>
+        </div>
+        <Badge value={`${rows.filter((row) => row.compatible).length}/${rows.length} eligible`} />
+      </summary>
+      <div className="runtime-decision-trace-grid">
+        {rows.map((row) => (
+          <RuntimeDecisionTraceItem
+            context={context}
+            key={row.targetId}
+            onCopyCommand={onCopyCommand}
+            row={row}
+          />
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function RuntimeDecisionTraceItem({
+  context,
+  onCopyCommand,
+  row
+}: {
+  context: RuntimeRemediationContext;
+  onCopyCommand: (label: string, command: string) => void;
+  row: RuntimeWorkbenchRow;
+}): JSX.Element {
+  const command = runtimeWorkbenchRowRemediationCommand(row, context);
+  const reason = runtimeWorkbenchTraceReason(row);
+  return (
+    <article className={`runtime-decision-trace-item runtime-decision-trace-item-${row.tone}`}>
+      <div className="runtime-decision-trace-topline">
+        <div>
+          <span>{runtimeWorkbenchTraceRank(row)}</span>
+          <strong>{row.targetId}</strong>
+        </div>
+        <Badge value={runtimeWorkbenchTraceBadge(row)} />
+      </div>
+      <p>{reason}</p>
+      <div className="runtime-decision-trace-metrics">
+        {row.traceMetrics.map((metric) => (
+          <div className={`runtime-decision-trace-metric runtime-decision-trace-metric-${metric.tone}`} key={`${row.targetId}-${metric.label}`}>
+            <span>{metric.label}</span>
+            <strong>{metric.value}</strong>
+            <small>{metric.detail}</small>
+          </div>
+        ))}
+      </div>
+      <div className="runtime-decision-trace-command">
+        <div>
+          <span>{row.actionRequiresEdge ? "edge-run action" : "operator action"}</span>
+          <strong>{row.actionLabel || row.actionKind || "Review runtime path"}</strong>
+          <small>{command?.note || runtimeWorkbenchTraceActionDetail(row)}</small>
+        </div>
+        {command ? (
+          <button className="button-mini" type="button" onClick={() => onCopyCommand(command.label, command.command)}>
+            <Clipboard size={13} />
+            Copy
+          </button>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: string }): JSX.Element {
+  return (
+    <div className="fact">
+      <span>{label}</span>
+      <strong>{value || "-"}</strong>
+    </div>
+  );
+}
+
+function EdgeOperatorCommandPanel({
+  device,
+  edgeExecutionContract,
+  model,
+  proofWorkflow,
+  readiness,
+  runtime,
+  runtimeDecision,
+  runtimeFitDisplay
+}: {
+  device: Device | undefined;
+  edgeExecutionContract: JsonObject;
+  model: ModelRecord | undefined;
+  proofWorkflow: EdgeProofWorkflow;
+  readiness: DeploymentReadiness | undefined;
+  runtime: RuntimeTarget | undefined;
+  runtimeDecision: JsonObject;
+  runtimeFitDisplay: RuntimeFitDisplay;
+}): JSX.Element {
+  const contract = Object.keys(edgeExecutionContract).length ? edgeExecutionContract : runtimeDecision;
+  const runtimeFit = asRecord(readiness?.runtime_fit);
+  const decisionFit = asRecord(contract.runtime_fit);
+  const targetSelection = Object.keys(asRecord(contract.target_selection)).length
+    ? asRecord(contract.target_selection)
+    : asRecord(runtimeFit.target_selection);
+  const contractPath = asRecord(contract.path);
+  const selectedRuntimeTargetId = stringOf(
+    targetSelection.selected_runtime_target_id,
+    stringOf(contractPath.runtime_target_id, runtime ? runtimeTargetId(runtime) : "")
+  );
+  const bestRuntimeTargetId = stringOf(
+    targetSelection.best_runtime_target_id,
+    selectedRuntimeTargetId
+  );
+  const selectedScore =
+    numberOf(decisionFit.score) ??
+    numberOf(runtimeFit.score) ??
+    runtimeFitScoreForProof(readiness, runtimeFitDisplay);
+  const candidates = runtimeDecisionCandidates(contract, runtimeFit, selectedRuntimeTargetId, bestRuntimeTargetId);
+  const targetAssessments = runtimeTargetAssessments(contract, runtimeFit, candidates);
+  const targetCoverage = targetRuntimeCoverageSummary(targetAssessments);
+  const runtimeLaneItems = operatorRuntimeLaneItems(
+    targetAssessments,
+    selectedRuntimeTargetId,
+    bestRuntimeTargetId
+  );
+  const productionAdmission = Object.keys(asRecord(contract.production_admission)).length
+    ? asRecord(contract.production_admission)
+    : asRecord(readiness?.production_admission);
+  const modelId = model?.id ?? stringOf(contractPath.model_id, "model missing");
+  const runtimeId = selectedRuntimeTargetId || (runtime ? runtimeTargetId(runtime) : "runtime missing");
+  const edgeId = device ? deviceId(device) : stringOf(contractPath.device_id, "edge missing");
+  const pathLabel = [modelId, runtimeId, edgeId].join(" -> ");
+  const selectedIsBest = runtimeId === bestRuntimeTargetId;
+  const statusDetail = [
+    selectedScore !== undefined ? `${selectedScore}/100 runtime fit` : runtimeFitDisplay.label,
+    selectedIsBest ? "selected runtime is best" : bestRuntimeTargetId ? `best runtime ${bestRuntimeTargetId}` : "",
+    targetCoverage.detail,
+    proofWorkflow.missing.length ? "proof context incomplete" : "signed proof ready"
+  ].filter(Boolean).join(" / ");
+  const proofValue = proofWorkflow.missing.length
+    ? `${proofWorkflow.missing.length} missing`
+    : proofWorkflow.attestation;
+  const tone = proofWorkflow.missing.length
+    ? "warn"
+    : productionAdmissionTone(productionAdmission) === "bad"
+      ? "bad"
+      : runtimeFitDisplay.tone;
+
+  return (
+    <section className={`operator-command operator-command-${tone}`} aria-labelledby="operator-command-heading">
+      <div className="operator-command-copy">
+        <span className="section-kicker">On-device runtime proof</span>
+        <h2 id="operator-command-heading">{pathLabel}</h2>
+        <p>{statusDetail}</p>
+      </div>
+      <div className="operator-command-badges" aria-label="Active edge path status">
+        <Badge value={runtimeFitDisplay.label} />
+        <Badge value={selectedIsBest ? "best target" : "retarget available"} />
+        <Badge value={proofWorkflow.gatePolicy} />
+      </div>
+      <div className="operator-command-grid" aria-label="Active model runtime edge proof">
+        <OperatorCommandMetric
+          detail={model ? `${model.packageId} / ${model.format}` : "select a model"}
+          label="Model"
+          tone={model ? "good" : "bad"}
+          value={modelId}
+        />
+        <OperatorCommandMetric
+          detail={runtime ? runtimeTargetCapabilityDetail(runtime) : "select a runtime target"}
+          label="Runtime target"
+          tone={runtime ? runtimeFitDisplay.tone : "bad"}
+          value={runtimeId}
+        />
+        <OperatorCommandMetric
+          detail={device ? `${device.profile ?? "unknown profile"} / ${device.status ?? "registered"}` : "select an edge"}
+          label="Device inventory"
+          tone={device ? runtimeInventoryTone(device) : "bad"}
+          value={edgeId}
+        />
+        <OperatorCommandMetric
+          detail={targetCoverage.detail}
+          label="Runtime coverage"
+          tone={targetCoverage.tone}
+          value={targetCoverage.value}
+        />
+        <OperatorCommandMetric
+          detail={productionAdmissionDetail(productionAdmission)}
+          label="Field admission"
+          tone={productionAdmissionTone(productionAdmission)}
+          value={productionAdmissionValue(productionAdmission)}
+        />
+        <OperatorCommandMetric
+          detail={proofWorkflow.proofPath}
+          label="Signed proof"
+          tone={proofWorkflow.tone}
+          value={proofValue}
+        />
+      </div>
+      {runtimeLaneItems.length ? (
+        <div className="operator-command-lanes" aria-label="Runtime target alternatives">
+          {runtimeLaneItems.map((item) => (
+            <div key={item.id} className={`operator-command-lane operator-command-lane-${item.tone}`}>
+              <div className="operator-command-lane-topline">
+                <span>{item.status}</span>
+                <strong>{item.id}</strong>
+              </div>
+              <small>{item.detail}</small>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function OperatorCommandMetric({
+  detail,
+  label,
+  tone,
+  value
+}: {
+  detail: string;
+  label: string;
+  tone: GateTone;
+  value: string;
+}): JSX.Element {
+  return (
+    <div className={`operator-command-metric operator-command-metric-${tone}`}>
+      <span>{label}</span>
+      <strong>{value || "-"}</strong>
+      <small>{detail}</small>
+    </div>
+  );
+}
+
+function PathStep({ title, value, state }: { title: string; value: string; state: string }): JSX.Element {
+  return (
+    <div className={`path-step path-step-${toneForPath(state)}`}>
+      <span>{title}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function ReadinessCard({
+  title,
+  value,
+  detail,
+  state
+}: {
+  title: string;
+  value: string;
+  detail: string;
+  state: string;
+}): JSX.Element {
+  return (
+    <div className={`readiness-card readiness-card-${toneForPath(state)}`}>
+      <span>{title}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </div>
+  );
+}
+
+function EdgeRuntimeMissionPanel({ mission }: { mission: EdgeRuntimeMission }): JSX.Element {
+  return (
+    <section className={`edge-mission edge-mission-${mission.tone}`} aria-labelledby="edge-mission-heading">
+      <div className="edge-mission-header">
+        <div>
+          <span className="section-kicker">Edge runtime mission</span>
+          <h2 id="edge-mission-heading">{mission.headline}</h2>
+          <p>{mission.detail}</p>
+        </div>
+        <code>{mission.path}</code>
+      </div>
+      <div className="edge-mission-grid" aria-label="Selected on-device runtime proof">
+        {mission.metrics.map((metric) => (
+          <div className={`edge-mission-metric edge-mission-metric-${metric.tone}`} key={metric.label}>
+            <span>{metric.label}</span>
+            <strong>{metric.value}</strong>
+            <small>{metric.detail}</small>
+          </div>
+        ))}
+      </div>
+      <div className="edge-mission-focus" aria-label="Operator focus">
+        {mission.focus.map((item) => (
+          <span key={item}>{item}</span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function EdgeExecutionContractPanel({
+  device,
+  edgeExecutionContract,
+  edgeRuntimeFit,
+  model,
+  onCopyRemediation,
+  onSelectRuntimeTarget,
+  readiness,
+  readinessVerdict,
+  resourceEnvelopeFit,
+  runtime,
+  runtimeDecision,
+  runtimeFitDisplay,
+  runtimeValidation
+}: {
+  device: Device | undefined;
+  edgeExecutionContract: JsonObject;
+  edgeRuntimeFit: EdgeRuntimeFit;
+  model: ModelRecord | undefined;
+  onCopyRemediation: (label: string, command: string) => void;
+  onSelectRuntimeTarget: (runtimeTargetIdValue: string) => void;
+  readiness: DeploymentReadiness | undefined;
+  readinessVerdict: ReadinessVerdict;
+  resourceEnvelopeFit: EdgeRuntimeFit;
+  runtime: RuntimeTarget | undefined;
+  runtimeDecision: JsonObject;
+  runtimeFitDisplay: RuntimeFitDisplay;
+  runtimeValidation: RuntimeValidation | undefined;
+}): JSX.Element {
+  const contract = Object.keys(edgeExecutionContract).length ? edgeExecutionContract : runtimeDecision;
+  const runtimeFit = asRecord(readiness?.runtime_fit);
+  const decisionFit = asRecord(contract.runtime_fit);
+  const targetSelection = Object.keys(asRecord(contract.target_selection)).length
+    ? asRecord(contract.target_selection)
+    : asRecord(runtimeFit.target_selection);
+  const contractPath = asRecord(contract.path);
+  const remediationContext: RuntimeRemediationContext = {
+    packageId: model?.packageId ?? stringOf(contractPath.package_id, ""),
+    modelId: model?.id ?? stringOf(contractPath.model_id, ""),
+    deviceId: device ? deviceId(device) : stringOf(contractPath.device_id, ""),
+    slot: stringOf(contractPath.slot, "vision")
+  };
+  const selectedRuntimeTargetId = stringOf(
+    targetSelection.selected_runtime_target_id,
+    stringOf(contractPath.runtime_target_id, runtime ? runtimeTargetId(runtime) : "runtime missing")
+  );
+  const bestRuntimeTargetId = stringOf(
+    targetSelection.best_runtime_target_id,
+    selectedRuntimeTargetId
+  );
+  const selectedScore =
+    numberOf(decisionFit.score) ??
+    numberOf(runtimeFit.score) ??
+    runtimeFitScoreForProof(readiness, runtimeFitDisplay);
+  const bestScore = numberOf(targetSelection.best_score);
+  const scoreDelta = numberOf(targetSelection.score_delta);
+  const productionAdmission = Object.keys(asRecord(contract.production_admission)).length
+    ? asRecord(contract.production_admission)
+    : asRecord(readiness?.production_admission);
+  const selectedLane = Object.keys(asRecord(contract.selected_runtime_lane)).length
+    ? asRecord(contract.selected_runtime_lane)
+    : runtimeLaneFor(runtimeFit, runtime);
+  const bestLane = asRecord(contract.best_runtime_lane);
+  const artifactLane = Object.keys(asRecord(contract.artifact_lane)).length
+    ? asRecord(contract.artifact_lane)
+    : asRecord(runtimeFit.artifact_lane);
+  const capabilityLock = Object.keys(asRecord(contract.runtime_capability_lock)).length
+    ? asRecord(contract.runtime_capability_lock)
+    : asRecord(runtimeFit.runtime_capability_lock);
+  const recommendedAction = stringOf(
+    contract.recommended_action,
+    readinessVerdict.label === "go" ? "apply_or_stage" : "review"
+  );
+  const decisionStatus = stringOf(targetSelection.status, stringOf(contract.status, readinessVerdict.label));
+  const actionLabel = runtimeDecisionActionLabel(recommendedAction);
+  const decisionDetail = compactMetricDetail(
+    stringOf(contract.detail, readinessVerdict.nextAction)
+  );
+  const tone = executionContractTone({
+    action: recommendedAction,
+    decisionStatus,
+    productionAdmission,
+    readinessVerdict
+  });
+  const candidates = runtimeDecisionCandidates(contract, runtimeFit, selectedRuntimeTargetId, bestRuntimeTargetId);
+  const targetAssessments = runtimeTargetAssessments(contract, runtimeFit, candidates);
+  const blockingGates = runtimeDecisionGates(contract.blocking_gates);
+  const attentionGates = runtimeDecisionGates(contract.attention_gates);
+  const canSelectBest =
+    bestRuntimeTargetId &&
+    selectedRuntimeTargetId &&
+    bestRuntimeTargetId !== selectedRuntimeTargetId &&
+    !bestRuntimeTargetId.includes("missing");
+
+  return (
+    <section className={`execution-contract execution-contract-${tone}`} aria-labelledby="execution-contract-heading">
+      <div className="execution-contract-header">
+        <div>
+          <span className="section-kicker">Edge execution contract</span>
+          <h2 id="execution-contract-heading">
+            {executionContractHeadline(recommendedAction, decisionStatus, readinessVerdict)}
+          </h2>
+          <p>{decisionDetail}</p>
+        </div>
+        <div className="execution-contract-decision" aria-label="Runtime decision">
+          <Badge value={actionLabel} />
+          <strong>
+            {selectedRuntimeTargetId}
+            {bestRuntimeTargetId && bestRuntimeTargetId !== selectedRuntimeTargetId
+              ? ` -> ${bestRuntimeTargetId}`
+              : ""}
+          </strong>
+          <small>
+            {selectedScore !== undefined ? `${selectedScore}/100 selected` : runtimeFitDisplay.label}
+            {bestScore !== undefined && bestRuntimeTargetId !== selectedRuntimeTargetId
+              ? ` / ${bestScore}/100 best`
+              : ""}
+            {scoreDelta !== undefined && scoreDelta > 0 ? ` / +${formatMetricNumber(scoreDelta)} fit` : ""}
+          </small>
+          {canSelectBest ? (
+            <Button
+              icon={<GitBranch size={16} />}
+              variant="secondary"
+              onClick={() => onSelectRuntimeTarget(bestRuntimeTargetId)}
+            >
+              Use best runtime
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="execution-path" aria-label="Selected model runtime edge path">
+        <ExecutionPathNode label="Model" value={model?.id ?? "missing"} detail={model?.format ?? "artifact"} tone={model ? "good" : "bad"} />
+        <ExecutionPathNode
+          label="Runtime"
+          value={runtime ? runtimeTargetId(runtime) : "missing"}
+          detail={runtimeLaneValue(selectedLane)}
+          tone={runtime ? runtimeLaneTone(selectedLane) : "bad"}
+        />
+        <ExecutionPathNode
+          label="Edge"
+          value={device ? deviceId(device) : "missing"}
+          detail={device?.profile ?? runtimeInventoryLabel(device)}
+          tone={device ? runtimeInventoryTone(device) : "bad"}
+        />
+      </div>
+
+      <div className="execution-contract-grid" aria-label="On-device runtime capabilities">
+        <CapabilityMetric
+          label="Fit score"
+          value={selectedScore !== undefined ? `${selectedScore}/100` : runtimeFitDisplay.label}
+          detail={runtimeFitDisplay.detail}
+          tone={runtimeFitDisplay.tone}
+        />
+        <CapabilityMetric
+          label="Runtime lane"
+          value={runtimeLaneValue(selectedLane)}
+          detail={bestRuntimeTargetId !== selectedRuntimeTargetId && Object.keys(bestLane).length
+            ? `best lane: ${runtimeLaneValue(bestLane)}`
+            : runtimeLaneDetail(selectedLane)}
+          tone={runtimeLaneTone(selectedLane)}
+        />
+        <CapabilityMetric
+          label="Artifact path"
+          value={artifactLaneValue(artifactLane)}
+          detail={artifactLaneDetail(artifactLane)}
+          tone={artifactLaneTone(artifactLane)}
+        />
+        <CapabilityMetric
+          label="Capability lock"
+          value={capabilityLockValue(capabilityLock)}
+          detail={capabilityLockDetail(capabilityLock)}
+          tone={capabilityLockTone(capabilityLock)}
+        />
+        <CapabilityMetric
+          label="Resources"
+          value={resourceEnvelopeFit.label}
+          detail={resourceEnvelopeFit.detail}
+          tone={resourceEnvelopeFit.tone}
+        />
+        <CapabilityMetric
+          label="Admission"
+          value={productionAdmissionValue(productionAdmission)}
+          detail={productionAdmissionDetail(productionAdmission)}
+          tone={productionAdmissionTone(productionAdmission)}
+        />
+      </div>
+
+      <div className="execution-evidence-grid">
+        <div className="execution-runtime-board" aria-label="Target runtime coverage">
+          <div className="execution-subheader">
+            <strong>Target runtime coverage</strong>
+            <span>{targetAssessments.length ? `${targetAssessments.length} assessed` : "pending"}</span>
+          </div>
+          <div className="execution-candidate-list">
+            {targetAssessments.length ? (
+              targetAssessments.slice(0, 6).map((assessment) => (
+                <TargetRuntimeAssessmentRow
+                  key={`${candidateRuntimeId(assessment)}-${stringOf(assessment.status, "status")}`}
+                  assessment={assessment}
+                  bestRuntimeTargetId={bestRuntimeTargetId}
+                  context={remediationContext}
+                  onCopyRemediation={onCopyRemediation}
+                  selectedRuntimeTargetId={selectedRuntimeTargetId}
+                />
+              ))
+            ) : (
+              <EmptyState title="No target coverage" detail="Runtime target assessments will appear after readiness evaluates this model and edge." />
+            )}
+          </div>
+        </div>
+
+        <div className="execution-runtime-board" aria-label="Measured runtime candidates">
+          <div className="execution-subheader">
+            <strong>Measured runtime candidates</strong>
+            <span>{candidates.length ? `${candidates.length} ranked` : "pending"}</span>
+          </div>
+          <div className="execution-candidate-list">
+            {candidates.length ? (
+              candidates.map((candidate) => (
+                <RuntimeCandidateRow
+                  key={`${candidateRuntimeId(candidate)}-${stringOf(candidate.rank, "rank")}`}
+                  bestRuntimeTargetId={bestRuntimeTargetId}
+                  candidate={candidate}
+                  selectedRuntimeTargetId={selectedRuntimeTargetId}
+                />
+              ))
+            ) : (
+              <EmptyState title="No measured candidates" detail="Record on-device benchmark and validation evidence for this model/runtime path." />
+            )}
+          </div>
+        </div>
+
+        <div className="execution-gate-board" aria-label="Runtime blockers and evidence gaps">
+          <div className="execution-subheader">
+            <strong>Runtime blockers and evidence gaps</strong>
+            <span>{blockingGates.length + attentionGates.length || "clear"}</span>
+          </div>
+          <div className="execution-gate-list">
+            {[...blockingGates, ...attentionGates].length ? (
+              [...blockingGates, ...attentionGates].slice(0, 5).map((gate) => (
+                <div className={`execution-gate execution-gate-${toneForReadinessStatus(stringOf(gate.status, ""))}`} key={`${stringOf(gate.gate_id, "gate")}-${stringOf(gate.status, "status")}`}>
+                  <span>{stringOf(gate.label, stringOf(gate.gate_id, "Gate"))}</span>
+                  <strong>{displayGateState(stringOf(gate.state, stringOf(gate.status, "review")))}</strong>
+                  <small>{compactMetricDetail(stringOf(gate.detail, "Review gate evidence"))}</small>
+                </div>
+              ))
+            ) : (
+              <div className="execution-gate execution-gate-good">
+                <span>Runtime gates</span>
+                <strong>Aligned</strong>
+                <small>
+                  {runtimeValidation
+                    ? `${selectedRuntimeTargetId} validation and admission evidence are available`
+                    : edgeRuntimeFit.detail}
+                </small>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ExecutionPathNode({
+  detail,
+  label,
+  tone,
+  value
+}: {
+  detail: string;
+  label: string;
+  tone: GateTone;
+  value: string;
+}): JSX.Element {
+  return (
+    <div className={`execution-path-node execution-path-node-${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </div>
+  );
+}
+
+function RuntimeCandidateRow({
+  bestRuntimeTargetId,
+  candidate,
+  selectedRuntimeTargetId
+}: {
+  bestRuntimeTargetId: string;
+  candidate: JsonObject;
+  selectedRuntimeTargetId: string;
+}): JSX.Element {
+  const id = candidateRuntimeId(candidate);
+  const lane = asRecord(candidate.runtime_lane);
+  const score = numberOf(candidate.score);
+  const latency = numberOf(candidate.latency_ms_p95);
+  const throughput = numberOf(candidate.throughput_ips);
+  const tier = stringOf(candidate.tier, "fit").replace(/_/g, " ");
+  const labels = [
+    id === selectedRuntimeTargetId ? "selected" : "",
+    id === bestRuntimeTargetId ? "best" : "",
+    stringOf(candidate.blocked, "") === "true" ? "blocked" : ""
+  ].filter(Boolean);
+  return (
+    <div className={`execution-candidate execution-candidate-${runtimeCandidateTone(candidate, id, selectedRuntimeTargetId, bestRuntimeTargetId)}`}>
+      <div>
+        <span>{numberOf(candidate.rank) !== undefined ? `#${candidate.rank}` : "candidate"}</span>
+        <strong>{id}</strong>
+        <small>
+          {score !== undefined ? `${score}/100 ${tier}` : tier}
+          {latency !== undefined ? ` / ${formatMetricNumber(latency)} ms p95` : ""}
+          {throughput !== undefined ? ` / ${formatThroughput(throughput)} ips` : ""}
+        </small>
+      </div>
+      <div className="execution-candidate-meta">
+        {labels.map((label) => (
+          <Badge key={label} value={label} />
+        ))}
+        <small>{runtimeLaneValue(lane)}</small>
+      </div>
+    </div>
+  );
+}
+
+function TargetRuntimeAssessmentRow({
+  assessment,
+  bestRuntimeTargetId,
+  context,
+  onCopyRemediation,
+  selectedRuntimeTargetId
+}: {
+  assessment: JsonObject;
+  bestRuntimeTargetId: string;
+  context: RuntimeRemediationContext;
+  onCopyRemediation: (label: string, command: string) => void;
+  selectedRuntimeTargetId: string;
+}): JSX.Element {
+  const id = candidateRuntimeId(assessment);
+  const lane = asRecord(assessment.runtime_lane);
+  const score = numberOf(assessment.score);
+  const status = stringOf(
+    assessment.status,
+    assessment.blocked === true ? "blocked" : "eligible"
+  ).replace(/_/g, " ");
+  const remediation = asRecord(assessment.remediation);
+  const remediationCommand = runtimeTargetAssessmentRemediationCommand(assessment, context);
+  const componentProofs = runtimeTargetComponentProofs(assessment);
+  const labels = [
+    id === selectedRuntimeTargetId || assessment.selected === true ? "selected" : "",
+    id === bestRuntimeTargetId || assessment.best === true ? "best" : "",
+    status,
+    remediation.requires_edge_execution === true ? "edge-run" : ""
+  ].filter(Boolean);
+  return (
+    <div className={`execution-candidate execution-candidate-${targetAssessmentTone(assessment)}`}>
+      <div>
+        <span>{runtimeLaneValue(lane)}</span>
+        <strong>{id}</strong>
+        <small>
+          {score !== undefined ? `${score}/100` : status}
+          {` / ${targetAssessmentDetail(assessment)}`}
+        </small>
+        {Object.keys(remediation).length ? (
+          <div className="execution-remediation-block">
+            <small className="execution-remediation">
+              Next: {targetAssessmentRemediationDetail(remediation)}
+            </small>
+            {remediationCommand ? (
+              <div className="execution-remediation-actions">
+                <span>{remediationCommand.edgeRun ? "edge-run" : "operator"}</span>
+                <small>{remediationCommand.note}</small>
+                <button
+                  className="button-mini"
+                  type="button"
+                  onClick={() => onCopyRemediation(remediationCommand.label, remediationCommand.command)}
+                >
+                  <Clipboard size={14} />
+                  Copy command
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {componentProofs.length ? (
+          <div className="execution-proof-chips" aria-label={`${id} component proof`}>
+            {componentProofs.map((component) => (
+              <span
+                className={`execution-proof-chip execution-proof-chip-${component.tone}`}
+                key={component.key}
+              >
+                {component.label}: {component.state}
+                {component.score ? ` ${component.score}` : ""}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      <div className="execution-candidate-meta">
+        {labels.map((label) => (
+          <Badge key={label} value={label} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EdgeProofPanel({
+  componentDigests,
+  disabled,
+  handoff,
+  proof,
+  trace,
+  workflow,
+  onGenerate,
+  onDownload,
+  onCopy
+}: {
+  componentDigests: EdgeProofComponentDigestStatus;
+  disabled: boolean;
+  handoff: EdgeProofDownloadHandoff | undefined;
+  proof: JsonObject | undefined;
+  trace: EdgeProofTraceStatus;
+  workflow: EdgeProofWorkflow;
+  onGenerate: () => void;
+  onDownload: () => void;
+  onCopy: (label: string, command: string) => void;
+}): JSX.Element {
+  const actionDisabled = disabled || workflow.missing.length > 0;
+  return (
+    <section className={`edge-proof edge-proof-${workflow.tone}`} aria-labelledby="edge-proof-heading">
+      <div className="edge-proof-header">
+        <div>
+          <span className="section-kicker">Runtime proof artifact</span>
+          <h2 id="edge-proof-heading">{workflow.status}</h2>
+          <p>{workflow.detail}</p>
+        </div>
+        <div className="edge-proof-policy" aria-label="Proof gate policy">
+          <span className="edge-proof-policy-line">Proof policy: {workflow.gatePolicy}</span>
+          <Badge value={workflow.gatePolicy} />
+          <span className={`badge badge-${workflow.capabilityLockTone}`}>{workflow.capabilityLock}</span>
+          <small>{workflow.capabilityLockDetail}</small>
+          <Badge value={workflow.attestation} />
+          <strong>{workflow.runtimeFit}</strong>
+          <small>{workflow.proofPath}</small>
+          <div className="edge-proof-actions">
+            <button
+              className="button button-secondary"
+              disabled={actionDisabled}
+              type="button"
+              onClick={onGenerate}
+            >
+              <FileCheck2 size={16} />
+              <span>Generate artifact</span>
+            </button>
+            <button
+              className="button button-ghost"
+              disabled={actionDisabled}
+              type="button"
+              onClick={onDownload}
+            >
+              <Download size={16} />
+              <span>Download JSON</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {workflow.missing.length ? (
+        <div className="edge-proof-missing" aria-label="Missing proof context">
+          {workflow.missing.map((item) => (
+            <span key={item}>{item}</span>
+          ))}
+        </div>
+      ) : null}
+
+      <EdgeProofTraceCard trace={trace} />
+      <EdgeExecutionManifestCard proof={proof} />
+      <EdgeProofComponentDigestCard status={componentDigests} />
+      <EdgeProofDownloadHandoffCard componentDigests={componentDigests} handoff={handoff} />
+
+      <div className="edge-proof-command-grid">
+        <ProofCommand
+          command={workflow.generateCommand}
+          disabled={actionDisabled}
+          icon={<Terminal size={16} />}
+          label="Generate proof"
+          onCopy={onCopy}
+        />
+        <ProofCommand
+          command={workflow.verifyCommand}
+          disabled={actionDisabled}
+          icon={<FileCheck2 size={16} />}
+          label="Verify gate"
+          onCopy={onCopy}
+        />
+        <ProofCommand
+          command={workflow.verifyJsonCommand}
+          disabled={actionDisabled}
+          icon={<Clipboard size={16} />}
+          label="Verify JSON"
+          onCopy={onCopy}
+        />
+      </div>
+    </section>
+  );
+}
+
+function EdgeExecutionManifestCard({ proof }: { proof: JsonObject | undefined }): JSX.Element {
+  const manifest = asRecord(proof?.edge_execution_manifest);
+  const execution = asRecord(manifest.execution);
+  const edge = asRecord(manifest.edge);
+  const evidence = asRecord(manifest.evidence);
+  const admission = asRecord(manifest.admission);
+  const capabilityLock = asRecord(edge.capability_lock);
+  const schema = stringOf(manifest.schema_version, "");
+  const runtimeImage = stringOf(execution.runtime_image, "");
+  const runtimeTarget = stringOf(execution.runtime_target_id, "");
+  const runtimeLane = asRecord(execution.runtime_lane);
+  const capabilityStatus = stringOf(capabilityLock.status, "");
+  const capabilityDigest = stringOf(capabilityLock.capability_sha256, "");
+  const gateStatus = stringOf(admission.gate_status, "");
+  const available = schema === "temms-edge-execution-manifest/v1";
+  const tone: GateTone = !available ? "neutral" : gateStatus === "failed" ? "bad" : "good";
+  const validationId = stringOf(evidence.runtime_validation_id, "");
+  const benchmarkId = stringOf(evidence.benchmark_id, "");
+  const latency = numberOf(evidence.latency_ms_p95);
+  const throughput = numberOf(evidence.throughput_ips);
+  const evidenceDetail = [
+    validationId ? `validation ${validationId}` : "",
+    benchmarkId ? `benchmark ${benchmarkId}` : "",
+    latency !== undefined ? `${formatMetricNumber(latency)} ms p95` : "",
+    throughput !== undefined ? `${formatThroughput(throughput)} ips` : ""
+  ].filter(Boolean).join(" / ");
+
+  return (
+    <article className={`edge-proof-trace edge-execution-manifest edge-proof-trace-${tone}`} data-testid="edge-execution-manifest">
+      <div className="edge-proof-trace-header">
+        <div>
+          <span>Execution manifest</span>
+          <strong>{available ? stringOf(asRecord(manifest.path).label, "signed path") : "manifest pending"}</strong>
+          <small>
+            {available
+              ? "Signed execution intent retained with runtime image, capability lock, and evidence ids."
+              : "Generate or download a proof to inspect the signed execution manifest."}
+          </small>
+        </div>
+        <Badge value={available ? gateStatus || "retained" : "not generated"} />
+      </div>
+      <div className="edge-proof-trace-grid">
+        <CapabilityMetric
+          detail={runtimeTarget || stringOf(execution.runtime_arch, "runtime target pending")}
+          label="Runtime image"
+          tone={runtimeImage ? "good" : available ? "warn" : "neutral"}
+          value={runtimeImage || "pending"}
+        />
+        <CapabilityMetric
+          detail={manifestRuntimeLaneDetail(runtimeLane)}
+          label="Runtime lane"
+          tone={runtimeLane.lane_id ? "good" : available ? "warn" : "neutral"}
+          value={stringOf(runtimeLane.lane_id, "pending")}
+        />
+        <CapabilityMetric
+          detail={capabilityDigest ? `sha256 ${capabilityDigest.slice(0, 12)}` : "capability digest pending"}
+          label="Capability lock"
+          tone={capabilityStatus === "locked" ? "good" : available ? "warn" : "neutral"}
+          value={capabilityStatus || "pending"}
+        />
+        <CapabilityMetric
+          detail={evidenceDetail || "validation and benchmark ids pending"}
+          label="Evidence ids"
+          tone={validationId && benchmarkId ? "good" : available ? "warn" : "neutral"}
+          value={validationId && benchmarkId ? "retained" : "pending"}
+        />
+        <CapabilityMetric
+          detail={execution.selected_is_best === true ? "selected runtime is best measured target" : "best-runtime proof pending"}
+          label="Best target"
+          tone={execution.selected_is_best === true ? "good" : available ? "warn" : "neutral"}
+          value={execution.selected_is_best === true ? "yes" : "pending"}
+        />
+        <CapabilityMetric
+          detail={manifestGatePolicyLabel(asRecord(admission.gate_policy))}
+          label="Admission"
+          tone={gateStatus === "passed" ? "good" : gateStatus === "failed" ? "bad" : "neutral"}
+          value={gateStatus || "pending"}
+        />
+      </div>
+    </article>
+  );
+}
+
+function EdgeProofComponentDigestCard({
+  status
+}: {
+  status: EdgeProofComponentDigestStatus;
+}): JSX.Element {
+  const errors = status.errors.slice(0, 2).join(" / ");
+  const digestByKey = new Map(status.digests.map((digest) => [digest.key, digest]));
+  const workbenchDigest = digestByKey.get("runtime_workbench_sha256");
+  const traceDigest = digestByKey.get("runtime_decision_trace_sha256");
+  const manifestDigest = digestByKey.get("edge_execution_manifest_sha256");
+
+  return (
+    <article className={`edge-proof-trace edge-proof-digests edge-proof-trace-${status.tone}`} data-testid="edge-proof-component-digests">
+      <div className="edge-proof-trace-header">
+        <div>
+          <span>Component digests</span>
+          <strong>{status.value}</strong>
+          <small>{status.detail}</small>
+        </div>
+        <Badge value={status.status.replace(/_/g, " ")} />
+      </div>
+      <div className="edge-proof-trace-grid">
+        <CapabilityMetric
+          detail={status.schema || "component digest schema unavailable"}
+          label="Digest schema"
+          tone={status.schema === "temms-edge-runtime-proof-component-digests/v1" ? "good" : status.status === "not_generated" ? "neutral" : "warn"}
+          value={status.schema || "pending"}
+        />
+        <CapabilityMetric
+          detail={errors || "runtime workbench, trace, and execution manifest are individually hash-addressed"}
+          label="Coverage"
+          tone={status.tone}
+          value={componentDigestCoverageLabel(status)}
+        />
+        <CapabilityMetric
+          detail={workbenchDigest?.value ? `sha256 ${shortProofDigest(workbenchDigest.value)}` : "runtime workbench digest pending"}
+          label="Workbench"
+          tone={workbenchDigest?.value ? "good" : status.status === "not_generated" ? "neutral" : "warn"}
+          value={workbenchDigest?.value ? "retained" : "pending"}
+        />
+        <CapabilityMetric
+          detail={traceDigest?.value ? `sha256 ${shortProofDigest(traceDigest.value)}` : "runtime decision trace digest pending"}
+          label="Trace"
+          tone={traceDigest?.value ? "good" : status.status === "not_generated" ? "neutral" : "warn"}
+          value={traceDigest?.value ? "retained" : "pending"}
+        />
+        <CapabilityMetric
+          detail={manifestDigest?.value ? `sha256 ${shortProofDigest(manifestDigest.value)}` : "edge execution manifest digest pending"}
+          label="Manifest"
+          tone={manifestDigest?.value ? "good" : status.status === "not_generated" ? "neutral" : "warn"}
+          value={manifestDigest?.value ? "retained" : "pending"}
+        />
+      </div>
+    </article>
+  );
+}
+
+function EdgeProofDownloadHandoffCard({
+  componentDigests,
+  handoff
+}: {
+  componentDigests: EdgeProofComponentDigestStatus;
+  handoff: EdgeProofDownloadHandoff | undefined;
+}): JSX.Element {
+  const bodyDigests = new Map(componentDigests.digests.map((digest) => [digest.key, digest.value]));
+  const headerDigests = [
+    {
+      key: "runtime_workbench_sha256",
+      label: "Workbench",
+      value: handoff?.runtimeWorkbenchSha256 || ""
+    },
+    {
+      key: "runtime_decision_trace_sha256",
+      label: "Trace",
+      value: handoff?.runtimeDecisionTraceSha256 || ""
+    },
+    {
+      key: "edge_execution_manifest_sha256",
+      label: "Manifest",
+      value: handoff?.edgeExecutionManifestSha256 || ""
+    }
+  ];
+  const retainedHeaderDigests = headerDigests.filter((digest) => digest.value).length;
+  const missingHeaderDigests = handoff
+    ? headerDigests.filter((digest) => !digest.value).map((digest) => digest.label)
+    : [];
+  const mismatchedHeaderDigests = handoff
+    ? headerDigests.filter((digest) => {
+        const bodyDigest = bodyDigests.get(digest.key) || "";
+        return digest.value && bodyDigest && normalizeSha256Digest(digest.value) !== normalizeSha256Digest(bodyDigest);
+      })
+    : [];
+  const tone: GateTone = !handoff
+    ? "neutral"
+    : mismatchedHeaderDigests.length
+      ? "bad"
+      : missingHeaderDigests.length
+        ? "warn"
+        : "good";
+  const value = !handoff
+    ? "headers pending"
+    : mismatchedHeaderDigests.length
+      ? "header mismatch"
+      : `${retainedHeaderDigests}/3 component headers`;
+  const detail = !handoff
+    ? "Downloaded artifact headers are not captured for the latest generated proof."
+    : mismatchedHeaderDigests.length
+      ? `${mismatchedHeaderDigests.map((digest) => digest.label).join(", ")} header disagrees with proof body`
+      : missingHeaderDigests.length
+        ? `${missingHeaderDigests.join(", ")} header missing from download response`
+        : "Download response headers match the retained component digests.";
+  const payloadDigest = handoff?.payloadSha256 || "";
+  const gateTone: GateTone =
+    handoff?.gateStatus === "passed" ? "good" : handoff?.gateStatus === "failed" ? "bad" : handoff ? "warn" : "neutral";
+  const attestationTone: GateTone =
+    handoff?.attestation === "signed" ? "good" : handoff?.attestation === "unsigned" ? "warn" : "neutral";
+
+  return (
+    <article className={`edge-proof-trace edge-proof-handoff edge-proof-trace-${tone}`} data-testid="edge-proof-download-handoff">
+      <div className="edge-proof-trace-header">
+        <div>
+          <span>Download handoff headers</span>
+          <strong>{value}</strong>
+          <small>{detail}</small>
+        </div>
+        <Badge value={handoff ? "downloaded" : "not downloaded"} />
+      </div>
+      <div className="edge-proof-trace-grid">
+        <CapabilityMetric
+          detail={handoff?.fileName || "artifact filename header pending"}
+          label="Filename"
+          tone={handoff?.fileName ? "good" : "neutral"}
+          value={handoff?.fileName ? "retained" : "pending"}
+        />
+        <CapabilityMetric
+          detail={payloadDigest ? `sha256 ${shortProofDigest(payloadDigest)}` : "payload hash header pending"}
+          label="Payload hash"
+          tone={isSha256Digest(payloadDigest) ? "good" : handoff ? "warn" : "neutral"}
+          value={payloadDigest ? "retained" : "pending"}
+        />
+        <CapabilityMetric
+          detail={handoff?.keyFingerprint ? `key ${handoff.keyFingerprint}` : "signing-key fingerprint header pending"}
+          label="Attestation"
+          tone={attestationTone}
+          value={handoff?.attestation || "pending"}
+        />
+        <CapabilityMetric
+          detail="Strict proof policy result from the download envelope"
+          label="Gate"
+          tone={gateTone}
+          value={handoff?.gateStatus || "pending"}
+        />
+        {headerDigests.map((digest) => {
+          const bodyDigest = bodyDigests.get(digest.key) || "";
+          const matches =
+            digest.value && bodyDigest && normalizeSha256Digest(digest.value) === normalizeSha256Digest(bodyDigest);
+          const digestTone: GateTone = matches ? "good" : digest.value ? "warn" : handoff ? "warn" : "neutral";
+          return (
+            <CapabilityMetric
+              detail={digest.value ? `sha256 ${shortProofDigest(digest.value)}` : `${digest.label.toLowerCase()} header pending`}
+              key={digest.key}
+              label={`${digest.label} header`}
+              tone={digestTone}
+              value={matches ? "matches body" : digest.value ? "retained" : "pending"}
+            />
+          );
+        })}
+      </div>
+    </article>
+  );
+}
+
+function componentDigestCoverageLabel(status: EdgeProofComponentDigestStatus): string {
+  if (!status.digestCount) return "pending";
+  if (status.status === "consistent") return `${status.digestCount}/3 verified`;
+  if (status.status === "mismatch") return `${status.digestCount}/3 checked`;
+  if (status.status === "verifying") return `${status.digestCount}/3 checking`;
+  return `${status.digestCount}/3 retained`;
+}
+
+function normalizeSha256Digest(value: string): string {
+  return value.replace(/^sha256:/, "").toLowerCase();
+}
+
+function manifestRuntimeLaneDetail(lane: JsonObject): string {
+  return [
+    stringOf(lane.execution_engine, ""),
+    stringsOf(lane.providers).join(", "),
+    stringOf(lane.acceleration, ""),
+    stringOf(lane.optimization_goal, "")
+  ].filter(Boolean).join(" / ") || "runtime lane pending";
+}
+
+function manifestGatePolicyLabel(policy: JsonObject): string {
+  const parts = [];
+  if (policy.require_go === true) parts.push("go");
+  if (policy.require_best_runtime === true) parts.push("best runtime");
+  if (policy.require_capability_lock === true) parts.push("capability lock");
+  const minRuntimeFit = numberOf(policy.min_runtime_fit);
+  if (minRuntimeFit !== undefined) parts.push(`fit >= ${formatMetricNumber(minRuntimeFit)}`);
+  return parts.length ? parts.join(" + ") : "proof policy pending";
+}
+
+function EdgeProofTraceCard({ trace }: { trace: EdgeProofTraceStatus }): JSX.Element {
+  const sampleErrors = trace.errors.slice(0, 2);
+  return (
+    <article className={`edge-proof-trace edge-proof-trace-${trace.tone}`} data-testid="edge-proof-trace-consistency">
+      <div className="edge-proof-trace-header">
+        <div>
+          <span>Signed runtime trace</span>
+          <strong>{trace.value}</strong>
+          <small>{trace.detail}</small>
+        </div>
+        <Badge value={trace.status.replace(/_/g, " ")} />
+      </div>
+      <div className="edge-proof-trace-grid">
+        <CapabilityMetric
+          detail={trace.schema || "trace schema unavailable"}
+          label="Trace schema"
+          tone={trace.schema === "temms-runtime-decision-trace/v1" ? "good" : trace.status === "not_generated" ? "neutral" : "warn"}
+          value={trace.schema || "pending"}
+        />
+        <CapabilityMetric
+          detail={`${trace.commandCount} remediation command${trace.commandCount === 1 ? "" : "s"}`}
+          label="Targets"
+          tone={trace.rowCount ? trace.tone : "neutral"}
+          value={trace.rowCount ? `${trace.rowCount} ranked` : "pending"}
+        />
+        <CapabilityMetric
+          detail={sampleErrors.length ? sampleErrors.join(" / ") : "trace agrees with runtime_workbench"}
+          label="Workbench check"
+          tone={trace.tone}
+          value={trace.status === "mismatch" ? `${trace.errors.length} mismatch${trace.errors.length === 1 ? "" : "es"}` : trace.status.replace(/_/g, " ")}
+        />
+      </div>
+    </article>
+  );
+}
+
+function ProofCommand({
+  command,
+  disabled,
+  icon,
+  label,
+  onCopy
+}: {
+  command: string;
+  disabled: boolean;
+  icon: JSX.Element;
+  label: string;
+  onCopy: (label: string, command: string) => void;
+}): JSX.Element {
+  return (
+    <article className="edge-proof-command">
+      <div className="edge-proof-command-topline">
+        <span>{label}</span>
+        <button
+          className="button-mini"
+          disabled={disabled}
+          type="button"
+          onClick={() => onCopy(label, command)}
+        >
+          {icon}
+          Copy
+        </button>
+      </div>
+      <pre>{command}</pre>
+    </article>
+  );
+}
+
+function EdgeRecommendationPanel({
+  recommendations,
+  selectedModelId,
+  selectedDeviceId,
+  selectedRuntimeId,
+  onSelect
+}: {
+  recommendations: EdgeRecommendation[];
+  selectedModelId: string;
+  selectedDeviceId: string;
+  selectedRuntimeId: string;
+  onSelect: (recommendation: EdgeRecommendation) => void;
+}): JSX.Element {
+  const visible = recommendations.slice(0, 3);
+  if (!visible.length) {
+    return (
+      <div className="edge-recommendations edge-recommendations-empty">
+        <div>
+          <span className="section-kicker">Runtime optimizer</span>
+          <strong>Recommendation score pending</strong>
+        </div>
+        <p>Register packages, edge inventory, and runtime targets to rank deployment paths.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="edge-recommendations" aria-label="Ranked edge runtime recommendations">
+      <div className="edge-recommendations-header">
+        <div>
+          <span className="section-kicker">Runtime optimizer</span>
+          <strong>Best edge paths</strong>
+        </div>
+        <span>{visible.length} ranked</span>
+      </div>
+      <div className="edge-recommendation-grid">
+        {visible.map((recommendation) => {
+          const runtimeId = recommendation.runtime_target_id
+            ? String(recommendation.runtime_target_id)
+            : "device inventory";
+          const modelId = recommendation.model_id ? String(recommendation.model_id) : "package";
+          const device = recommendation.device_id ? String(recommendation.device_id) : "edge";
+          const selected =
+            modelId === selectedModelId &&
+            device === selectedDeviceId &&
+            (recommendation.runtime_target_id ? runtimeId === selectedRuntimeId : !selectedRuntimeId);
+          const optimization = asRecord(recommendation.optimization);
+          const runtimeFit = asRecord(recommendation.runtime_fit);
+          const artifactLane = asRecord(recommendation.artifact_lane ?? runtimeFit.artifact_lane);
+          const runtimeFitScore = numberOf(runtimeFit.score);
+          const runtimeFitTier = stringOf(runtimeFit.tier, "fit").replace(/_/g, " ");
+          const latency = metricText(optimization.latency_ms_p95);
+          const throughput = throughputText(optimization.throughput_ips);
+          const action = (recommendation.required_actions ?? [])[0];
+          return (
+            <article
+              className={`edge-recommendation edge-recommendation-${recommendationTone(recommendation)}${
+                selected ? " edge-recommendation-selected" : ""
+              }`}
+              key={`${recommendation.rank}-${modelId}-${device}-${runtimeId}`}
+            >
+              <div className="edge-recommendation-topline">
+                <span>#{recommendation.rank ?? "-"}</span>
+                <strong>{recommendation.score ?? 0}</strong>
+              </div>
+              <div>
+                <Badge value={formatRecommendationDecision(recommendation.decision)} />
+                <h3>{modelId}</h3>
+                <p>{device} / {runtimeId}</p>
+              </div>
+              <p className="edge-recommendation-reason">
+                {recommendation.primary_reason || action || "Review this target"}
+              </p>
+              <div className="edge-recommendation-metrics">
+                <span>
+                  {runtimeFitScore !== undefined
+                    ? `${runtimeFitScore}/100 ${runtimeFitTier}`
+                    : `${recommendation.confidence || "low"} confidence`}
+                </span>
+                {latency ? <span>{latency} ms p95</span> : null}
+                {throughput ? <span>{throughput} ips</span> : null}
+                {Object.keys(artifactLane).length ? <span>{artifactLaneValue(artifactLane)}</span> : null}
+              </div>
+              <button
+                className="button button-ghost"
+                type="button"
+                onClick={() => onSelect(recommendation)}
+                disabled={selected}
+              >
+                <span>{selected ? "Selected" : "Use path"}</span>
+              </button>
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CapabilityDossier({
+  device,
+  edgeRuntimeFit,
+  model,
+  readiness,
+  readinessVerdict,
+  resourceEnvelopeFit,
+  runtime,
+  runtimeValidation
+}: {
+  device: Device | undefined;
+  edgeRuntimeFit: EdgeRuntimeFit;
+  model: ModelRecord | undefined;
+  readiness: DeploymentReadiness | undefined;
+  readinessVerdict: ReadinessVerdict;
+  resourceEnvelopeFit: EdgeRuntimeFit;
+  runtime: RuntimeTarget | undefined;
+  runtimeValidation: RuntimeValidation | undefined;
+}): JSX.Element {
+  const observed = device ? deviceResourceSnapshot(device) : {};
+  const constraints = runtime ? runtimeTargetInventoryConstraints(runtime) : undefined;
+  const inventory = asRecord(device?.inventory);
+  const runtimes = Object.entries(asRecord(inventory.runtimes))
+    .filter(([, status]) => asRecord(status).available === true)
+    .map(([name]) => name);
+  const providers = stringsOf(asRecord(asRecord(inventory.runtimes).onnxruntime).providers);
+  const accelerators = Object.entries(asRecord(inventory.accelerators))
+    .filter(([, status]) => asRecord(status).available === true)
+    .map(([name]) => name);
+  const apiGates = readiness?.gates ?? [];
+  const attentionGates = apiGates.filter((gate) => toneForReadinessStatus(stringOf(gate.status, "")) !== "good");
+  const selectedGate = attentionGates[0];
+  const validationResult = asRecord(runtimeValidation?.result);
+  const runtimeFit = asRecord(readiness?.runtime_fit);
+  const runtimeLane = runtimeLaneFor(runtimeFit, runtime);
+  const artifactLane = asRecord(runtimeFit.artifact_lane);
+  const productionAdmission = asRecord(readiness?.production_admission);
+  const runtimeFitScore = numberOf(runtimeFit.score);
+  const runtimeFitTier = stringOf(runtimeFit.tier, edgeRuntimeFit.label).replace(/_/g, " ");
+  const runtimeFitDetail = stringOf(runtimeFit.detail, edgeRuntimeFit.detail);
+  const targetSelection = asRecord(runtimeFit.target_selection);
+  const runtimeFitComponents = runtimeFitComponentRows(runtimeFit);
+  const runtimeFitTone =
+    runtimeFit.tier === "blocked"
+      ? "bad"
+      : runtimeFit.tier === "needs_evidence"
+        ? "warn"
+        : runtimeFitScore !== undefined
+          ? "good"
+          : edgeRuntimeFit.tone;
+
+  return (
+    <div className="capability-dossier" aria-label="Selected on-device capability dossier">
+      <div className="capability-dossier-header">
+        <div>
+          <span className="section-kicker">On-device capability dossier</span>
+          <strong>{model ? `${model.id} on ${device ? deviceId(device) : "edge"}` : "Select a model path"}</strong>
+        </div>
+        <Badge value={readinessVerdict.label} />
+      </div>
+      <div className="capability-dossier-grid">
+        <CapabilityMetric
+          label="Runtime fit"
+          value={runtimeFitScore !== undefined ? `${runtimeFitScore}/100` : edgeRuntimeFit.label}
+          detail={runtimeFitScore !== undefined ? `${runtimeFitTier}: ${runtimeFitDetail}` : edgeRuntimeFit.detail}
+          tone={runtimeFitTone}
+        />
+        <CapabilityMetric
+          label="Runtime lane"
+          value={runtimeLaneValue(runtimeLane)}
+          detail={runtimeLaneDetail(runtimeLane)}
+          tone={runtimeLaneTone(runtimeLane)}
+        />
+        <CapabilityMetric
+          label="Artifact fit"
+          value={artifactLaneValue(artifactLane)}
+          detail={artifactLaneDetail(artifactLane)}
+          tone={artifactLaneTone(artifactLane)}
+        />
+        <CapabilityMetric
+          label="Target rank"
+          value={runtimeTargetSelectionValue(targetSelection)}
+          detail={runtimeTargetSelectionDetail(targetSelection)}
+          tone={runtimeTargetSelectionTone(targetSelection)}
+        />
+        <CapabilityMetric
+          label="Resource envelope"
+          value={resourceEnvelopeFit.label}
+          detail={resourceEnvelopeFit.detail}
+          tone={resourceEnvelopeFit.tone}
+        />
+        <CapabilityMetric
+          label="Performance proof"
+          value={performanceSloLabel(model)}
+          detail={model ? performanceSloDetail(model) : "select a model"}
+          tone={performanceSloTone(model)}
+        />
+        <CapabilityMetric
+          label="Production apply"
+          value={productionAdmissionValue(productionAdmission)}
+          detail={productionAdmissionDetail(productionAdmission)}
+          tone={productionAdmissionTone(productionAdmission)}
+        />
+        <CapabilityMetric
+          label="Validation"
+          value={runtimeValidation ? "validated" : "not validated"}
+          detail={
+            runtimeValidation
+              ? `${runtime ? runtimeTargetId(runtime) : "runtime target"} passed ${compactDate(runtimeValidation.created_at)}`
+              : "run package validation before field rollout"
+          }
+          tone={runtimeValidation ? "good" : "warn"}
+        />
+      </div>
+
+      <div className="capability-dossier-detail">
+        <CapabilityBlock
+          title="Runtime fit components"
+          items={runtimeFitComponents}
+        />
+        <CapabilityBlock
+          title="Live edge inventory"
+          items={[
+            ["RAM", formatMb(numberOf(observed.memoryAvailableMb))],
+            ["Storage", formatMb(numberOf(observed.storageAvailableMb))],
+            ["Thermal", formatTemperature(numberOf(observed.temperatureC))],
+            ["Power", formatPower(observed)],
+            ["Runtimes", runtimes.join(", ") || "not reported"],
+            ["Providers", providers.join(", ") || "not reported"],
+            ["Accelerators", accelerators.join(", ") || "none reported"]
+          ]}
+        />
+        <CapabilityBlock
+          title="Target requirements"
+          items={[
+            ["Model", model?.id ?? "missing"],
+            ["Package", model?.packageId ?? "missing"],
+            ["Runtime target", runtime ? runtimeTargetId(runtime) : "missing"],
+            ["Lane", runtimeLaneValue(runtimeLane)],
+            ["Artifact", artifactLaneValue(artifactLane)],
+            ["Requires", constraints?.runtimes.join(", ") || model?.runtimes.join(", ") || "not declared"],
+            ["Providers", constraints?.providers.join(", ") || constraints?.preferredProviders.join(", ") || "not declared"],
+            ["Accelerators", constraints?.accelerators.join(", ") || (constraints?.requiresGpu ? "GPU required" : "not declared")],
+            ["Validation result", runtimeValidation ? stringOf(validationResult.validation_state, "passed") : "missing"]
+          ]}
+        />
+        <CapabilityBlock
+          title="Admission gates"
+          items={[
+            ["Apply admission", productionAdmissionValue(productionAdmission)],
+            ["Verdict", readinessVerdict.headline],
+            ["Next action", readinessVerdict.nextAction],
+            [
+              "Review gate",
+              selectedGate
+                ? `${stringOf(selectedGate.label, stringOf(selectedGate.gate_id, "gate"))}: ${displayGateState(stringOf(selectedGate.state, stringOf(selectedGate.status, "unknown")))}`
+                : "none"
+            ],
+            ["Gate detail", selectedGate ? stringOf(selectedGate.detail, "no detail") : "all gates aligned"],
+            ["Checked", compactDate(readiness?.checked_at)]
+          ]}
+        />
+      </div>
+    </div>
+  );
+}
+
+function CapabilityMetric({
+  detail,
+  label,
+  tone,
+  value
+}: {
+  detail: string;
+  label: string;
+  tone: GateTone;
+  value: string;
+}): JSX.Element {
+  return (
+    <div className={`capability-metric capability-metric-${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </div>
+  );
+}
+
+function CapabilityBlock({ items, title }: { items: [string, string][]; title: string }): JSX.Element {
+  return (
+    <div className="capability-block">
+      <strong>{title}</strong>
+      <dl>
+        {items.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>{value || "-"}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+function formatRecommendationDecision(value?: string): string {
+  if (!value) return "review";
+  return value.replace(/_/g, " ");
+}
+
+function metricText(value: unknown): string {
+  if (value === undefined || value === null || value === "") return "";
+  const numeric = numberOf(value);
+  if (numeric !== undefined) return formatMetricNumber(numeric);
+  return String(value);
+}
+
+function throughputText(value: unknown): string {
+  if (value === undefined || value === null || value === "") return "";
+  const numeric = numberOf(value);
+  if (numeric !== undefined) return formatThroughput(numeric);
+  return String(value);
+}
+
+function runtimeLaneFor(
+  runtimeFit: Record<string, unknown>,
+  runtime: RuntimeTarget | undefined
+): JsonObject {
+  const readinessLane = asRecord(runtimeFit.runtime_lane);
+  if (Object.keys(readinessLane).length) return readinessLane;
+  return asRecord(runtime?.runtime_lane);
+}
+
+function runtimeLaneValue(lane: JsonObject): string {
+  return stringOf(lane.label, stringOf(lane.lane_id, "not classified"));
+}
+
+function runtimeLaneDetail(lane: JsonObject): string {
+  const parts = [
+    stringOf(lane.execution_engine, ""),
+    stringOf(lane.acceleration, "").replace(/_/g, " "),
+    stringOf(lane.optimization_goal, "")
+  ].filter(Boolean);
+  const providers = stringsOf(lane.providers);
+  if (providers.length) {
+    parts.splice(Math.min(2, parts.length), 0, `providers ${providers.join(", ")}`);
+  }
+  return parts.join(" / ") || "runtime target has no lane metadata";
+}
+
+function runtimeLaneTone(lane: JsonObject): GateTone {
+  const laneId = stringOf(lane.lane_id, "");
+  if (!laneId) return "neutral";
+  return laneId === "device-inventory" ? "warn" : "good";
+}
+
+function runtimeTargetImageValue(runtime: RuntimeTarget | undefined): string {
+  if (!runtime) return "runtime missing";
+  return runtime.image || runtime.name || runtime.runtime_target_id || runtime.id || "image pending";
+}
+
+function runtimeTargetImageDetail(runtime: RuntimeTarget | undefined): string {
+  if (!runtime) return "select a runtime target";
+  const platform = [runtime.os, runtime.arch].filter(Boolean).join("/");
+  const profiles = stringsOf(runtime.device_profiles);
+  return [
+    platform,
+    profiles.length ? `profiles ${profiles.join(", ")}` : "",
+    runtime.updated_at ? `updated ${compactDate(runtime.updated_at)}` : ""
+  ]
+    .filter(Boolean)
+    .join(" / ") || "runtime image metadata pending";
+}
+
+function runtimeProviderValue(lane: JsonObject): string {
+  const providers = stringsOf(lane.providers);
+  if (providers.length) return providers.join(", ");
+  return stringOf(lane.execution_engine, "provider pending");
+}
+
+function runtimeProviderDetail(lane: JsonObject, device: Device | undefined): string {
+  const engine = stringOf(lane.execution_engine, "");
+  const acceleration = stringOf(lane.acceleration, "").replace(/_/g, " ");
+  const accelerators = stringsOf(lane.accelerators);
+  const edgeProfile = device?.profile ?? "";
+  return [
+    engine,
+    acceleration,
+    accelerators.length ? `accelerators ${accelerators.join(", ")}` : "",
+    edgeProfile ? `edge profile ${edgeProfile}` : ""
+  ]
+    .filter(Boolean)
+    .join(" / ") || "provider and accelerator metadata pending";
+}
+
+function runtimeProviderTone(lane: JsonObject, device: Device | undefined): GateTone {
+  if (!Object.keys(lane).length) return "neutral";
+  const inventoryTone = runtimeInventoryTone(device);
+  if (inventoryTone === "bad") return "bad";
+  return runtimeLaneTone(lane);
+}
+
+function artifactLaneValue(artifactLane: JsonObject): string {
+  const state = stringOf(artifactLane.state, "");
+  if (state) return state.replace(/_/g, " ");
+  const format = stringOf(artifactLane.model_format, "");
+  return format ? `${format} artifact` : "not classified";
+}
+
+function artifactLaneDetail(artifactLane: JsonObject): string {
+  const detail = stringOf(artifactLane.detail, "");
+  if (detail) return detail;
+  const nativeFormats = stringsOf(artifactLane.native_formats);
+  if (nativeFormats.length) return `native formats: ${nativeFormats.join(", ")}`;
+  return "artifact format has not been evaluated for this runtime lane";
+}
+
+function artifactLaneTone(artifactLane: JsonObject): GateTone {
+  const status = stringOf(artifactLane.status, "");
+  if (status === "go") return "good";
+  if (status === "blocked") return "bad";
+  if (status === "attention") return "warn";
+  return "neutral";
+}
+
+function capabilityLockValue(lock: JsonObject): string {
+  const status = stringOf(lock.status, "");
+  if (status) return status.replace(/_/g, " ");
+  return stringOf(lock.capability_sha256, "") ? "hash locked" : "not locked";
+}
+
+function capabilityLockDetail(lock: JsonObject): string {
+  const failures = stringsOf(lock.failures);
+  if (failures.length) return compactMetricDetail(failures[0]);
+  const runtimeTarget = asRecord(lock.runtime_target);
+  const edgeInventory = asRecord(lock.edge_inventory);
+  const runtimeTargetId = stringOf(lock.runtime_target_id, stringOf(runtimeTarget.runtime_target_id, "runtime target"));
+  const edgeProfile = stringOf(edgeInventory.device_profile, "edge profile");
+  const freshness = capabilityLockFreshnessDetail(lock);
+  const digest = stringOf(lock.capability_sha256, "");
+  const digestLabel = digest ? `capability ${digest.slice(0, 12)}` : "";
+  return [runtimeTargetId, edgeProfile, freshness, digestLabel].filter(Boolean).join(" / ") || "capability basis pending";
+}
+
+function capabilityLockTone(lock: JsonObject): GateTone {
+  const status = stringOf(lock.status, "");
+  if (status === "locked") return "good";
+  if (status === "blocked") return "bad";
+  if (status === "attention") return "warn";
+  return stringOf(lock.capability_sha256, "") ? "good" : "neutral";
+}
+
+function capabilityLockFreshnessDetail(lock: JsonObject): string {
+  const freshness = asRecord(asRecord(lock.edge_inventory).telemetry_freshness);
+  const state = stringOf(freshness.state, stringOf(freshness.status, "")).replace(/_/g, " ");
+  const ageSeconds = numberOf(freshness.heartbeat_age_seconds);
+  const budgetSeconds = numberOf(freshness.heartbeat_stale_after_seconds);
+  if (ageSeconds !== undefined && budgetSeconds !== undefined) {
+    const label = state || "telemetry";
+    return `${label}: heartbeat ${formatAge(ageSeconds)} old / ${formatAge(budgetSeconds)} budget`;
+  }
+  const detail = stringOf(freshness.detail, "");
+  if (detail) return compactMetricDetail(detail);
+  return "";
+}
+
+function runtimeFitDisplayFor(
+  readiness: DeploymentReadiness | undefined,
+  fallback: EdgeRuntimeFit,
+  runtime: RuntimeTarget | undefined
+): RuntimeFitDisplay {
+  const runtimeFit = asRecord(readiness?.runtime_fit);
+  const score = numberOf(runtimeFit.score);
+  const tier = stringOf(runtimeFit.tier, "").replace(/_/g, " ");
+  const detail = stringOf(runtimeFit.detail, fallback.detail);
+  const runtimeId = stringOf(runtimeFit.runtime_target_id, runtime ? runtimeTargetId(runtime) : "");
+  if (score === undefined) {
+    return {
+      ...fallback,
+      tileDetail: runtimeId ? `${fallback.label} on ${runtimeId}` : fallback.detail
+    };
+  }
+  const label = tier ? `${score}/100 ${tier}` : `${score}/100`;
+  return {
+    label,
+    detail,
+    tone: runtimeFitTone(runtimeFit, fallback.tone),
+    failures: fallback.failures,
+    tileDetail: runtimeId ? `${label} on ${runtimeId}` : label
+  };
+}
+
+function runtimeFitTone(runtimeFit: Record<string, unknown>, fallback: GateTone): GateTone {
+  const tier = stringOf(runtimeFit.tier, "");
+  if (tier === "blocked") return "bad";
+  if (tier === "needs_evidence") return "warn";
+  return numberOf(runtimeFit.score) !== undefined ? "good" : fallback;
+}
+
+function runtimeFitComponentRows(runtimeFit: Record<string, unknown>): [string, string][] {
+  const components = asRecord(runtimeFit.components);
+  const rows = [
+    runtimeFitComponentRow("Compatibility", asRecord(components.compatibility)),
+    runtimeFitComponentRow("Validation", asRecord(components.runtime_validation)),
+    runtimeFitComponentRow("Performance", asRecord(components.performance)),
+    runtimeFitComponentRow("Resource", asRecord(components.resource)),
+    runtimeFitComponentRow("Telemetry", asRecord(components.telemetry))
+  ].filter((row): row is [string, string] => row !== undefined);
+  return rows.length ? rows : [["Runtime score", "waiting for readiness evidence"]];
+}
+
+function runtimeFitComponentRow(
+  label: string,
+  component: Record<string, unknown>
+): [string, string] | undefined {
+  const score = numberOf(component.score);
+  const maxScore = numberOf(component.max_score);
+  const state = stringOf(component.state, stringOf(component.status, "unknown")).replace(/_/g, " ");
+  if (score === undefined && maxScore === undefined && state === "unknown") return undefined;
+  const parts = [];
+  if (score !== undefined && maxScore !== undefined) parts.push(`${score}/${maxScore}`);
+  else if (score !== undefined) parts.push(`${score}`);
+  parts.push(state);
+
+  const failures = stringsOf(component.failures);
+  if (failures.length) parts.push(failures.slice(0, 2).join("; "));
+
+  if (label === "Performance") {
+    const latencyHeadroom = numberOf(component.latency_headroom_pct);
+    const throughputHeadroom = numberOf(component.throughput_headroom_pct);
+    if (latencyHeadroom !== undefined) parts.push(`latency ${formatSignedPercent(latencyHeadroom)}`);
+    if (throughputHeadroom !== undefined) parts.push(`throughput ${formatSignedPercent(throughputHeadroom)}`);
+  }
+  if (label === "Resource") {
+    const memoryHeadroom = numberOf(component.memory_headroom_mb);
+    const storageHeadroom = numberOf(component.storage_headroom_mb);
+    if (memoryHeadroom !== undefined) parts.push(`RAM ${formatSignedMb(memoryHeadroom)}`);
+    if (storageHeadroom !== undefined) parts.push(`storage ${formatSignedMb(storageHeadroom)}`);
+  }
+  return [label, parts.join(", ")];
+}
+
+function runtimeDecisionActionLabel(value: string): string {
+  const normalized = value.replace(/-/g, "_");
+  const labels: Record<string, string> = {
+    apply_or_stage: "apply or stage",
+    use_best_runtime: "use best runtime",
+    resolve_blocking_gates: "resolve blockers",
+    collect_missing_evidence: "collect evidence",
+    review: "review"
+  };
+  return labels[normalized] ?? normalized.replace(/_/g, " ");
+}
+
+function executionContractHeadline(
+  action: string,
+  decisionStatus: string,
+  verdict: ReadinessVerdict
+): string {
+  const normalizedAction = action.replace(/-/g, "_");
+  if (normalizedAction === "apply_or_stage" && verdict.tone === "good") {
+    return "Selected edge runtime is ready for field apply";
+  }
+  if (normalizedAction === "apply_or_stage") {
+    return "Selected runtime is the best measured path";
+  }
+  if (normalizedAction === "use_best_runtime") {
+    return decisionStatus === "selected_not_eligible"
+      ? "Pinned runtime cannot host this edge model"
+      : "A better measured runtime is available";
+  }
+  if (normalizedAction === "collect_missing_evidence") {
+    return "Selected edge runtime needs fresh on-device proof";
+  }
+  if (normalizedAction === "resolve_blocking_gates") return "Selected edge runtime is blocked";
+  return verdict.headline;
+}
+
+function executionContractTone({
+  action,
+  decisionStatus,
+  productionAdmission,
+  readinessVerdict
+}: {
+  action: string;
+  decisionStatus: string;
+  productionAdmission: JsonObject;
+  readinessVerdict: ReadinessVerdict;
+}): GateTone {
+  const normalizedAction = action.replace(/-/g, "_");
+  if (productionAdmission.apply_allowed === false || decisionStatus === "selected_not_eligible") return "bad";
+  if (normalizedAction === "resolve_blocking_gates") return "bad";
+  if (normalizedAction === "use_best_runtime" || normalizedAction === "collect_missing_evidence") return "warn";
+  if (normalizedAction === "apply_or_stage" && productionAdmission.apply_allowed === true) return "good";
+  return readinessVerdict.tone;
+}
+
+function runtimeDecisionCandidates(
+  runtimeDecision: JsonObject,
+  runtimeFit: JsonObject,
+  selectedRuntimeTargetId: string,
+  bestRuntimeTargetId: string
+): JsonObject[] {
+  const direct = Array.isArray(runtimeDecision.top_candidates)
+    ? runtimeDecision.top_candidates.map(asRecord)
+    : [];
+  if (direct.length) return direct.filter((candidate) => candidateRuntimeId(candidate) !== "runtime target");
+
+  const targetSelection = asRecord(runtimeFit.target_selection);
+  const alternatives = Array.isArray(targetSelection.alternatives)
+    ? targetSelection.alternatives.map(asRecord)
+    : [];
+  if (alternatives.length) {
+    return alternatives.filter((candidate) => candidateRuntimeId(candidate) !== "runtime target");
+  }
+
+  const score = numberOf(runtimeFit.score);
+  if (!selectedRuntimeTargetId || selectedRuntimeTargetId.includes("missing")) return [];
+  return [
+    {
+      rank: 1,
+      runtime_target_id: selectedRuntimeTargetId,
+      score,
+      tier: stringOf(runtimeFit.tier, "selected"),
+      runtime_lane: runtimeFit.runtime_lane,
+      blocked: false,
+      best: selectedRuntimeTargetId === bestRuntimeTargetId
+    }
+  ];
+}
+
+function runtimeTargetAssessments(
+  runtimeDecision: JsonObject,
+  runtimeFit: JsonObject,
+  fallbackCandidates: JsonObject[]
+): JsonObject[] {
+  const direct = Array.isArray(runtimeDecision.target_assessments)
+    ? runtimeDecision.target_assessments.map(asRecord)
+    : [];
+  if (direct.length) return direct.filter((assessment) => candidateRuntimeId(assessment) !== "runtime target");
+
+  const targetSelection = asRecord(runtimeFit.target_selection);
+  const fromSelection = Array.isArray(targetSelection.target_assessments)
+    ? targetSelection.target_assessments.map(asRecord)
+    : [];
+  if (fromSelection.length) {
+    return fromSelection.filter((assessment) => candidateRuntimeId(assessment) !== "runtime target");
+  }
+
+  return fallbackCandidates;
+}
+
+function targetRuntimeCoverageSummary(
+  assessments: JsonObject[]
+): { value: string; detail: string; tone: GateTone } {
+  if (!assessments.length) {
+    return {
+      value: "pending",
+      detail: "runtime target coverage pending",
+      tone: "neutral"
+    };
+  }
+  const blocked = assessments.filter(targetAssessmentBlocked).length;
+  const eligible = assessments.filter((assessment) => !targetAssessmentBlocked(assessment)).length;
+  return {
+    value: `${eligible}/${assessments.length} eligible`,
+    detail: `${eligible} eligible / ${blocked} blocked`,
+    tone: blocked ? (eligible ? "warn" : "bad") : "good"
+  };
+}
+
+function operatorRuntimeLaneItems(
+  assessments: JsonObject[],
+  selectedRuntimeTargetId: string,
+  bestRuntimeTargetId: string
+): { detail: string; id: string; status: string; tone: GateTone }[] {
+  return assessments
+    .map((assessment, index) => ({ assessment, index }))
+    .sort((left, right) => {
+      const leftId = candidateRuntimeId(left.assessment);
+      const rightId = candidateRuntimeId(right.assessment);
+      const leftSelected = left.assessment.selected === true || leftId === selectedRuntimeTargetId;
+      const rightSelected = right.assessment.selected === true || rightId === selectedRuntimeTargetId;
+      if (leftSelected !== rightSelected) return leftSelected ? -1 : 1;
+      const leftBest = left.assessment.best === true || leftId === bestRuntimeTargetId;
+      const rightBest = right.assessment.best === true || rightId === bestRuntimeTargetId;
+      if (leftBest !== rightBest) return leftBest ? -1 : 1;
+      const leftBlocked = targetAssessmentBlocked(left.assessment);
+      const rightBlocked = targetAssessmentBlocked(right.assessment);
+      if (leftBlocked !== rightBlocked) return leftBlocked ? 1 : -1;
+      const leftRank = numberOf(left.assessment.rank) ?? Number.MAX_SAFE_INTEGER;
+      const rightRank = numberOf(right.assessment.rank) ?? Number.MAX_SAFE_INTEGER;
+      if (leftRank !== rightRank) return leftRank - rightRank;
+      return left.index - right.index;
+    })
+    .slice(0, 4)
+    .map(({ assessment }) => {
+      const id = candidateRuntimeId(assessment);
+      const lane = runtimeLaneValue(asRecord(assessment.runtime_lane));
+      const score = numberOf(assessment.score);
+      const selected = assessment.selected === true || id === selectedRuntimeTargetId;
+      const best = assessment.best === true || id === bestRuntimeTargetId;
+      const blocked = targetAssessmentBlocked(assessment);
+      const remediation = asRecord(assessment.remediation);
+      const status = selected
+        ? best
+          ? "selected best"
+          : "selected"
+        : best
+          ? "best alternate"
+          : blocked
+            ? "blocked"
+            : "eligible";
+      const detailSource = Object.keys(remediation).length
+        ? targetAssessmentRemediationDetail(remediation)
+        : targetAssessmentDetail(assessment);
+      const detailParts = [lane, score !== undefined ? `${score}/100` : "", detailSource].filter(Boolean);
+      return {
+        detail: detailParts.join(" / "),
+        id,
+        status,
+        tone: targetAssessmentTone(assessment)
+      };
+    });
+}
+
+function targetAssessmentBlocked(assessment: JsonObject): boolean {
+  const status = stringOf(assessment.status, "").toLowerCase();
+  return assessment.blocked === true || status === "blocked";
+}
+
+function targetAssessmentTone(assessment: JsonObject): GateTone {
+  const status = stringOf(assessment.status, "");
+  if (targetAssessmentBlocked(assessment)) return "bad";
+  const penalties = stringsOf(assessment.penalties);
+  if (penalties.length) return "warn";
+  if (assessment.selected === true || assessment.best === true) return "good";
+  return "neutral";
+}
+
+function runtimeWorkbenchRows({
+  assessments,
+  bestRuntimeTargetId,
+  device,
+  model,
+  runtimeFit,
+  runtimeWorkbench,
+  runtimeTargets,
+  runtimeValidations,
+  selectedRuntimeTargetId
+}: {
+  assessments: JsonObject[];
+  bestRuntimeTargetId: string;
+  device: Device | undefined;
+  model: ModelRecord | undefined;
+  runtimeFit: JsonObject;
+  runtimeWorkbench: JsonObject;
+  runtimeTargets: RuntimeTarget[];
+  runtimeValidations: RuntimeValidation[];
+  selectedRuntimeTargetId: string;
+}): RuntimeWorkbenchRow[] {
+  const contractRows = runtimeWorkbenchContractRows(runtimeWorkbench, runtimeTargets);
+  if (contractRows.length) return contractRows;
+
+  const selectedScore = numberOf(runtimeFit.score);
+  const assessmentByTarget = new Map(assessments.map((assessment) => [candidateRuntimeId(assessment), assessment]));
+  const initialRows = runtimeTargets.map((target) => {
+    const targetId = runtimeTargetId(target);
+    const assessment = assessmentByTarget.get(targetId);
+    const selected = targetId === selectedRuntimeTargetId;
+    const validation = model ? runtimeValidationForModel(model, target, runtimeValidations) : undefined;
+    const compatible = model ? targetSupportsModel(target, model) : false;
+    const inventoryFailures = device ? runtimeTargetInventoryFailures(target, device) : ["edge inventory missing"];
+    const benchmark = runtimeWorkbenchBenchmarkLabel(model, device, targetId);
+    const remediation = asRecord(assessment?.remediation);
+    const actionKind = stringOf(remediation.action, "");
+    const actionLabel = stringOf(remediation.label, actionKind.replace(/_/g, " "));
+    const assessedScore = numberOf(assessment?.score);
+    const fallbackScore = runtimeWorkbenchFallbackScore({
+      benchmark,
+      compatible,
+      inventoryFailures,
+      selected,
+      selectedScore,
+      validation
+    });
+    const score = assessedScore ?? fallbackScore;
+    const tone = assessment
+      ? targetAssessmentTone(assessment)
+      : runtimeWorkbenchFallbackTone({
+          compatible,
+          inventoryFailures,
+          validation
+        });
+    const status = runtimeWorkbenchStatus({
+      assessment,
+      best: targetId === bestRuntimeTargetId,
+      compatible,
+      selected,
+      validation
+    });
+    return {
+      actionKind,
+      actionLabel,
+      actionRequiresEdge: remediation.requires_edge_execution === true,
+      benchmark,
+      best: targetId === bestRuntimeTargetId,
+      capabilitySha256: stringOf(asRecord(assessment?.runtime_capability_lock).capability_sha256, ""),
+      compatible,
+      detail: runtimeWorkbenchDetail({
+        assessment,
+        compatible,
+        inventoryFailures,
+        model,
+        target,
+        validation
+      }),
+      inventory: inventoryFailures.length ? compactMetricDetail(inventoryFailures[0]) : "inventory match",
+      lane: runtimeLaneValue(asRecord(assessment?.runtime_lane).lane_id ? asRecord(assessment?.runtime_lane) : asRecord(target.runtime_lane)),
+      penalties: stringsOf(assessment?.penalties),
+      rank: numberOf(assessment?.rank),
+      reasons: stringsOf(assessment?.reasons),
+      remediation,
+      score,
+      selected,
+      status,
+      target,
+      targetId,
+      tone,
+      traceMetrics: runtimeWorkbenchFallbackTraceMetrics({
+        benchmark,
+        compatible,
+        inventoryFailures,
+        validation
+      }),
+      validated: Boolean(validation)
+    };
+  });
+  const derivedBestTargetId =
+    bestRuntimeTargetId ||
+    [...initialRows]
+      .filter((row) => row.compatible && row.tone !== "bad")
+      .sort(runtimeWorkbenchScoreSort)[0]?.targetId ||
+    "";
+  return initialRows
+    .map((row) => ({ ...row, best: row.targetId === derivedBestTargetId }))
+    .sort(runtimeWorkbenchRowSort);
+}
+
+function runtimeWorkbenchContractRows(
+  runtimeWorkbench: JsonObject,
+  runtimeTargets: RuntimeTarget[]
+): RuntimeWorkbenchRow[] {
+  if (runtimeWorkbench.schema_version !== "temms-runtime-workbench/v1") return [];
+  const targets = Array.isArray(runtimeWorkbench.targets)
+    ? runtimeWorkbench.targets.map(asRecord)
+    : [];
+  if (!targets.length) return [];
+  const targetById = new Map(runtimeTargets.map((target) => [runtimeTargetId(target), target]));
+  const rows: RuntimeWorkbenchRow[] = [];
+  targets.forEach((target) => {
+    const targetId = stringOf(target.runtime_target_id, "");
+    if (!targetId) return;
+    const runtimeTarget = targetById.get(targetId) ?? { runtime_target_id: targetId };
+    const proof = asRecord(target.proof);
+    const status = stringOf(target.status, "unknown").replace(/_/g, " ");
+    const eligible = target.eligible !== false && status !== "blocked";
+    const score = numberOf(target.score);
+    const benchmark = runtimeWorkbenchContractBenchmark(proof);
+    const inventory = runtimeWorkbenchContractInventory(proof, target);
+    const remediation = asRecord(target.remediation);
+    const actionKind = stringOf(remediation.action, stringOf(asRecord(target.action).kind, ""));
+    const actionLabel = stringOf(
+      remediation.label,
+      stringOf(asRecord(target.action).label, actionKind.replace(/_/g, " "))
+    );
+    rows.push({
+      actionKind,
+      actionLabel,
+      actionRequiresEdge: remediation.requires_edge_execution === true || asRecord(target.action).requires_edge_execution === true,
+      benchmark,
+      best: target.best === true,
+      capabilitySha256: stringOf(proof.capability_sha256, ""),
+      compatible: eligible,
+      detail: compactMetricDetail(stringOf(target.detail, runtimeWorkbenchContractDetail(target))),
+      inventory,
+      lane: runtimeLaneValue(asRecord(target.runtime_lane)),
+      penalties: stringsOf(target.penalties),
+      rank: numberOf(target.rank),
+      reasons: stringsOf(target.reasons),
+      remediation,
+      score,
+      selected: target.selected === true,
+      status,
+      target: runtimeTarget,
+      targetId,
+      tone: runtimeWorkbenchTargetTone(target),
+      traceMetrics: runtimeWorkbenchContractTraceMetrics(target, proof),
+      validated: runtimeWorkbenchTargetValidated(proof)
+    });
+  });
+  return rows.sort(runtimeWorkbenchRowSort);
+}
+
+function runtimeWorkbenchContractBenchmark(proof: JsonObject): string {
+  const latency = numberOf(proof.latency_ms_p95);
+  const throughput = numberOf(proof.throughput_ips);
+  const benchmarkId = stringOf(proof.benchmark_id, "");
+  const parts = [];
+  if (latency !== undefined) parts.push(`${formatMetricNumber(latency)} ms p95`);
+  if (throughput !== undefined) parts.push(`${formatThroughput(throughput)} ips`);
+  if (parts.length) return parts.join(" / ");
+  return benchmarkId ? `benchmark ${benchmarkId}` : "no benchmark";
+}
+
+function runtimeWorkbenchContractInventory(proof: JsonObject, target: JsonObject): string {
+  const telemetry = stringOf(proof.telemetry_state, stringOf(proof.telemetry_status, "")).replace(/_/g, " ");
+  const capability = stringOf(proof.capability_lock_status, "");
+  if (capability || telemetry) {
+    return [capability ? `capability ${capability}` : "", telemetry].filter(Boolean).join(" / ");
+  }
+  const penalties = stringsOf(target.penalties);
+  return penalties.length ? compactMetricDetail(penalties[0]) : "inventory match";
+}
+
+function runtimeWorkbenchContractDetail(target: JsonObject): string {
+  const reasons = stringsOf(target.reasons);
+  if (reasons.length) return reasons[0];
+  const penalties = stringsOf(target.penalties);
+  if (penalties.length) return penalties[0];
+  const proof = asRecord(target.proof);
+  return stringOf(proof.performance_state, stringOf(proof.runtime_validation_state, "runtime target assessed"));
+}
+
+function runtimeWorkbenchContractTraceMetrics(target: JsonObject, proof: JsonObject): RuntimeWorkbenchTraceMetric[] {
+  const validationId = stringOf(proof.validation_id, "");
+  const benchmarkId = stringOf(proof.benchmark_id, "");
+  const capabilityDigest = stringOf(proof.capability_sha256, "");
+  const metrics: RuntimeWorkbenchTraceMetric[] = [
+    runtimeWorkbenchTraceMetric(
+      "validation",
+      validationId ? "present" : runtimeWorkbenchProofValue(proof.runtime_validation_status, proof.runtime_validation_state, "pending"),
+      validationId || runtimeWorkbenchProofValue(proof.runtime_validation_state, proof.runtime_validation_status, "runtime validation not retained"),
+      runtimeWorkbenchProofTone(proof.runtime_validation_status, proof.runtime_validation_state, validationId)
+    ),
+    runtimeWorkbenchTraceMetric(
+      "benchmark",
+      benchmarkId ? "present" : runtimeWorkbenchProofValue(proof.performance_status, proof.performance_state, "pending"),
+      benchmarkId || runtimeWorkbenchContractBenchmark(proof),
+      runtimeWorkbenchProofTone(proof.performance_status, proof.performance_state, benchmarkId)
+    ),
+    runtimeWorkbenchTraceMetric(
+      "resources",
+      runtimeWorkbenchProofValue(proof.resource_status, proof.resource_state, "pending"),
+      runtimeWorkbenchProofValue(proof.resource_state, proof.resource_status, "resource envelope not retained"),
+      runtimeWorkbenchProofTone(proof.resource_status, proof.resource_state)
+    ),
+    runtimeWorkbenchTraceMetric(
+      "telemetry",
+      runtimeWorkbenchProofValue(proof.telemetry_status, proof.telemetry_state, "pending"),
+      runtimeWorkbenchProofValue(proof.telemetry_state, proof.telemetry_status, "heartbeat state not retained"),
+      runtimeWorkbenchProofTone(proof.telemetry_status, proof.telemetry_state)
+    ),
+    runtimeWorkbenchTraceMetric(
+      "capability",
+      stringOf(proof.capability_lock_status, capabilityDigest ? "hash locked" : "pending"),
+      capabilityDigest ? `sha256 ${capabilityDigest.slice(0, 12)}` : runtimeWorkbenchContractInventory(proof, target),
+      runtimeWorkbenchProofTone(proof.capability_lock_status, undefined, capabilityDigest)
+    )
+  ];
+  return metrics;
+}
+
+function runtimeWorkbenchFallbackTraceMetrics({
+  benchmark,
+  compatible,
+  inventoryFailures,
+  validation
+}: {
+  benchmark: string;
+  compatible: boolean;
+  inventoryFailures: string[];
+  validation: RuntimeValidation | undefined;
+}): RuntimeWorkbenchTraceMetric[] {
+  return [
+    runtimeWorkbenchTraceMetric(
+      "compatibility",
+      compatible ? "eligible" : "blocked",
+      compatible ? "model constraints match runtime target" : "model/runtime constraints do not match",
+      compatible ? "good" : "bad"
+    ),
+    runtimeWorkbenchTraceMetric(
+      "validation",
+      validation ? "present" : "missing",
+      validation ? runtimeWorkbenchValidationDetail(validation) : "non-dry-run runtime validation required",
+      validation ? "good" : "warn"
+    ),
+    runtimeWorkbenchTraceMetric(
+      "benchmark",
+      benchmark === "no benchmark" ? "missing" : "present",
+      benchmark,
+      benchmark === "no benchmark" ? "warn" : "good"
+    ),
+    runtimeWorkbenchTraceMetric(
+      "inventory",
+      inventoryFailures.length ? "blocked" : "match",
+      inventoryFailures.length ? compactMetricDetail(inventoryFailures[0]) : "live edge inventory matches",
+      inventoryFailures.length ? "bad" : "good"
+    )
+  ];
+}
+
+function runtimeWorkbenchTraceMetric(
+  label: string,
+  value: string,
+  detail: string,
+  tone: GateTone
+): RuntimeWorkbenchTraceMetric {
+  return {
+    detail: compactMetricDetail(detail || "not retained"),
+    label,
+    tone,
+    value: value.replace(/_/g, " ") || "pending"
+  };
+}
+
+function runtimeWorkbenchProofValue(primary: unknown, secondary: unknown, fallback: string): string {
+  return stringOf(primary, stringOf(secondary, fallback)).replace(/_/g, " ");
+}
+
+function runtimeWorkbenchProofTone(primary: unknown, secondary?: unknown, retainedEvidence?: string): GateTone {
+  const value = `${stringOf(primary, "")} ${stringOf(secondary, "")}`.toLowerCase();
+  if (retainedEvidence) return "good";
+  if (value.includes("blocked") || value.includes("fail") || value.includes("missing")) return "bad";
+  if (value.includes("attention") || value.includes("warn") || value.includes("stale") || value.includes("pending")) return "warn";
+  if (value.includes("go") || value.includes("pass") || value.includes("eligible") || value.includes("locked") || value.includes("fresh")) return "good";
+  return "neutral";
+}
+
+function runtimeWorkbenchValidationDetail(validation: RuntimeValidation): string {
+  const validationId = stringOf(validation.validation_id, "");
+  const createdAt = compactDate(validation.created_at);
+  return [validationId || "runtime validation retained", createdAt].filter(Boolean).join(" / ");
+}
+
+function runtimeWorkbenchTraceRank(row: RuntimeWorkbenchRow): string {
+  if (row.rank !== undefined) return `rank ${row.rank}`;
+  if (row.selected && row.best) return "selected best";
+  if (row.selected) return "selected";
+  if (row.best) return "best";
+  return row.status;
+}
+
+function runtimeWorkbenchTraceBadge(row: RuntimeWorkbenchRow): string {
+  const labels = [];
+  if (row.selected) labels.push("selected");
+  if (row.best) labels.push("best");
+  if (!labels.length) labels.push(row.compatible ? "eligible" : "blocked");
+  if (row.score !== undefined) labels.push(`${row.score}/100`);
+  return labels.join(" / ");
+}
+
+function runtimeWorkbenchTraceReason(row: RuntimeWorkbenchRow): string {
+  return (
+    row.reasons[0] ||
+    row.penalties[0] ||
+    stringOf(row.remediation.detail, "") ||
+    row.detail ||
+    "runtime target assessed"
+  );
+}
+
+function runtimeWorkbenchTraceActionDetail(row: RuntimeWorkbenchRow): string {
+  return (
+    stringOf(row.remediation.operator_command_note, "") ||
+    stringOf(row.remediation.edge_command_note, "") ||
+    stringOf(row.remediation.detail, "") ||
+    row.detail ||
+    "review this runtime path"
+  );
+}
+
+function runtimeWorkbenchRowRemediationCommand(
+  row: RuntimeWorkbenchRow,
+  context: RuntimeRemediationContext
+): RuntimeRemediationCommand | undefined {
+  if (!row.actionKind) return undefined;
+  return runtimeTargetAssessmentRemediationCommand(
+    {
+      remediation: row.remediation,
+      runtime_lane: row.target.runtime_lane,
+      runtime_target_id: row.targetId
+    },
+    context
+  );
+}
+
+function runtimeWorkbenchTargetTone(target: JsonObject): GateTone {
+  const status = stringOf(target.status, "");
+  if (status === "blocked" || target.eligible === false) return "bad";
+  if (target.selected === true || target.best === true) return "good";
+  const penalties = stringsOf(target.penalties);
+  return penalties.length ? "warn" : "neutral";
+}
+
+function runtimeWorkbenchTargetValidated(proof: JsonObject): boolean {
+  const validationStatus = stringOf(proof.runtime_validation_status, "");
+  const validationState = stringOf(proof.runtime_validation_state, "").toLowerCase();
+  return Boolean(proof.validation_id) || validationStatus === "go" || validationState.includes("validated");
+}
+
+function runtimeWorkbenchFallbackScore({
+  benchmark,
+  compatible,
+  inventoryFailures,
+  selected,
+  selectedScore,
+  validation
+}: {
+  benchmark: string;
+  compatible: boolean;
+  inventoryFailures: string[];
+  selected: boolean;
+  selectedScore?: number;
+  validation: RuntimeValidation | undefined;
+}): number | undefined {
+  if (selected && selectedScore !== undefined) return selectedScore;
+  if (!compatible) return 0;
+  let score = 48;
+  if (validation) score += 18;
+  if (benchmark.startsWith("fresh")) score += 19;
+  else if (benchmark !== "no benchmark") score += 8;
+  if (!inventoryFailures.length) score += 15;
+  return Math.min(score, 95);
+}
+
+function runtimeWorkbenchFallbackTone({
+  compatible,
+  inventoryFailures,
+  validation
+}: {
+  compatible: boolean;
+  inventoryFailures: string[];
+  validation: RuntimeValidation | undefined;
+}): GateTone {
+  if (!compatible || inventoryFailures.length) return "bad";
+  return validation ? "good" : "warn";
+}
+
+function runtimeWorkbenchStatus({
+  assessment,
+  best,
+  compatible,
+  selected,
+  validation
+}: {
+  assessment: JsonObject | undefined;
+  best: boolean;
+  compatible: boolean;
+  selected: boolean;
+  validation: RuntimeValidation | undefined;
+}): string {
+  const assessedStatus = stringOf(assessment?.status, "");
+  if (assessedStatus) return assessedStatus.replace(/_/g, " ");
+  if (!compatible) return "blocked";
+  if (selected && best) return "selected best";
+  if (selected) return "selected";
+  if (best) return "best alternate";
+  return validation ? "eligible" : "needs proof";
+}
+
+function runtimeWorkbenchDetail({
+  assessment,
+  compatible,
+  inventoryFailures,
+  model,
+  target,
+  validation
+}: {
+  assessment: JsonObject | undefined;
+  compatible: boolean;
+  inventoryFailures: string[];
+  model: ModelRecord | undefined;
+  target: RuntimeTarget;
+  validation: RuntimeValidation | undefined;
+}): string {
+  if (assessment) return targetAssessmentDetail(assessment);
+  if (!compatible) return "runtime target does not satisfy model constraints";
+  if (inventoryFailures.length) return compactMetricDetail(inventoryFailures[0]);
+  if (validation) return `${runtimeTargetId(target)} passed package validation`;
+  if (model) return `${formatBenchmark(model)}; validation required for ${runtimeTargetId(target)}`;
+  return "select a model to evaluate this target runtime";
+}
+
+function runtimeWorkbenchBenchmarkLabel(
+  model: ModelRecord | undefined,
+  device: Device | undefined,
+  targetId: string
+): string {
+  if (!model) return "no model";
+  const targetMatches = model.benchmarkRuntimeId === targetId;
+  const deviceMatches = device && model.benchmarkDeviceId === deviceId(device);
+  if (!targetMatches && !deviceMatches) return "no benchmark";
+  const freshness = benchmarkFreshness(model).state;
+  const benchmark = formatBenchmark(model);
+  if (targetMatches && deviceMatches) return `${freshness} ${benchmark}`;
+  if (targetMatches) return `${freshness} ${benchmark} on another edge`;
+  return `${freshness} ${benchmark} on another runtime`;
+}
+
+function runtimeWorkbenchRowSort(left: RuntimeWorkbenchRow, right: RuntimeWorkbenchRow): number {
+  if (left.selected !== right.selected) return left.selected ? -1 : 1;
+  if (left.best !== right.best) return left.best ? -1 : 1;
+  return runtimeWorkbenchScoreSort(left, right);
+}
+
+function runtimeWorkbenchScoreSort(left: RuntimeWorkbenchRow, right: RuntimeWorkbenchRow): number {
+  const leftScore = left.score ?? -1;
+  const rightScore = right.score ?? -1;
+  if (leftScore !== rightScore) return rightScore - leftScore;
+  if (left.compatible !== right.compatible) return left.compatible ? -1 : 1;
+  return left.targetId.localeCompare(right.targetId);
+}
+
+function targetAssessmentDetail(assessment: JsonObject): string {
+  const penalties = stringsOf(assessment.penalties);
+  if (penalties.length) return compactMetricDetail(penalties[0]);
+  const reasons = stringsOf(assessment.reasons);
+  if (reasons.length) return compactMetricDetail(reasons[0]);
+  const detail = stringOf(assessment.detail, "");
+  if (detail) return compactMetricDetail(detail);
+  const artifact = asRecord(assessment.artifact_lane);
+  if (Object.keys(artifact).length) return artifactLaneDetail(artifact);
+  return runtimeLaneDetail(asRecord(assessment.runtime_lane));
+}
+
+function targetAssessmentRemediationDetail(remediation: JsonObject): string {
+  const label = stringOf(remediation.label, "");
+  const detail = compactMetricDetail(stringOf(remediation.detail, ""));
+  if (label && detail) return `${label} - ${detail}`;
+  return label || detail || "Review this runtime target";
+}
+
+function runtimeTargetAssessmentRemediationCommand(
+  assessment: JsonObject,
+  context: RuntimeRemediationContext
+): RuntimeRemediationCommand | undefined {
+  const remediation = asRecord(assessment.remediation);
+  const action = stringOf(remediation.action, "");
+  if (!action) return undefined;
+
+  const refs = asRecord(remediation.refs);
+  const runtimeTargetIdValue = stringOf(refs.runtime_target_id, candidateRuntimeId(assessment));
+  if (!runtimeTargetIdValue || runtimeTargetIdValue === "runtime target") return undefined;
+
+  const actionLabel = stringOf(remediation.label, action.replace(/_/g, " "));
+  const contractCommand = runtimeTargetContractRemediationCommand(
+    remediation,
+    runtimeTargetIdValue,
+    action,
+    actionLabel
+  );
+  if (contractCommand) return contractCommand;
+
+  const packageIdValue = context.packageId || stringOf(refs.package_id, "<package-id>");
+  const modelIdValue = context.modelId || stringOf(refs.model_id, "<model-id>");
+  const deviceIdValue = context.deviceId || stringOf(refs.device_id, "<device-id>");
+  const slotValue = context.slot || stringOf(refs.slot, "vision");
+  const hubUrl = currentHubUrl();
+
+  if (action === "record_benchmark") {
+    return {
+      action,
+      label: `${runtimeTargetIdValue} benchmark command`,
+      edgeRun: true,
+      note: "Run on the selected edge after the model package is cached.",
+      command: formatProofCommand([
+        "temms",
+        "benchmark",
+        modelIdValue || "<model-id>",
+        "--slot",
+        slotValue,
+        "--samples",
+        "10",
+        "--warmup",
+        "2",
+        "--hub-url",
+        hubUrl,
+        "--device-id",
+        deviceIdValue || "<device-id>",
+        "--package-id",
+        packageIdValue || "<package-id>",
+        "--runtime-target-id",
+        runtimeTargetIdValue,
+        "--actor",
+        "edge-agent"
+      ])
+    };
+  }
+
+  if (action === "validate_runtime") {
+    return {
+      action,
+      label: `${runtimeTargetIdValue} validation command`,
+      edgeRun: false,
+      note: "Replace the package path with the signed TEMMS package artifact.",
+      command: formatProofCommand([
+        "uv",
+        "run",
+        "temms",
+        "hub",
+        "validate-runtime",
+        "<package-path>",
+        "--hub-url",
+        hubUrl,
+        "--package-id",
+        packageIdValue || "<package-id>",
+        "--runtime-target-id",
+        runtimeTargetIdValue,
+        "--actor",
+        "operator:runtime-remediation",
+        "--require-signature"
+      ])
+    };
+  }
+
+  if (action === "refresh_edge_inventory") {
+    return {
+      action,
+      label: `${deviceIdValue || "edge"} heartbeat command`,
+      edgeRun: true,
+      note: "Run on the edge node to refresh runtime/provider inventory and heartbeat freshness.",
+      command: formatProofCommand([
+        `TEMMS_HUB_URL=${hubUrl}`,
+        `TEMMS_DEVICE_ID=${deviceIdValue || "<device-id>"}`,
+        "TEMMS_EDGE_HEARTBEAT_INTERVAL_S=10",
+        "temms",
+        "daemon",
+        "start",
+        "--foreground"
+      ])
+    };
+  }
+
+  if (action === "package_runtime_artifact") {
+    const lane = asRecord(assessment.runtime_lane);
+    const providers = stringsOf(lane.providers);
+    const accelerators = stringsOf(lane.accelerators);
+    const engine = stringOf(lane.execution_engine, "");
+    const commandParts = [
+      "uv",
+      "run",
+      "temms",
+      "hub",
+      "package-from-mlflow",
+      "<model-uri>",
+      "--hub-url",
+      hubUrl,
+      "--slot",
+      slotValue,
+      "--model-artifact",
+      "<runtime-native-artifact-path>",
+      "--actor",
+      "operator:runtime-remediation"
+    ];
+    if (engine) commandParts.push("--runtime", engine);
+    providers.forEach((provider) => commandParts.push("--provider", provider));
+    accelerators.forEach((accelerator) => commandParts.push("--accelerator", accelerator));
+    return {
+      action,
+      label: `${runtimeTargetIdValue} packaging command`,
+      edgeRun: false,
+      note: "Package a runtime-native artifact, then re-run validation and proof.",
+      command: formatProofCommand(commandParts)
+    };
+  }
+
+  if (["select_matching_edge_class", "resolve_runtime_capability", "free_edge_resources", "resolve_target_blocker"].includes(action)) {
+    return {
+      action,
+      label: `${runtimeTargetIdValue} compatibility inspection`,
+      edgeRun: false,
+      note: `${actionLabel} with live inventory and model/runtime constraints.`,
+      command: formatProofCommand([
+        "uv",
+        "run",
+        "temms",
+        "hub",
+        "compatibility-matrix",
+        "--hub-url",
+        hubUrl,
+        "--device-id",
+        deviceIdValue || "<device-id>",
+        "--package-id",
+        packageIdValue || "<package-id>",
+        "--model-id",
+        modelIdValue || "<model-id>",
+        "--runtime-target-id",
+        runtimeTargetIdValue,
+        "--include-device-inventory",
+        "--json"
+      ])
+    };
+  }
+
+  return {
+    action,
+    label: `${runtimeTargetIdValue} proof check`,
+    edgeRun: false,
+    note: `${actionLabel} against the signed edge-runtime gate.`,
+    command: formatProofCommand([
+      "uv",
+      "run",
+      "temms",
+      "hub",
+      "edge-runtime-mission",
+      "--hub-url",
+      hubUrl,
+      "--package-id",
+      packageIdValue || "<package-id>",
+      "--model-id",
+      modelIdValue || "<model-id>",
+      "--device-id",
+      deviceIdValue || "<device-id>",
+      "--runtime-target-id",
+      runtimeTargetIdValue,
+      "--slot",
+      slotValue,
+      "--require-go",
+      "--require-best-runtime",
+      "--require-capability-lock",
+      "--min-runtime-fit",
+      "95",
+      "--json"
+    ])
+  };
+}
+
+function runtimeTargetContractRemediationCommand(
+  remediation: JsonObject,
+  runtimeTargetIdValue: string,
+  action: string,
+  actionLabel: string
+): RuntimeRemediationCommand | undefined {
+  const commandRecord = asRecord(remediation.command);
+  const edgeCommandText = stringOf(
+    remediation.edge_command_text,
+    stringOf(commandRecord.edge_command_text, "")
+  );
+  if (edgeCommandText) {
+    return {
+      action,
+      label: `${runtimeTargetIdValue} edge command`,
+      edgeRun: true,
+      note: stringOf(
+        remediation.edge_command_note,
+        stringOf(commandRecord.edge_command_note, "Run this command on the selected edge node.")
+      ),
+      command: localizeHubCommandText(edgeCommandText)
+    };
+  }
+
+  const operatorCommandText = stringOf(
+    remediation.operator_command_text,
+    stringOf(commandRecord.operator_command_text, "")
+  );
+  if (operatorCommandText) {
+    return {
+      action,
+      label: `${runtimeTargetIdValue} operator command`,
+      edgeRun: remediation.requires_edge_execution === true,
+      note: stringOf(
+        remediation.operator_command_note,
+        stringOf(commandRecord.operator_command_note, `${actionLabel} against the current edge-runtime contract.`)
+      ),
+      command: localizeHubCommandText(operatorCommandText)
+    };
+  }
+
+  const edgeCommand = stringsOf(remediation.edge_command).length
+    ? stringsOf(remediation.edge_command)
+    : stringsOf(commandRecord.edge_command);
+  if (edgeCommand.length) {
+    return {
+      action,
+      label: `${runtimeTargetIdValue} edge command`,
+      edgeRun: true,
+      note: stringOf(
+        remediation.edge_command_note,
+        stringOf(commandRecord.edge_command_note, "Run this command on the selected edge node.")
+      ),
+      command: formatProofCommand(edgeCommand.map(localizeHubCommandPart))
+    };
+  }
+
+  const operatorCommand = stringsOf(remediation.operator_command).length
+    ? stringsOf(remediation.operator_command)
+    : stringsOf(commandRecord.operator_command);
+  if (operatorCommand.length) {
+    return {
+      action,
+      label: `${runtimeTargetIdValue} operator command`,
+      edgeRun: remediation.requires_edge_execution === true,
+      note: stringOf(
+        remediation.operator_command_note,
+        stringOf(commandRecord.operator_command_note, `${actionLabel} against the current edge-runtime contract.`)
+      ),
+      command: formatProofCommand(operatorCommand.map(localizeHubCommandPart))
+    };
+  }
+
+  return undefined;
+}
+
+function localizeHubCommandText(command: string): string {
+  return command.split("${TEMMS_HUB_URL}").join(currentHubUrl());
+}
+
+function localizeHubCommandPart(part: string): string {
+  return part.split("${TEMMS_HUB_URL}").join(currentHubUrl());
+}
+
+function runtimeTargetComponentProofs(
+  assessment: JsonObject
+): { key: string; label: string; state: string; score: string; tone: GateTone }[] {
+  const components = asRecord(assessment.component_states);
+  const specs: { key: string; label: string }[] = [
+    { key: "compatibility", label: "compat" },
+    { key: "runtime_validation", label: "valid" },
+    { key: "performance", label: "perf" },
+    { key: "resource", label: "res" },
+    { key: "telemetry", label: "telemetry" }
+  ];
+  return specs
+    .map(({ key, label }) => {
+      const component = asRecord(components[key]);
+      const state = componentProofState(component);
+      if (!state) return undefined;
+      const score = componentProofScore(component);
+      return {
+        key,
+        label,
+        state,
+        score,
+        tone: componentProofTone(component, state)
+      };
+    })
+    .filter((value): value is { key: string; label: string; state: string; score: string; tone: GateTone } => Boolean(value));
+}
+
+function componentProofState(component: JsonObject): string {
+  return stringOf(component.state, stringOf(component.status, "")).replace(/_/g, " ");
+}
+
+function componentProofScore(component: JsonObject): string {
+  const score = numberOf(component.score);
+  const maxScore = numberOf(component.max_score);
+  if (score === undefined) return "";
+  return maxScore !== undefined ? `${score}/${maxScore}` : `${score}`;
+}
+
+function componentProofTone(component: JsonObject, state: string): GateTone {
+  const status = stringOf(component.status, "").toLowerCase();
+  const normalized = state.toLowerCase();
+  if (status === "blocked" || normalized.includes("blocked") || normalized.includes("miss")) return "bad";
+  if (
+    status === "attention" ||
+    normalized.includes("missing") ||
+    normalized.includes("stale") ||
+    normalized.includes("unknown")
+  ) {
+    return "warn";
+  }
+  if (
+    status === "go" ||
+    normalized.includes("compatible") ||
+    normalized.includes("validated") ||
+    normalized.includes("met") ||
+    normalized.includes("fresh")
+  ) {
+    return "good";
+  }
+  return "neutral";
+}
+
+function runtimeDecisionGates(value: unknown): JsonObject[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map(asRecord)
+    .filter((gate) => stringOf(gate.gate_id, "") || stringOf(gate.label, ""));
+}
+
+function candidateRuntimeId(candidate: JsonObject): string {
+  return stringOf(candidate.runtime_target_id, "runtime target");
+}
+
+function runtimeCandidateTone(
+  candidate: JsonObject,
+  candidateId: string,
+  selectedRuntimeTargetId: string,
+  bestRuntimeTargetId: string
+): GateTone {
+  if (candidate.blocked === true) return "bad";
+  if (candidateId === bestRuntimeTargetId) return "good";
+  if (candidateId === selectedRuntimeTargetId && bestRuntimeTargetId !== selectedRuntimeTargetId) return "warn";
+  return "neutral";
+}
+
+function formatSignedPercent(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return `${rounded >= 0 ? "+" : ""}${rounded}%`;
+}
+
+function formatSignedMb(value: number): string {
+  const rounded = Math.round(value);
+  return `${rounded >= 0 ? "+" : ""}${rounded} MB`;
+}
+
+function recommendationTone(recommendation: EdgeRecommendation): GateTone {
+  if (recommendation.decision === "deploy") return "good";
+  if (recommendation.decision === "blocked") return "bad";
+  return "warn";
+}
+
+function runtimeTargetSelectionValue(selection: JsonObject): string {
+  const status = stringOf(selection.status, "");
+  const selectedRank = numberOf(selection.selected_rank);
+  const eligibleCount = numberOf(selection.eligible_target_count);
+  if (status === "best") {
+    return selectedRank !== undefined && eligibleCount !== undefined
+      ? `#${selectedRank} of ${eligibleCount}`
+      : "best target";
+  }
+  if (status === "upgrade_available") return "upgrade available";
+  if (status === "selected_not_eligible") return "not eligible";
+  if (status === "no_eligible_targets") return "no target";
+  return "comparison pending";
+}
+
+function runtimeTargetSelectionDetail(selection: JsonObject): string {
+  const detail = stringOf(selection.detail, "");
+  if (detail) return detail;
+  const bestTarget = stringOf(selection.best_runtime_target_id, "");
+  const bestScore = numberOf(selection.best_score);
+  if (bestTarget) {
+    return bestScore !== undefined
+      ? `Best measured target is ${bestTarget} at ${bestScore}/100`
+      : `Best measured target is ${bestTarget}`;
+  }
+  return "No alternate runtime target comparison is available yet.";
+}
+
+function runtimeTargetSelectionTone(selection: JsonObject): GateTone {
+  const status = stringOf(selection.status, "");
+  if (status === "best") return "good";
+  if (status === "upgrade_available") return "warn";
+  if (status === "selected_not_eligible" || status === "no_eligible_targets") return "bad";
+  return "neutral";
+}
+
+function productionAdmissionValue(admission: JsonObject): string {
+  if (admission.apply_allowed === true) return "permitted";
+  if (admission.apply_allowed === false) return "blocked";
+  return "pending";
+}
+
+function productionAdmissionDetail(admission: JsonObject): string {
+  const detail = stringOf(admission.detail, "");
+  const blockers = numberOf(admission.blocking_gate_count);
+  if (detail && blockers && blockers > 0) return `${detail}; ${blockers} blocking gate${blockers === 1 ? "" : "s"}`;
+  if (detail) return detail;
+  return "waiting for Hub admission gates";
+}
+
+function productionAdmissionTone(admission: JsonObject): GateTone {
+  if (admission.apply_allowed === true) return "good";
+  if (admission.apply_allowed === false) return "bad";
+  return "neutral";
+}
+
+function edgeRuntimeMissionFromApi(value: unknown): EdgeRuntimeMission | undefined {
+  const mission = asRecord(value);
+  if (mission.schema_version !== "temms-edge-runtime-mission/v1") return undefined;
+  const metrics = asRecord(mission.metrics);
+  const path = asRecord(mission.path);
+  const metricRows: EdgeMissionMetric[] = [
+    edgeRuntimeMissionMetric(metrics.runtime_fit, "Runtime fit", apiScoreOrState),
+    edgeRuntimeMissionMetric(metrics.runtime_lane, "Runtime lane", apiRuntimeLaneValue),
+    edgeRuntimeMissionMetric(metrics.artifact_fit, "Artifact", apiStateOrFormat),
+    edgeRuntimeMissionMetric(metrics.live_inventory, "Live inventory", apiStateValue),
+    edgeRuntimeMissionMetric(metrics.performance, "Performance", apiStateValue),
+    edgeRuntimeMissionMetric(metrics.resources, "Resources", apiStateValue),
+    edgeRuntimeMissionMetric(metrics.runtime_validation, "Validation", apiStateValue),
+    apiRuntimeDecisionMetric(metrics.runtime_decision),
+    edgeRuntimeMissionMetric(
+      metrics.ddil_repair || metrics.production_admission,
+      metrics.ddil_repair ? "DDIL repair" : "Production apply",
+      apiStateValue
+    )
+  ];
+  return {
+    headline: stringOf(mission.headline, "Selected edge path needs review"),
+    detail: stringOf(mission.detail, "Review the selected model/device/runtime path."),
+    tone: toneForReadinessStatus(stringOf(mission.status, "")),
+    path: stringOf(path.label, "model -> runtime -> edge"),
+    metrics: metricRows,
+    focus: stringsOf(mission.operator_focus).length
+      ? stringsOf(mission.operator_focus)
+      : ["Selected on-device gates are aligned"]
+  };
+}
+
+function apiRuntimeDecisionMetric(value: unknown): EdgeMissionMetric {
+  const metric = asRecord(value);
+  const action = stringOf(metric.recommended_action, "review").replace(/_/g, " ");
+  const best = stringOf(metric.best_runtime_target_id, "");
+  const applyAllowed = metric.apply_allowed === true;
+  const status = stringOf(metric.status, "");
+  const detail = stringOf(
+    metric.detail,
+    best ? `best runtime ${best}` : "runtime decision evidence pending"
+  );
+  return {
+    label: "Runtime decision",
+    value: action,
+    detail: compactMetricDetail(detail),
+    tone:
+      metric.apply_allowed === false || status === "selected_not_eligible"
+        ? "bad"
+        : status === "upgrade_available"
+          ? "warn"
+          : applyAllowed || action === "apply or stage"
+            ? "good"
+            : "neutral"
+  };
+}
+
+function edgeRuntimeMissionMetric(
+  value: unknown,
+  label: string,
+  valueFormatter: (metric: JsonObject) => string
+): EdgeMissionMetric {
+  const metric = asRecord(value);
+  const status = stringOf(metric.status, "");
+  return {
+    label,
+    value: valueFormatter(metric),
+    detail: apiMetricDetail(metric, label),
+    tone: toneForReadinessStatus(status)
+  };
+}
+
+function apiMetricDetail(metric: JsonObject, label: string): string {
+  const detail = stringOf(metric.detail, "");
+  if (detail) return compactMetricDetail(detail);
+  if (label === "Runtime lane") return runtimeLaneDetail(metric);
+  if (label === "Production apply") return productionAdmissionDetail(metric);
+  if (label === "Runtime fit") return apiScoreOrState(metric);
+  if (label === "Artifact") return artifactLaneDetail(metric);
+  return stringOf(metric.state, stringOf(metric.status, "No detail reported")).replace(/_/g, " ");
+}
+
+function compactMetricDetail(detail: string): string {
+  return detail
+    .replace(/(-?\d+(?:\.\d+)?)\s*ms/g, (_match, value) => `${formatMetricNumber(Number(value))} ms`)
+    .replace(/(-?\d+(?:\.\d+)?)\s*ips/g, (_match, value) => `${formatThroughput(Number(value))} ips`)
+    .replace(/(-?\d+(?:\.\d+)?)\s*MB/g, (_match, value) => `${Math.round(Number(value))} MB`);
+}
+
+function apiScoreOrState(metric: JsonObject): string {
+  const score = numberOf(metric.score);
+  const tier = stringOf(metric.tier, "").replace(/_/g, " ");
+  if (score !== undefined) return tier ? `${score}/100 ${tier}` : `${score}/100`;
+  return apiStateValue(metric);
+}
+
+function apiRuntimeLaneValue(metric: JsonObject): string {
+  return stringOf(metric.label, stringOf(metric.lane_id, apiStateValue(metric)));
+}
+
+function apiStateOrFormat(metric: JsonObject): string {
+  return stringOf(metric.state, stringOf(metric.model_format, apiStateValue(metric))).replace(/_/g, " ");
+}
+
+function apiStateValue(metric: JsonObject): string {
+  return stringOf(metric.state, stringOf(metric.status, "unknown")).replace(/_/g, " ");
+}
+
+function buildEdgeRuntimeMission({
+  device,
+  edgeRuntimeFit,
+  missionReplay,
+  model,
+  pendingOperationLedger,
+  pendingOperations,
+  readiness,
+  readinessVerdict,
+  replayBlockedOperations,
+  resourceEnvelopeFit,
+  runtime,
+  runtimeFitDisplay,
+  runtimeValidation
+}: {
+  device: Device | undefined;
+  edgeRuntimeFit: EdgeRuntimeFit;
+  missionReplay: MissionReplay | undefined;
+  model: ModelRecord | undefined;
+  pendingOperationLedger: Record<string, unknown>[];
+  pendingOperations: number;
+  readiness: DeploymentReadiness | undefined;
+  readinessVerdict: ReadinessVerdict;
+  replayBlockedOperations: number;
+  resourceEnvelopeFit: EdgeRuntimeFit;
+  runtime: RuntimeTarget | undefined;
+  runtimeFitDisplay: RuntimeFitDisplay;
+  runtimeValidation: RuntimeValidation | undefined;
+}): EdgeRuntimeMission {
+  const apiMission = edgeRuntimeMissionFromApi(readiness?.edge_runtime_mission);
+  if (apiMission) return apiMission;
+  const runtimeFit = asRecord(readiness?.runtime_fit);
+  const runtimeLane = runtimeLaneFor(runtimeFit, runtime);
+  const artifactLane = asRecord(runtimeFit.artifact_lane);
+  const ddilRepair = ddilRuntimeRepairMetric({
+    missionReplay,
+    pendingOperationLedger,
+    pendingOperations,
+    replayBlockedOperations
+  });
+  const modelLabel = model?.id ?? "model missing";
+  const runtimeLabel = runtime ? runtimeTargetId(runtime) : "runtime missing";
+  const deviceLabel = device ? deviceId(device) : "edge missing";
+  const validationDetail = runtimeValidation
+    ? `${runtimeLabel} passed package validation`
+    : edgeRuntimeFit.detail;
+  const inventoryTone = edgeRuntimeFit.tone === "bad" ? "bad" : runtimeInventoryTone(device);
+  const focus = edgeMissionFocus({
+    ddilRepair,
+    edgeRuntimeFit,
+    readinessVerdict,
+    resourceEnvelopeFit,
+    runtimeFit
+  });
+  const metrics: EdgeMissionMetric[] = [
+    {
+      label: "Runtime fit",
+      value: runtimeFitDisplay.label,
+      detail: runtimeFitDisplay.detail,
+      tone: runtimeFitDisplay.tone
+    },
+    {
+      label: "Runtime lane",
+      value: runtimeLaneValue(runtimeLane),
+      detail: runtimeLaneDetail(runtimeLane),
+      tone: runtimeLaneTone(runtimeLane)
+    },
+    {
+      label: "Artifact",
+      value: artifactLaneMissionValue(artifactLane, model),
+      detail: artifactLaneMissionDetail(artifactLane, model),
+      tone: artifactLaneMissionTone(artifactLane)
+    },
+    {
+      label: "Live inventory",
+      value: runtimeInventoryLabel(device),
+      detail: runtimeInventoryDetail(device),
+      tone: inventoryTone
+    },
+    {
+      label: "Performance",
+      value: performanceSloLabel(model),
+      detail: model ? performanceSloDetail(model) : "select a model",
+      tone: performanceSloTone(model)
+    },
+    {
+      label: "Resources",
+      value: resourceEnvelopeFit.label,
+      detail: resourceEnvelopeFit.detail,
+      tone: resourceEnvelopeFit.tone
+    },
+    {
+      label: "Validation",
+      value: runtimeValidation ? "validated" : edgeRuntimeFit.label,
+      detail: validationDetail,
+      tone: runtimeValidation ? "good" : edgeRuntimeFit.tone
+    },
+    ddilRepair
+  ];
+
+  return {
+    headline: edgeMissionHeadline(readinessVerdict),
+    detail: edgeMissionDetail(readinessVerdict, model, runtime, device),
+    tone: readinessVerdict.tone,
+    path: `${modelLabel} -> ${runtimeLabel} -> ${deviceLabel}`,
+    metrics,
+    focus
+  };
+}
+
+function edgeMissionHeadline(verdict: ReadinessVerdict): string {
+  if (verdict.tone === "good") return "Selected model is proven for the edge path";
+  if (verdict.tone === "bad") return "Selected edge path is blocked";
+  if (verdict.tone === "warn") return "Selected edge path needs operator proof";
+  return "Selected edge path is syncing";
+}
+
+function edgeMissionDetail(
+  verdict: ReadinessVerdict,
+  model: ModelRecord | undefined,
+  runtime: RuntimeTarget | undefined,
+  device: Device | undefined
+): string {
+  if (!model || !runtime || !device) return "Select a model, runtime target, and edge node to evaluate on-device deployment.";
+  return `${verdict.nextAction} (${model.format || "artifact"} on ${runtimeTargetId(runtime)} at ${deviceId(device)}).`;
+}
+
+function artifactLaneMissionValue(artifactLane: JsonObject, model: ModelRecord | undefined): string {
+  const value = artifactLaneValue(artifactLane);
+  if (value !== "not classified") return value;
+  return model?.format ? `${model.format} artifact` : value;
+}
+
+function artifactLaneMissionDetail(artifactLane: JsonObject, model: ModelRecord | undefined): string {
+  const detail = artifactLaneDetail(artifactLane);
+  if (detail !== "artifact format has not been evaluated for this runtime lane") return detail;
+  return model?.format
+    ? `${model.format} artifact awaiting runtime-lane evaluation`
+    : detail;
+}
+
+function artifactLaneMissionTone(artifactLane: JsonObject): GateTone {
+  const tone = artifactLaneTone(artifactLane);
+  return tone === "neutral" ? "warn" : tone;
+}
+
+function ddilRuntimeRepairMetric({
+  missionReplay,
+  pendingOperationLedger,
+  pendingOperations,
+  replayBlockedOperations
+}: {
+  missionReplay: MissionReplay | undefined;
+  pendingOperationLedger: Record<string, unknown>[];
+  pendingOperations: number;
+  replayBlockedOperations: number;
+}): EdgeMissionMetric {
+  const repairCandidate = pendingOperationLedger.find((operation) =>
+    stringOf(operation.runtime_remediation_runtime_target_id, "")
+  );
+  if (repairCandidate) {
+    const previous = stringOf(repairCandidate.runtime_remediation_previous_runtime_target_id, "");
+    const target = stringOf(repairCandidate.runtime_remediation_runtime_target_id, "");
+    const delta = numberOf(repairCandidate.runtime_remediation_score_delta);
+    return {
+      label: "DDIL repair",
+      value: "repair available",
+      detail: `${previous ? `${previous} -> ` : ""}${target}${delta !== undefined ? ` (+${delta} fit)` : ""}`,
+      tone: "warn"
+    };
+  }
+  if (replayBlockedOperations) {
+    return {
+      label: "DDIL repair",
+      value: "blocked replay",
+      detail: `${replayBlockedOperations} queued runtime intent${replayBlockedOperations === 1 ? "" : "s"} blocked by preflight`,
+      tone: "bad"
+    };
+  }
+
+  const proof = latestRuntimeRetargetProof(missionReplay);
+  if (proof) {
+    return {
+      label: "DDIL repair",
+      value: "retarget proved",
+      detail: proof,
+      tone: "good"
+    };
+  }
+  if (pendingOperations) {
+    return {
+      label: "DDIL repair",
+      value: "queued",
+      detail: `${pendingOperations} signed intent${pendingOperations === 1 ? "" : "s"} awaiting sync`,
+      tone: "warn"
+    };
+  }
+  return {
+    label: "DDIL repair",
+    value: "clear",
+    detail: "no runtime repair pending",
+    tone: "good"
+  };
+}
+
+function latestRuntimeRetargetProof(missionReplay: MissionReplay | undefined): string {
+  const events = Array.isArray(missionReplay?.events) ? missionReplay.events.map(asRecord) : [];
+  const event = events.find((candidate) => {
+    const summary = stringOf(candidate.summary, "");
+    const detail = stringOf(candidate.detail, "");
+    return (
+      candidate.runtime_retargeted === true ||
+      summary.includes("DDIL replay retargeted") ||
+      detail.startsWith("retargeted ")
+    );
+  });
+  if (event) {
+    const detail = stringOf(event.detail, "");
+    const summary = stringOf(event.summary, "retargeted DDIL replay");
+    return detail ? `${summary}; ${detail}` : summary;
+  }
+  const phases = Array.isArray(missionReplay?.phases) ? missionReplay.phases : [];
+  const phase = phases.find((candidate) => {
+    const summary = candidate.summary ?? "";
+    return candidate.phase === "offline_operation" && summary.includes("retargeted");
+  });
+  return phase?.summary ?? "";
+}
+
+function edgeMissionFocus({
+  ddilRepair,
+  edgeRuntimeFit,
+  readinessVerdict,
+  resourceEnvelopeFit,
+  runtimeFit
+}: {
+  ddilRepair: EdgeMissionMetric;
+  edgeRuntimeFit: EdgeRuntimeFit;
+  readinessVerdict: ReadinessVerdict;
+  resourceEnvelopeFit: EdgeRuntimeFit;
+  runtimeFit: JsonObject;
+}): string[] {
+  const focus: string[] = [];
+  if (readinessVerdict.tone !== "good") focus.push(readinessVerdict.nextAction);
+  const targetSelection = asRecord(runtimeFit.target_selection);
+  const targetSelectionDetail = runtimeTargetSelectionDetail(targetSelection);
+  if (runtimeTargetSelectionTone(targetSelection) !== "neutral") focus.push(targetSelectionDetail);
+  edgeRuntimeFit.failures.slice(0, 2).forEach((failure) => focus.push(failure));
+  resourceEnvelopeFit.failures.slice(0, 2).forEach((failure) => focus.push(failure));
+  if (ddilRepair.tone !== "good") focus.push(`${ddilRepair.value}: ${ddilRepair.detail}`);
+  const unique = [...new Set(focus.filter(Boolean))].slice(0, 4);
+  return unique.length ? unique : ["Selected on-device gates are aligned"];
+}
+
+function buildEdgeProofWorkflow({
+  device,
+  model,
+  readiness,
+  readinessVerdict,
+  runtime,
+  runtimeFitDisplay
+}: {
+  device: Device | undefined;
+  model: ModelRecord | undefined;
+  readiness: DeploymentReadiness | undefined;
+  readinessVerdict: ReadinessVerdict;
+  runtime: RuntimeTarget | undefined;
+  runtimeFitDisplay: RuntimeFitDisplay;
+}): EdgeProofWorkflow {
+  const runtimeId = runtime ? runtimeTargetId(runtime) : "";
+  const edgeId = device ? deviceId(device) : "";
+  const missing = [
+    model ? "" : "model",
+    runtimeId ? "" : "runtime target",
+    edgeId ? "" : "edge device"
+  ].filter(Boolean);
+  const runtimeFitScore = runtimeFitScoreForProof(readiness, runtimeFitDisplay);
+  const runtimeFitLabel =
+    runtimeFitScore !== undefined ? `runtime fit ${runtimeFitScore}/100` : runtimeFitDisplay.label;
+  const gatePolicy = "go + best runtime + capability lock + fit >= 95 + proof <= 15m + path bound";
+  const proofPath = `/tmp/${proofFileName(model?.id, runtimeId, edgeId)}`;
+  const hubUrl = currentHubUrl();
+  const capabilityLock = runtimeCapabilityLockForProof(readiness);
+
+  let tone: GateTone = "warn";
+  let status = "Proof context incomplete";
+  if (!missing.length) {
+    if (readinessVerdict.label === "go" && runtimeFitScore !== undefined && runtimeFitScore >= 95) {
+      tone = "good";
+      status = "Edge proof ready";
+    } else if (readinessVerdict.tone === "bad" || (runtimeFitScore !== undefined && runtimeFitScore < 95)) {
+      tone = "bad";
+      status = "Edge proof will fail";
+    } else {
+      tone = "warn";
+      status = "Edge proof needs evidence";
+    }
+  }
+
+  const detail = missing.length
+    ? `Missing ${missing.join(", ")} for proof export.`
+    : `${model?.id ?? "model"} -> ${runtimeId} -> ${edgeId}; ${readinessVerdict.nextAction}; offline verifier fails stale proofs or proofs for a different path.`;
+
+  const generateCommand = formatProofCommand([
+    "uv",
+    "run",
+    "temms",
+    "hub",
+    "edge-runtime-mission",
+    "--hub-url",
+    hubUrl,
+    "--package-id",
+    model?.packageId ?? "<package-id>",
+    "--model-id",
+    model?.id ?? "<model-id>",
+    "--device-id",
+    edgeId || "<device-id>",
+    "--runtime-target-id",
+    runtimeId || "<runtime-target-id>",
+    "--slot",
+    "vision",
+    "--require-go",
+    "--require-best-runtime",
+    "--require-capability-lock",
+    "--min-runtime-fit",
+    "95",
+    "--output",
+    proofPath
+  ]);
+  const verifyCommand = formatProofCommand([
+    "uv",
+    "run",
+    "temms",
+    "hub",
+    "verify-edge-proof",
+    proofPath,
+    "--require-go",
+    "--require-best-runtime",
+    "--require-capability-lock",
+    "--min-runtime-fit",
+    "95",
+    "--max-proof-age-seconds",
+    String(EDGE_PROOF_MAX_AGE_SECONDS),
+    "--package-id",
+    model?.packageId ?? "<package-id>",
+    "--model-id",
+    model?.id ?? "<model-id>",
+    "--device-id",
+    edgeId || "<device-id>",
+    "--runtime-target-id",
+    runtimeId || "<runtime-target-id>",
+    "--slot",
+    "vision",
+    "--require-proof-signature"
+  ]);
+  const verifyJsonCommand = formatProofCommand([
+    "uv",
+    "run",
+    "temms",
+    "hub",
+    "verify-edge-proof",
+    proofPath,
+    "--require-go",
+    "--require-best-runtime",
+    "--require-capability-lock",
+    "--min-runtime-fit",
+    "95",
+    "--max-proof-age-seconds",
+    String(EDGE_PROOF_MAX_AGE_SECONDS),
+    "--package-id",
+    model?.packageId ?? "<package-id>",
+    "--model-id",
+    model?.id ?? "<model-id>",
+    "--device-id",
+    edgeId || "<device-id>",
+    "--runtime-target-id",
+    runtimeId || "<runtime-target-id>",
+    "--slot",
+    "vision",
+    "--require-proof-signature",
+    "--json"
+  ]);
+
+  return {
+    status,
+    detail,
+    tone,
+    proofPath,
+    gatePolicy,
+    attestation: "signed attestation required",
+    capabilityLock: `Capability lock: ${capabilityLockValue(capabilityLock)}`,
+    capabilityLockDetail: capabilityLockDetail(capabilityLock),
+    capabilityLockTone: capabilityLockTone(capabilityLock),
+    runtimeFit: runtimeFitLabel,
+    generateCommand,
+    verifyCommand,
+    verifyJsonCommand,
+    missing
+  };
+}
+
+function edgeProofTraceStatus(
+  proof: JsonObject | undefined,
+  context: ReadinessQuery
+): EdgeProofTraceStatus {
+  if (!proof) {
+    return {
+      commandCount: 0,
+      detail: "Generate or download a proof to inspect its signed runtime decision trace.",
+      errors: [],
+      rowCount: 0,
+      schema: "",
+      status: "not_generated",
+      tone: "neutral",
+      value: "not generated"
+    };
+  }
+  if (proof.schema_version !== "temms-edge-runtime-proof/v1") {
+    return {
+      commandCount: 0,
+      detail: "The latest payload is not a TEMMS edge runtime proof.",
+      errors: ["payload schema is not temms-edge-runtime-proof/v1"],
+      rowCount: 0,
+      schema: stringOf(proof.schema_version, ""),
+      status: "missing",
+      tone: "warn",
+      value: "not a proof"
+    };
+  }
+  const selection = asRecord(proof.selection);
+  const trace = asRecord(proof.runtime_decision_trace);
+  if (!selectionMatchesContext(selection, context)) {
+    return {
+      commandCount: edgeProofTraceCommands(trace).length,
+      detail: edgeProofTracePathDetail(selection),
+      errors: ["latest proof does not match the selected model/runtime/edge path"],
+      rowCount: edgeProofTraceRows(trace).length,
+      schema: stringOf(trace.schema_version, ""),
+      status: "stale",
+      tone: "warn",
+      value: "different path"
+    };
+  }
+
+  const workbench = asRecord(proof.runtime_workbench);
+  const rows = edgeProofTraceRows(trace);
+  const commands = edgeProofTraceCommands(trace);
+  const schema = stringOf(trace.schema_version, "");
+  if (schema !== "temms-runtime-decision-trace/v1") {
+    return {
+      commandCount: commands.length,
+      detail: "Proof does not retain a runtime decision trace.",
+      errors: [`trace schema is ${schema || "missing"}`],
+      rowCount: rows.length,
+      schema,
+      status: "missing",
+      tone: "warn",
+      value: "trace missing"
+    };
+  }
+  if (workbench.schema_version !== "temms-runtime-workbench/v1") {
+    return {
+      commandCount: commands.length,
+      detail: "Proof does not retain the canonical runtime workbench needed for browser consistency checks.",
+      errors: ["runtime_workbench schema is missing"],
+      rowCount: rows.length,
+      schema,
+      status: "missing",
+      tone: "warn",
+      value: "workbench missing"
+    };
+  }
+
+  const errors = edgeProofTraceConsistencyErrors(trace, workbench);
+  return {
+    commandCount: commands.length,
+    detail: errors.length
+      ? "Signed trace disagrees with the canonical runtime workbench."
+      : "Signed trace agrees with the canonical runtime workbench.",
+    errors,
+    rowCount: rows.length,
+    schema,
+    status: errors.length ? "mismatch" : "consistent",
+    tone: errors.length ? "bad" : "good",
+    value: errors.length ? "trace mismatch" : "trace consistent"
+  };
+}
+
+function edgeProofComponentDigestStatus(
+  proof: JsonObject | undefined,
+  context: ReadinessQuery
+): EdgeProofComponentDigestStatus {
+  if (!proof) {
+    return {
+      detail: "Generate or download a proof to inspect component-level hashes.",
+      digestCount: 0,
+      digests: [],
+      errors: [],
+      schema: "",
+      status: "not_generated",
+      tone: "neutral",
+      value: "not generated"
+    };
+  }
+  if (proof.schema_version !== "temms-edge-runtime-proof/v1") {
+    return {
+      detail: "The latest payload is not a TEMMS edge runtime proof.",
+      digestCount: 0,
+      digests: [],
+      errors: ["payload schema is not temms-edge-runtime-proof/v1"],
+      schema: "",
+      status: "missing",
+      tone: "warn",
+      value: "not a proof"
+    };
+  }
+  const selection = asRecord(proof.selection);
+  const componentDigests = asRecord(proof.component_digests);
+  const digests = EDGE_PROOF_COMPONENT_DIGEST_TARGETS
+    .map(({ key, label }) => ({ key, label, value: stringOf(componentDigests[key], "") }))
+    .filter((digest) => digest.value);
+  if (!selectionMatchesContext(selection, context)) {
+    return {
+      detail: edgeProofTracePathDetail(selection),
+      digestCount: digests.length,
+      digests,
+      errors: ["latest proof does not match the selected model/runtime/edge path"],
+      schema: stringOf(componentDigests.schema_version, ""),
+      status: "stale",
+      tone: "warn",
+      value: "different path"
+    };
+  }
+
+  const schema = stringOf(componentDigests.schema_version, "");
+  const errors: string[] = [];
+  if (schema !== "temms-edge-runtime-proof-component-digests/v1") {
+    errors.push(`component digest schema is ${schema || "missing"}`);
+  }
+  EDGE_PROOF_COMPONENT_DIGEST_TARGETS.forEach(({ key, label, component }) => {
+    const digest = stringOf(componentDigests[key], "");
+    const componentPresent = Object.keys(asRecord(proof[component])).length > 0;
+    if (componentPresent && !digest) errors.push(`${label} digest is missing`);
+    if (digest && !isSha256Digest(digest)) errors.push(`${label} digest is not a sha256 hex value`);
+    if (digest && !componentPresent) errors.push(`${label} digest is recorded but component is missing`);
+  });
+
+  const digestCount = digests.length;
+  return {
+    detail: errors.length
+      ? errors.slice(0, 2).join(" / ")
+      : "Runtime workbench, trace, and execution manifest hashes are retained; browser verification starts automatically.",
+    digestCount,
+    digests,
+    errors,
+    schema,
+    status: errors.length ? "missing" : "retained",
+    tone: errors.length ? "warn" : "good",
+    value: errors.length ? "digest evidence incomplete" : "digests retained"
+  };
+}
+
+async function verifyEdgeProofComponentDigestStatus(
+  proof: JsonObject,
+  baseStatus: EdgeProofComponentDigestStatus
+): Promise<EdgeProofComponentDigestStatus> {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) {
+    return {
+      ...baseStatus,
+      detail: "Browser crypto is unavailable; use verify-edge-proof for component digest recomputation.",
+      status: "retained",
+      tone: "warn",
+      value: "digests retained"
+    };
+  }
+  const recorded = new Map(baseStatus.digests.map((digest) => [digest.key, digest.value]));
+  const errors: string[] = [];
+  await Promise.all(
+    EDGE_PROOF_COMPONENT_DIGEST_TARGETS.map(async ({ key, label, component }) => {
+      const value = asRecord(proof[component]);
+      if (!Object.keys(value).length) return;
+      const expected = recorded.get(key);
+      if (!expected) {
+        errors.push(`${label} digest is missing`);
+        return;
+      }
+      const computed = await sha256Hex(canonicalJsonStringify(value));
+      if (expected.replace(/^sha256:/, "").toLowerCase() !== computed) {
+        errors.push(`${label} digest mismatch`);
+      }
+    })
+  );
+  return {
+    ...baseStatus,
+    detail: errors.length
+      ? errors.slice(0, 2).join(" / ")
+      : "Browser recomputed workbench, trace, and manifest hashes against the proof payload.",
+    errors,
+    status: errors.length ? "mismatch" : "consistent",
+    tone: errors.length ? "bad" : "good",
+    value: errors.length ? "digest mismatch" : "digests verified"
+  };
+}
+
+function edgeProofTraceConsistencyErrors(trace: JsonObject, workbench: JsonObject): string[] {
+  const errors: string[] = [];
+  const summary = asRecord(workbench.summary);
+  const targetSelection = asRecord(workbench.target_selection);
+  const topLevel: Array<[string, unknown]> = [
+    ["selected_runtime_target_id", workbench.selected_runtime_target_id],
+    ["best_runtime_target_id", workbench.best_runtime_target_id],
+    ["selected_is_best", summary.selected_is_best],
+    ["target_count", summary.target_count],
+    ["eligible_target_count", summary.eligible_target_count],
+    ["blocked_target_count", summary.blocked_target_count],
+    ["target_selection_status", targetSelection.status],
+    ["selected_rank", targetSelection.selected_rank],
+    ["selected_score", targetSelection.selected_score],
+    ["best_score", targetSelection.best_score],
+    ["score_delta", targetSelection.score_delta]
+  ];
+  topLevel.forEach(([field, expected]) => {
+    const actual = trace[field];
+    if (!edgeProofTraceValuesEqual(actual, expected)) {
+      errors.push(`${field} ${edgeProofValueLabel(actual)} != ${edgeProofValueLabel(expected)}`);
+    }
+  });
+
+  const traceRows = new Map(edgeProofTraceRows(trace).map((row) => [stringOf(row.runtime_target_id, ""), row]));
+  const workbenchRows = Array.isArray(workbench.targets)
+    ? workbench.targets.map(asRecord).filter((row) => stringOf(row.runtime_target_id, ""))
+    : [];
+  workbenchRows.forEach((expectedRow) => {
+    const targetId = stringOf(expectedRow.runtime_target_id, "");
+    const traceRow = traceRows.get(targetId);
+    if (!traceRow) {
+      errors.push(`missing trace row ${targetId}`);
+      return;
+    }
+    edgeProofTraceRowFields(expectedRow).forEach(([field, expected]) => {
+      if (!edgeProofTraceValuesEqual(traceRow[field], expected)) {
+        errors.push(`${targetId}.${field} ${edgeProofValueLabel(traceRow[field])} != ${edgeProofValueLabel(expected)}`);
+      }
+    });
+    const expectedProof = asRecord(expectedRow.proof);
+    const traceLock = asRecord(traceRow.capability_lock);
+    const lockChecks: Array<[string, unknown]> = [
+      ["status", expectedProof.capability_lock_status],
+      ["capability_sha256", expectedProof.capability_sha256],
+      ["telemetry_state", expectedProof.telemetry_state],
+      ["telemetry_status", expectedProof.telemetry_status]
+    ];
+    lockChecks.forEach(([field, expected]) => {
+      if (!edgeProofTraceValuesEqual(traceLock[field], expected)) errors.push(`${targetId}.capability_lock.${field} mismatch`);
+    });
+    const traceComponents = asRecord(traceRow.proof_components);
+    edgeProofTraceComponentChecks(expectedProof).forEach(([component, field, expected]) => {
+      const actual = asRecord(traceComponents[component])[field];
+      if (!edgeProofTraceValuesEqual(actual, expected)) errors.push(`${targetId}.${component}.${field} mismatch`);
+    });
+  });
+  traceRows.forEach((_row, targetId) => {
+    if (!workbenchRows.some((row) => stringOf(row.runtime_target_id, "") === targetId)) {
+      errors.push(`unexpected trace row ${targetId}`);
+    }
+  });
+
+  const traceCommands = new Map(edgeProofTraceCommands(trace).map((command) => [stringOf(command.runtime_target_id, ""), command]));
+  workbenchRows.forEach((row) => {
+    const targetId = stringOf(row.runtime_target_id, "");
+    const expected = edgeProofWorkbenchCommand(row);
+    const actual = traceCommands.get(targetId);
+    if (expected && !actual) errors.push(`missing trace command ${targetId}`);
+    if (!expected && actual) errors.push(`unexpected trace command ${targetId}`);
+    if (expected && actual) {
+      ["action", "label", "kind", "requires_edge_execution", "command_text"].forEach((field) => {
+        if (!edgeProofTraceValuesEqual(actual[field], expected[field])) errors.push(`${targetId}.command.${field} mismatch`);
+      });
+    }
+  });
+
+  return errors;
+}
+
+function edgeProofTraceRows(trace: JsonObject): JsonObject[] {
+  return Array.isArray(trace.rows) ? trace.rows.map(asRecord) : [];
+}
+
+function edgeProofTraceCommands(trace: JsonObject): JsonObject[] {
+  return Array.isArray(trace.commands) ? trace.commands.map(asRecord) : [];
+}
+
+function edgeProofTraceRowFields(row: JsonObject): Array<[string, unknown]> {
+  const proof = asRecord(row.proof);
+  return [
+    ["rank", row.rank],
+    ["status", row.status],
+    ["eligible", row.eligible],
+    ["selected", row.selected === true],
+    ["best", row.best === true],
+    ["score", row.score],
+    ["tier", row.tier],
+    ["detail", row.detail],
+    ["validation_id", proof.validation_id],
+    ["benchmark_id", proof.benchmark_id],
+    ["latency_ms_p95", proof.latency_ms_p95],
+    ["throughput_ips", proof.throughput_ips]
+  ];
+}
+
+function edgeProofTraceComponentChecks(proof: JsonObject): Array<[string, string, unknown]> {
+  return [
+    ["runtime_validation", "status", proof.runtime_validation_status],
+    ["runtime_validation", "state", proof.runtime_validation_state],
+    ["runtime_validation", "evidence_id", proof.validation_id],
+    ["benchmark", "status", proof.performance_status],
+    ["benchmark", "state", proof.performance_state],
+    ["benchmark", "evidence_id", proof.benchmark_id],
+    ["benchmark", "latency_ms_p95", proof.latency_ms_p95],
+    ["benchmark", "throughput_ips", proof.throughput_ips],
+    ["resource", "status", proof.resource_status],
+    ["resource", "state", proof.resource_state],
+    ["telemetry", "status", proof.telemetry_status],
+    ["telemetry", "state", proof.telemetry_state],
+    ["capability_lock", "status", proof.capability_lock_status],
+    ["capability_lock", "capability_sha256", proof.capability_sha256]
+  ];
+}
+
+function edgeProofWorkbenchCommand(row: JsonObject): JsonObject | undefined {
+  const remediation = asRecord(row.remediation);
+  if (!Object.keys(remediation).length) return undefined;
+  const commandRecord = asRecord(remediation.command);
+  const edgeCommandText = stringOf(remediation.edge_command_text, stringOf(commandRecord.edge_command_text, ""));
+  const operatorCommandText = stringOf(remediation.operator_command_text, stringOf(commandRecord.operator_command_text, ""));
+  const edgeCommand = edgeProofCommandText(remediation.edge_command || commandRecord.edge_command);
+  const operatorCommand = edgeProofCommandText(remediation.operator_command || commandRecord.operator_command);
+  const commandText = edgeCommandText || operatorCommandText || edgeCommand || operatorCommand;
+  if (!commandText) return undefined;
+  const kind = edgeCommandText || edgeCommand ? "edge" : "operator";
+  return {
+    runtime_target_id: stringOf(row.runtime_target_id, ""),
+    action: stringOf(remediation.action, ""),
+    label: stringOf(remediation.label, stringOf(remediation.action, "Review")),
+    kind,
+    requires_edge_execution: remediation.requires_edge_execution === true,
+    command_text: commandText
+  };
+}
+
+function edgeProofCommandText(value: unknown): string {
+  return Array.isArray(value) ? value.map((part) => String(part)).filter(Boolean).join(" ") : "";
+}
+
+function edgeProofTraceValuesEqual(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if ((left === undefined || left === null || left === "") && (right === undefined || right === null || right === "")) return true;
+  const leftNumber = numberOf(left);
+  const rightNumber = numberOf(right);
+  if (leftNumber !== undefined && rightNumber !== undefined) return leftNumber === rightNumber;
+  return false;
+}
+
+function edgeProofValueLabel(value: unknown): string {
+  if (value === undefined || value === null || value === "") return "missing";
+  return JSON.stringify(value);
+}
+
+function edgeProofTracePathDetail(selection: JsonObject): string {
+  const model = stringOf(selection.model_id, "model");
+  const runtime = stringOf(selection.runtime_target_id, "runtime");
+  const device = stringOf(selection.device_id, "edge");
+  return `Latest proof is for ${model} -> ${runtime} -> ${device}.`;
+}
+
+function runtimeCapabilityLockForProof(readiness: DeploymentReadiness | undefined): JsonObject {
+  const contract = asRecord(readiness?.edge_execution_contract);
+  const runtimeDecision = asRecord(readiness?.runtime_decision);
+  const runtimeFit = asRecord(readiness?.runtime_fit);
+  const contractLock = asRecord(contract.runtime_capability_lock);
+  if (Object.keys(contractLock).length) return contractLock;
+  const decisionLock = asRecord(runtimeDecision.runtime_capability_lock);
+  if (Object.keys(decisionLock).length) return decisionLock;
+  return asRecord(runtimeFit.runtime_capability_lock);
+}
+
+function runtimeFitScoreForProof(
+  readiness: DeploymentReadiness | undefined,
+  runtimeFitDisplay: RuntimeFitDisplay
+): number | undefined {
+  const runtimeFit = asRecord(readiness?.runtime_fit);
+  const score = numberOf(runtimeFit.score);
+  if (score !== undefined) return score;
+  const match = runtimeFitDisplay.label.match(/^(\d+(?:\.\d+)?)\/100/);
+  return match ? Number(match[1]) : undefined;
+}
+
+function proofFileName(modelId: string | undefined, runtimeId: string, deviceIdValue: string): string {
+  const slug = [modelId, runtimeId, deviceIdValue]
+    .filter((part): part is string => Boolean(part))
+    .map((part) => part.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""))
+    .filter(Boolean)
+    .join("-")
+    .slice(0, 140);
+  return `temms-edge-runtime-proof${slug ? `-${slug}` : ""}.json`;
+}
+
+function downloadJson(fileName: string, payload: unknown): void {
+  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function currentHubUrl(): string {
+  if (typeof window === "undefined" || !window.location?.origin) return "http://127.0.0.1:8080";
+  return window.location.origin;
+}
+
+function formatProofCommand(parts: string[]): string {
+  if (parts.length <= 5) return parts.map(shellArg).join(" ");
+  const firstLine = parts.slice(0, 5).map(shellArg).join(" ");
+  const lines = [firstLine];
+  for (let index = 5; index < parts.length;) {
+    const token = parts[index];
+    const flag = shellArg(token);
+    const value = parts[index + 1];
+    if (!token.startsWith("--")) {
+      lines.push(`  ${flag}`);
+      index += 1;
+    } else if (value === undefined || value.startsWith("--")) {
+      lines.push(`  ${flag}`);
+      index += 1;
+    } else {
+      lines.push(`  ${flag} ${shellArg(value)}`);
+      index += 2;
+    }
+  }
+  return lines.join(" \\\n");
+}
+
+function shellArg(value: string): string {
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) return value;
+  return `"${value.replace(/(["\\$`])/g, "\\$1")}"`;
+}
+
+function displayGateState(value: string): string {
+  const normalized = value.replace(/_/g, " ").trim();
+  if (!normalized) return value;
+  const acronyms: Record<string, string> = {
+    cpu: "CPU",
+    ddil: "DDIL",
+    gpu: "GPU",
+    onnx: "ONNX",
+    slo: "SLO"
+  };
+  return normalized
+    .split(/\s+/)
+    .map((word, index) =>
+      acronyms[word.toLowerCase()] ??
+      (index === 0 ? `${word.charAt(0).toUpperCase()}${word.slice(1)}` : word)
+    )
+    .join(" ");
+}
+
+function ReadinessVerdictPanel({
+  verdict,
+  onAction
+}: {
+  verdict: ReadinessVerdict;
+  onAction: (action: ReadinessGateAction) => void;
+}): JSX.Element {
+  return (
+    <section className={`readiness-verdict readiness-verdict-${verdict.tone}`} aria-labelledby="readiness-verdict-heading">
+      <div className="verdict-copy">
+        <span className="section-kicker">Operational verdict</span>
+        <h2 id="readiness-verdict-heading">{verdict.headline}</h2>
+        <p>{verdict.detail}</p>
+      </div>
+      <div className="verdict-action">
+        <Badge value={verdict.label} />
+        <strong>{verdict.nextAction}</strong>
+      </div>
+      <div className="verdict-gates" aria-label="Deployment readiness gates">
+        {verdict.gates.map((gate) => {
+          const visibleActions = (gate.actions ?? []).filter(shouldRenderVerdictAction);
+          return (
+            <div className={`verdict-gate verdict-gate-${gate.tone}`} key={gate.label}>
+              <span>{gate.label}</span>
+              <strong>{displayGateState(gate.state)}</strong>
+              <small>{gate.detail}</small>
+              {visibleActions.length ? (
+                <div className="verdict-gate-actions" aria-label={`${gate.label} actions`}>
+                  {visibleActions.map((action) => (
+                    <button
+                      key={action.id || action.label}
+                      type="button"
+                      onClick={() => onAction(action)}
+                      title={readinessActionTitle(action)}
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function shouldRenderVerdictAction(action: ReadinessGateAction): boolean {
+  return !["acknowledge_dead_letters", "quarantine_blocked", "restore_online", "sync_pending"].includes(action.kind);
+}
+
+function ReadinessCommandPanel({
+  action,
+  disabled,
+  onCopy,
+  onClose,
+  onRun
+}: {
+  action: ReadinessGateAction;
+  disabled: boolean;
+  onCopy: (label: string, command: string) => void;
+  onClose: () => void;
+  onRun: () => void;
+}): JSX.Element {
+  const command = readinessCommand(action);
+  const context = readinessActionContext(action);
+  const body = command?.body && Object.keys(command.body).length ? JSON.stringify(command.body, null, 2) : "";
+  const edgeCommand = command?.edge_command_text || (command?.edge_command ?? []).join(" ");
+  if (!command) return <></>;
+  const commandTitle = command.requires_edge_execution ? "Edge execution command" : "API command";
+  const commandDetail = command.requires_edge_execution
+    ? edgeReadinessCommandReason(action, command)
+    : "This command can be executed by the Hub operator from the browser.";
+  const apiCommand = readinessApiCommandText(command);
+
+  return (
+    <section className="remediation-review" aria-labelledby="remediation-heading">
+      <div className="remediation-copy">
+        <span className="section-kicker">Readiness remediation</span>
+        <h2 id="remediation-heading">{action.label}</h2>
+        <p>{context || "Operator-confirmed command from the selected readiness gate."}</p>
+        <small>{commandDetail}</small>
+      </div>
+      <div className="remediation-command" aria-label="Readiness command">
+        <div className="remediation-command-topline">
+          <Badge value={command.requires_edge_execution ? "edge-run" : command.method ?? "command"} />
+          <strong>{commandTitle}</strong>
+          <button
+            className="button-mini"
+            type="button"
+            onClick={() => onCopy(command.requires_edge_execution ? `${action.label} edge command` : `${action.label} API command`, command.requires_edge_execution && edgeCommand ? edgeCommand : apiCommand)}
+          >
+            <Clipboard size={14} />
+            Copy
+          </button>
+        </div>
+        <code>{command.path}</code>
+        <details className="payload-details" open={Boolean(body)}>
+          <summary>Request body</summary>
+          <pre>{body || "No request body"}</pre>
+        </details>
+        {edgeCommand ? (
+          <details className="payload-details" open>
+            <summary>Edge command</summary>
+            <pre>{edgeCommand}</pre>
+            {command.edge_command_note ? <small>{command.edge_command_note}</small> : null}
+          </details>
+        ) : null}
+      </div>
+      <div className="remediation-actions">
+        <Button icon={<PlayCircle size={16} />} disabled={disabled || command.requires_edge_execution} onClick={onRun}>
+          {command.requires_edge_execution ? "Run on edge" : "Run command"}
+        </Button>
+        <Button icon={<RefreshCw size={16} />} variant="secondary" disabled={disabled} onClick={onClose}>
+          Close
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+function prioritizedEvidenceEvents(
+  timeline: unknown,
+  activeModelId: string
+): Record<string, unknown>[] {
+  if (!Array.isArray(timeline)) return [];
+  const events = timeline.map(asRecord);
+  let activeRuntimeFitIndex = events.findIndex((event) => event.active_runtime_proof === true);
+  if (activeRuntimeFitIndex < 0 && activeModelId) {
+    activeRuntimeFitIndex = events.findIndex((event) => {
+      const kind = stringOf(event.kind, "");
+      const summary = stringOf(event.summary, "");
+      return kind === "runtime_fit" && summary.includes(activeModelId);
+    });
+  }
+
+  if (activeRuntimeFitIndex < 0) return events.slice(0, 4);
+
+  const activeRuntimeFit = {
+    ...events[activeRuntimeFitIndex],
+    kind: "active_runtime_fit"
+  };
+  const remaining = events.filter((_, index) => index !== activeRuntimeFitIndex);
+  return [activeRuntimeFit, ...remaining].slice(0, 4);
+}
+
+function EvidenceEventRow({ event }: { event: Record<string, unknown> }): JSX.Element {
+  const kind = stringOf(event.kind, "event");
+  const activeProof = event.active_runtime_proof === true || kind === "active_runtime_fit";
+  return (
+    <div className={activeProof ? "evidence-event-row evidence-event-row-active" : "evidence-event-row"}>
+      <span>{activeProof ? "active runtime proof" : kind}</span>
+      <strong>{compactMetricDetail(stringOf(event.summary, "mission event"))}</strong>
+      <small>{compactDate(stringOf(event.timestamp, ""))}</small>
+    </div>
+  );
+}
+
+function RuntimeRepairProofPanel({
+  compact = false,
+  proof,
+  onRetargetRuntime
+}: {
+  compact?: boolean;
+  proof: RuntimeRepairProof;
+  onRetargetRuntime?: (operation: Record<string, unknown>) => void;
+}): JSX.Element {
+  const canRetarget = proof.status === "repair_available" && proof.operation && onRetargetRuntime;
+  const capabilityDigest = proof.capabilitySha256 ? proof.capabilitySha256.slice(0, 12) : "";
+  const sourceDetail = [
+    proof.actor ? `actor ${proof.actor}` : "",
+    proof.occurredAt ? compactDate(proof.occurredAt) : "",
+    proof.reason
+  ].filter(Boolean).join(" / ");
+  const coverageDetail = runtimeRepairCoverageDetail(proof);
+  const proofLabel = proof.proofStatus || (proof.status === "proved" ? "proved" : "repair available");
+
+  return (
+    <div
+      className={`runtime-repair-proof runtime-repair-proof-${proof.tone}${compact ? " runtime-repair-proof-compact" : ""}`}
+      data-testid="runtime-repair-proof"
+    >
+      <div className="runtime-repair-proof-header">
+        <div>
+          <span>{compact ? "DDIL repair evidence" : "DDIL runtime repair proof"}</span>
+          <strong>{proof.headline}</strong>
+          <small>{proof.detail}</small>
+        </div>
+        <Badge value={proofLabel.replace(/_/g, " ")} />
+      </div>
+
+      <div className="runtime-repair-proof-path" aria-label="Runtime repair path">
+        <div>
+          <span>Queued runtime</span>
+          <strong>{proof.previousRuntime || "unknown"}</strong>
+        </div>
+        <span className="runtime-repair-proof-arrow">-&gt;</span>
+        <div>
+          <span>Proved runtime</span>
+          <strong>{proof.selectedRuntime || proof.bestRuntime || "pending"}</strong>
+        </div>
+        <div>
+          <span>Best measured</span>
+          <strong>{proof.bestRuntime || proof.selectedRuntime || "pending"}</strong>
+        </div>
+      </div>
+
+      <div className="runtime-repair-proof-grid">
+        <RuntimeRepairMetric
+          detail={proof.targetSelectionStatus || (proof.selectedIsBest ? "selected target is best" : "target selection retained")}
+          label="Runtime fit"
+          tone={proof.selectedIsBest === false ? "warn" : proof.tone}
+          value={proof.runtimeFitScore !== undefined ? `${proof.runtimeFitScore}/100` : proof.selectedIsBest ? "best" : "pending"}
+        />
+        <RuntimeRepairMetric
+          detail={capabilityDigest ? `sha256 ${capabilityDigest}` : "capability digest not retained"}
+          label="Capability lock"
+          tone={proof.capabilityLockStatus === "locked" ? "good" : proof.status === "proved" ? "warn" : "neutral"}
+          value={proof.capabilityLockStatus || "not retained"}
+        />
+        <RuntimeRepairMetric
+          detail={proof.validationId || "runtime validation id not retained"}
+          label="Validation"
+          tone={proof.validationId ? "good" : proof.status === "proved" ? "warn" : "neutral"}
+          value={proof.validationId ? "present" : "missing"}
+        />
+        <RuntimeRepairMetric
+          detail={proof.benchmarkId || "benchmark id not retained"}
+          label="Benchmark"
+          tone={proof.benchmarkId ? "good" : proof.status === "proved" ? "warn" : "neutral"}
+          value={proof.benchmarkId ? "present" : "missing"}
+        />
+        <RuntimeRepairMetric
+          detail={coverageDetail}
+          label="Coverage"
+          tone={proof.blockedTargetCount ? "warn" : "neutral"}
+          value={runtimeRepairCoverageValue(proof)}
+        />
+        <RuntimeRepairMetric
+          detail={proof.workbenchSchema || sourceDetail || proof.source}
+          label="Audit source"
+          tone={proof.workbenchSchema ? "good" : "neutral"}
+          value={proof.source}
+        />
+      </div>
+
+      {sourceDetail ? <small className="runtime-repair-proof-source">{sourceDetail}</small> : null}
+      {canRetarget ? (
+        <button className="button-mini" type="button" onClick={() => onRetargetRuntime(proof.operation!)}>
+          <GitBranch size={14} aria-hidden="true" />
+          Use proved runtime
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function RuntimeRepairMetric({
+  detail,
+  label,
+  tone,
+  value
+}: {
+  detail: string;
+  label: string;
+  tone: GateTone;
+  value: string;
+}): JSX.Element {
+  return (
+    <div className={`runtime-repair-metric runtime-repair-metric-${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </div>
+  );
+}
+
+function latestRuntimeRepairProofFor({
+  evidenceSummary,
+  missionReplay,
+  pendingOperationLedger
+}: {
+  evidenceSummary: EvidenceSummary | undefined;
+  missionReplay: MissionReplay | undefined;
+  pendingOperationLedger: Record<string, unknown>[];
+}): RuntimeRepairProof | undefined {
+  const pendingProof = firstRuntimeRepairProof(
+    pendingOperationLedger,
+    "pending",
+    (proof) => proof.status === "proved"
+  );
+  if (pendingProof) return pendingProof;
+
+  const pendingCandidate = firstRuntimeRepairProof(
+    pendingOperationLedger,
+    "pending",
+    (proof) => proof.status === "repair_available"
+  );
+  if (pendingCandidate) return pendingCandidate;
+
+  const summary = asRecord(evidenceSummary);
+  const decisions = Array.isArray(summary.decisions) ? summary.decisions.map(asRecord) : [];
+  const replayedProof = firstRuntimeRepairProof(decisions, "replayed", (proof) => proof.status === "proved");
+  if (replayedProof) return replayedProof;
+
+  return runtimeRepairProofFromMissionReplay(missionReplay);
+}
+
+function firstRuntimeRepairProof(
+  records: Record<string, unknown>[],
+  source: RuntimeRepairProof["source"],
+  predicate: (proof: RuntimeRepairProof) => boolean
+): RuntimeRepairProof | undefined {
+  for (const record of records) {
+    const proof = runtimeRepairProofFromRecord(record, source);
+    if (proof && predicate(proof)) return proof;
+  }
+  return undefined;
+}
+
+function runtimeRepairProofFromRecord(
+  record: Record<string, unknown>,
+  source: RuntimeRepairProof["source"]
+): RuntimeRepairProof | undefined {
+  const remediationTarget = stringOf(record.runtime_remediation_runtime_target_id, "");
+  const retargetedFrom = stringOf(record.runtime_retargeted_from, "");
+  const retargetedTo = stringOf(record.runtime_retargeted_to, "");
+  const workbenchPrevious = stringOf(
+    record.runtime_retarget_workbench_previous_selected_runtime_target_id,
+    ""
+  );
+  const workbenchSelected = stringOf(
+    record.runtime_retarget_workbench_selected_runtime_target_id,
+    ""
+  );
+  const workbenchBest =
+    stringOf(record.runtime_retarget_workbench_best_runtime_target_id, "") ||
+    stringOf(record.runtime_workbench_best_runtime_target_id, "");
+  const previousRuntime =
+    workbenchPrevious ||
+    retargetedFrom ||
+    stringOf(record.runtime_remediation_previous_runtime_target_id, "") ||
+    (remediationTarget ? stringOf(record.runtime_workbench_selected_runtime_target_id, "") : "") ||
+    stringOf(record.runtime_target_id, "");
+  const selectedRuntime =
+    workbenchSelected ||
+    retargetedTo ||
+    remediationTarget ||
+    workbenchBest;
+  const bestRuntime =
+    workbenchBest ||
+    stringOf(record.best_runtime_target_id, "") ||
+    remediationTarget ||
+    selectedRuntime;
+  const proofStatus =
+    stringOf(record.runtime_retarget_proof_status, "") ||
+    stringOf(record.runtime_retarget_replay_proof_status, "");
+  const workbenchSchema =
+    stringOf(record.runtime_retarget_workbench_schema_version, "") ||
+    stringOf(record.runtime_workbench_schema_version, "");
+  const hasRetargetProof =
+    record.runtime_retargeted === true ||
+    Boolean(proofStatus || workbenchSchema || stringOf(record.runtime_retarget_capability_sha256, ""));
+  const hasRepairCandidate = Boolean(remediationTarget && remediationTarget !== previousRuntime);
+  if ((!hasRetargetProof && !hasRepairCandidate) || (!previousRuntime && !selectedRuntime && !bestRuntime)) {
+    return undefined;
+  }
+
+  const status: RuntimeRepairProof["status"] = hasRetargetProof ? "proved" : "repair_available";
+  const selectedIsBest =
+    booleanOf(record.runtime_retarget_workbench_selected_is_best) ??
+    booleanOf(record.runtime_workbench_selected_is_best);
+  const runtimeFitScore =
+    numberOf(record.runtime_retarget_runtime_fit_score) ??
+    numberOf(record.runtime_fit_score);
+  const targetSelectionStatus =
+    stringOf(record.runtime_retarget_workbench_target_selection_status, "") ||
+    stringOf(record.runtime_workbench_target_selection_status, "");
+  const capabilityLockStatus = stringOf(record.runtime_retarget_capability_lock_status, "");
+  const capabilitySha256 = stringOf(record.runtime_retarget_capability_sha256, "");
+  const validationId = stringOf(record.runtime_retarget_validation_id, "");
+  const benchmarkId = stringOf(record.runtime_retarget_benchmark_id, "");
+  const tone = runtimeRepairTone(status, proofStatus, selectedIsBest);
+  const detail = runtimeRepairDetail({
+    benchmarkId,
+    bestRuntime,
+    capabilityLockStatus,
+    previousRuntime,
+    runtimeFitScore,
+    selectedRuntime,
+    status,
+    validationId
+  });
+
+  return {
+    actor: stringOf(record.runtime_retargeted_by, "") || stringOf(record.actor, ""),
+    benchmarkId,
+    bestRuntime,
+    blockedTargetCount:
+      numberOf(record.runtime_retarget_workbench_blocked_target_count) ??
+      numberOf(record.runtime_workbench_blocked_target_count),
+    capabilityLockStatus,
+    capabilitySha256,
+    detail,
+    eligibleTargetCount:
+      numberOf(record.runtime_retarget_workbench_eligible_target_count) ??
+      numberOf(record.runtime_workbench_eligible_target_count),
+    headline: status === "proved" ? "Retarget proof retained" : "Best runtime repair available",
+    occurredAt: stringOf(record.runtime_retargeted_at, "") || stringOf(record.recorded_at, ""),
+    operation: status === "repair_available" ? record : undefined,
+    previousRuntime,
+    proofStatus,
+    reason: stringOf(record.runtime_retarget_reason, "") || stringOf(record.replay_reason, ""),
+    runtimeFitScore,
+    selectedIsBest,
+    selectedRuntime,
+    source,
+    status,
+    targetCount:
+      numberOf(record.runtime_retarget_workbench_target_count) ??
+      numberOf(record.runtime_workbench_target_count),
+    targetSelectionStatus,
+    tone,
+    validationId,
+    workbenchSchema
+  };
+}
+
+function runtimeRepairProofFromMissionReplay(missionReplay: MissionReplay | undefined): RuntimeRepairProof | undefined {
+  const events = Array.isArray(missionReplay?.events) ? missionReplay.events.map(asRecord) : [];
+  const event = events.find((candidate) => {
+    const summary = stringOf(candidate.summary, "");
+    const detail = stringOf(candidate.detail, "");
+    return (
+      candidate.runtime_retargeted === true ||
+      summary.includes("DDIL replay retargeted") ||
+      detail.startsWith("retargeted ")
+    );
+  });
+  if (!event) return undefined;
+
+  const detail = stringOf(event.detail, "");
+  const match = detail.match(/^retargeted\s+(.+?)\s+->\s+(.+)$/);
+  const previousRuntime = match?.[1] ?? "";
+  const selectedRuntime = match?.[2] ?? "";
+  return {
+    actor: "",
+    benchmarkId: "",
+    bestRuntime: selectedRuntime,
+    capabilityLockStatus: "",
+    capabilitySha256: "",
+    detail: detail || stringOf(event.summary, "retargeted DDIL replay"),
+    headline: "Replay retained retarget proof",
+    occurredAt: stringOf(event.timestamp, ""),
+    previousRuntime,
+    proofStatus: "proved",
+    reason: stringOf(event.summary, ""),
+    runtimeFitScore: undefined,
+    selectedIsBest: undefined,
+    selectedRuntime,
+    source: "mission",
+    status: "proved",
+    targetSelectionStatus: "",
+    tone: "good",
+    validationId: "",
+    workbenchSchema: ""
+  };
+}
+
+function runtimeRepairTone(
+  status: RuntimeRepairProof["status"],
+  proofStatus: string,
+  selectedIsBest?: boolean
+): GateTone {
+  const normalized = proofStatus.toLowerCase();
+  if (normalized.includes("stale") || normalized.includes("blocked") || normalized.includes("failed")) return "bad";
+  if (status === "repair_available") return "warn";
+  if (selectedIsBest === false) return "warn";
+  return "good";
+}
+
+function runtimeRepairDetail({
+  benchmarkId,
+  bestRuntime,
+  capabilityLockStatus,
+  previousRuntime,
+  runtimeFitScore,
+  selectedRuntime,
+  status,
+  validationId
+}: {
+  benchmarkId: string;
+  bestRuntime: string;
+  capabilityLockStatus: string;
+  previousRuntime: string;
+  runtimeFitScore?: number;
+  selectedRuntime: string;
+  status: RuntimeRepairProof["status"];
+  validationId: string;
+}): string {
+  if (status === "repair_available") {
+    return `${previousRuntime || "queued runtime"} can be retargeted to ${bestRuntime || selectedRuntime || "the measured best runtime"}.`;
+  }
+  const evidence = [];
+  if (runtimeFitScore !== undefined) evidence.push(`fit ${runtimeFitScore}/100`);
+  if (capabilityLockStatus) evidence.push(`capability ${capabilityLockStatus.replace(/_/g, " ")}`);
+  if (validationId) evidence.push("validation");
+  if (benchmarkId) evidence.push("benchmark");
+  return `${previousRuntime || "queued runtime"} -> ${selectedRuntime || bestRuntime || "proved runtime"}${evidence.length ? ` with ${evidence.join(", ")}` : ""}.`;
+}
+
+function runtimeRepairCoverageValue(proof: RuntimeRepairProof): string {
+  if (proof.targetCount !== undefined) return `${proof.targetCount} target${proof.targetCount === 1 ? "" : "s"}`;
+  if (proof.eligibleTargetCount !== undefined || proof.blockedTargetCount !== undefined) return "ranked";
+  return "not retained";
+}
+
+function runtimeRepairCoverageDetail(proof: RuntimeRepairProof): string {
+  const parts = [];
+  if (proof.eligibleTargetCount !== undefined) parts.push(`${proof.eligibleTargetCount} eligible`);
+  if (proof.blockedTargetCount !== undefined) parts.push(`${proof.blockedTargetCount} blocked`);
+  return parts.join(" / ") || "target coverage not retained";
+}
+
+function OperationRuntimeProof({
+  operation,
+  onCopyCommand
+}: {
+  operation: Record<string, unknown>;
+  onCopyCommand?: (label: string, command: string) => void;
+}): JSX.Element {
+  const optimizerDetail = stringOf(operation.runtime_optimizer_detail, "");
+  const bestRuntimeTarget = stringOf(operation.best_runtime_target_id, "");
+  const scoreDelta = numberOf(operation.runtime_score_delta);
+  const runtimeFitScore = numberOf(operation.runtime_fit_score);
+  const runtimeFitTier = stringOf(operation.runtime_fit_tier, "");
+  const runtimeLane = stringOf(operation.runtime_lane_label, "");
+  const runtimeLaneAcceleration = stringOf(operation.runtime_lane_acceleration, "").replace(/_/g, " ");
+  const artifactLaneState = stringOf(operation.artifact_lane_state, "");
+  const artifactLaneDetail = stringOf(operation.artifact_lane_detail, "");
+  const productionApplyAllowed = operation.production_apply_allowed;
+  const capabilityLockStatus = stringOf(operation.runtime_capability_lock_status, "");
+  const capabilityLockDigest = stringOf(operation.runtime_capability_sha256, "");
+  const capabilityLockProfile = stringOf(operation.runtime_capability_edge_profile, "");
+  const telemetryState = stringOf(operation.runtime_capability_telemetry_state, "").replace(/_/g, " ");
+  const telemetryDetail = stringOf(operation.runtime_capability_telemetry_detail, "");
+  const heartbeatAge = numberOf(operation.runtime_capability_heartbeat_age_seconds);
+  const heartbeatBudget = numberOf(operation.runtime_capability_heartbeat_stale_after_seconds);
+  const capabilityFailures = stringsOf(operation.runtime_capability_failures);
+  const contractAction = stringOf(operation.edge_execution_contract_action, "");
+  const runtimeRemediationLabel = stringOf(operation.runtime_remediation_label, "");
+  const runtimeRemediationTarget = stringOf(operation.runtime_remediation_runtime_target_id, "");
+  const runtimeRemediationPrevious = stringOf(operation.runtime_remediation_previous_runtime_target_id, "");
+  const runtimeRemediationDelta = numberOf(operation.runtime_remediation_score_delta);
+  const runtimeContractTarget = stringOf(operation.runtime_remediation_contract_runtime_target_id, "");
+  const runtimeContractLabel = stringOf(operation.runtime_remediation_contract_label, "");
+  const runtimeContractKind = stringOf(operation.runtime_remediation_contract_kind, "");
+  const runtimeContractCommand = localizeHubCommandText(stringOf(operation.runtime_remediation_contract_command_text, ""));
+  const runtimeContractNote = stringOf(operation.runtime_remediation_contract_command_note, "");
+  const runtimeContractRequiresEdge = operation.runtime_remediation_contract_requires_edge_execution === true;
+  const runtimeContractCommandLabel =
+    `${runtimeContractTarget || runtimeRemediationTarget || "runtime"} ${runtimeContractRequiresEdge || runtimeContractKind === "edge" ? "edge command" : "operator command"}`;
+  const runtimeRetargetedFrom = stringOf(operation.runtime_retargeted_from, "");
+  const runtimeRetargetedTo = stringOf(operation.runtime_retargeted_to, "");
+  const runtimeRetargetedBy = stringOf(operation.runtime_retargeted_by, "");
+  const runtimeRetargetProofStatus = stringOf(operation.runtime_retarget_proof_status, "");
+  const runtimeRetargetFitScore = numberOf(operation.runtime_retarget_runtime_fit_score);
+  const runtimeRetargetLockStatus = stringOf(operation.runtime_retarget_capability_lock_status, "");
+  const runtimeRetargetCapability = stringOf(operation.runtime_retarget_capability_sha256, "");
+  const runtimeRetargetValidation = stringOf(operation.runtime_retarget_validation_id, "");
+  const runtimeRetargetBenchmark = stringOf(operation.runtime_retarget_benchmark_id, "");
+  const runtimeRetargetAssessment = stringOf(operation.runtime_retarget_target_assessment_sha256, "");
+  const runtimeRetargetReplayProofStatus = stringOf(operation.runtime_retarget_replay_proof_status, "");
+  const runtimeRetargetReplaySignedCapability = stringOf(operation.runtime_retarget_replay_signed_capability_sha256, "");
+  const runtimeRetargetReplayCurrentCapability = stringOf(operation.runtime_retarget_replay_current_capability_sha256, "");
+  const runtimeRetargetReplaySignedAssessment = stringOf(
+    operation.runtime_retarget_replay_signed_target_assessment_sha256,
+    ""
+  );
+  const runtimeRetargetReplayCurrentAssessment = stringOf(
+    operation.runtime_retarget_replay_current_target_assessment_sha256,
+    ""
+  );
+  return (
+    <>
+      {runtimeFitScore !== undefined ? (
+        <small>
+          runtime fit {runtimeFitScore}/100{runtimeFitTier ? ` ${runtimeFitTier}` : ""}
+        </small>
+      ) : null}
+      {runtimeLane ? (
+        <small>
+          lane {runtimeLane}{runtimeLaneAcceleration ? ` / ${runtimeLaneAcceleration}` : ""}
+        </small>
+      ) : null}
+      {artifactLaneState ? (
+        <small>
+          artifact {artifactLaneState.replace(/_/g, " ")}
+          {artifactLaneDetail ? `: ${artifactLaneDetail}` : ""}
+        </small>
+      ) : null}
+      {typeof productionApplyAllowed === "boolean" ? (
+        <small>production apply {productionApplyAllowed ? "permitted" : "blocked"}</small>
+      ) : null}
+      {capabilityLockStatus || capabilityLockDigest ? (
+        <small>
+          capability lock {capabilityLockStatus ? capabilityLockStatus.replace(/_/g, " ") : "hash locked"}
+          {capabilityLockDigest ? ` ${capabilityLockDigest.slice(0, 12)}` : ""}
+          {capabilityLockProfile ? ` / ${capabilityLockProfile}` : ""}
+        </small>
+      ) : null}
+      {heartbeatAge !== undefined && heartbeatBudget !== undefined ? (
+        <small>
+          telemetry {telemetryState || "heartbeat"}: {formatAge(heartbeatAge)} old / {formatAge(heartbeatBudget)} budget
+        </small>
+      ) : telemetryDetail ? (
+        <small>telemetry {compactMetricDetail(telemetryDetail)}</small>
+      ) : null}
+      {capabilityFailures.length ? <small>{compactMetricDetail(capabilityFailures[0])}</small> : null}
+      {contractAction ? <small>edge contract {contractAction.replace(/_/g, " ")}</small> : null}
+      {optimizerDetail ? <small>{optimizerDetail}</small> : null}
+      {bestRuntimeTarget ? (
+        <small>
+          best runtime {bestRuntimeTarget}
+          {scoreDelta !== undefined ? ` (+${scoreDelta} fit)` : ""}
+        </small>
+      ) : null}
+      {runtimeRemediationLabel && runtimeRemediationTarget ? (
+        <small>
+          runtime fix {runtimeRemediationLabel}:{" "}
+          {runtimeRemediationPrevious ? `${runtimeRemediationPrevious} -> ` : ""}
+          {runtimeRemediationTarget}
+          {runtimeRemediationDelta !== undefined ? ` (+${runtimeRemediationDelta} fit)` : ""}
+        </small>
+      ) : null}
+      {runtimeContractCommand ? (
+        <div className="pending-runtime-command">
+          <span>
+            {runtimeContractRequiresEdge || runtimeContractKind === "edge" ? "edge-run" : "operator"}{" "}
+            {runtimeContractLabel || runtimeRemediationLabel || "runtime command"}
+          </span>
+          <code>{runtimeContractCommand}</code>
+          {onCopyCommand ? (
+            <button
+              className="button-mini"
+              type="button"
+              onClick={() => onCopyCommand(runtimeContractCommandLabel, runtimeContractCommand)}
+            >
+              <Clipboard size={14} aria-hidden="true" />
+              Copy
+            </button>
+          ) : null}
+          {runtimeContractNote ? <small>{compactMetricDetail(runtimeContractNote)}</small> : null}
+        </div>
+      ) : null}
+      {runtimeRetargetedFrom && runtimeRetargetedTo ? (
+        <small>
+          retargeted {runtimeRetargetedFrom}
+          {" -> "}
+          {runtimeRetargetedTo}
+          {runtimeRetargetedBy ? ` by ${runtimeRetargetedBy}` : ""}
+        </small>
+      ) : null}
+      {runtimeRetargetProofStatus || runtimeRetargetCapability || runtimeRetargetFitScore !== undefined ? (
+        <small>
+          retarget proof {runtimeRetargetProofStatus || "proved"}
+          {runtimeRetargetFitScore !== undefined ? ` / fit ${runtimeRetargetFitScore}/100` : ""}
+          {runtimeRetargetLockStatus ? ` / lock ${runtimeRetargetLockStatus.replace(/_/g, " ")}` : ""}
+          {runtimeRetargetCapability ? ` ${runtimeRetargetCapability.slice(0, 12)}` : ""}
+          {runtimeRetargetValidation ? ` / validation ${runtimeRetargetValidation}` : ""}
+          {runtimeRetargetBenchmark ? ` / benchmark ${runtimeRetargetBenchmark}` : ""}
+          {runtimeRetargetAssessment ? ` / assessment ${runtimeRetargetAssessment.slice(0, 12)}` : ""}
+        </small>
+      ) : null}
+      {runtimeRetargetReplayProofStatus ? (
+        <small>
+          retarget replay proof {runtimeRetargetReplayProofStatus.replace(/_/g, " ")}
+          {runtimeRetargetReplaySignedCapability ? ` / signed ${runtimeRetargetReplaySignedCapability.slice(0, 12)}` : ""}
+          {runtimeRetargetReplayCurrentCapability ? ` / current ${runtimeRetargetReplayCurrentCapability.slice(0, 12)}` : ""}
+          {runtimeRetargetReplaySignedAssessment ? ` / signed assessment ${runtimeRetargetReplaySignedAssessment.slice(0, 12)}` : ""}
+          {runtimeRetargetReplayCurrentAssessment ? ` / current assessment ${runtimeRetargetReplayCurrentAssessment.slice(0, 12)}` : ""}
+        </small>
+      ) : null}
+    </>
+  );
+}
+
+function PendingOperationRow({
+  operation,
+  onCopyCommand,
+  onRetargetRuntime
+}: {
+  operation: Record<string, unknown>;
+  onCopyCommand?: (label: string, command: string) => void;
+  onRetargetRuntime?: (operation: Record<string, unknown>) => void;
+}): JSX.Element {
+  const digest = stringOf(operation.payload_sha256, "");
+  const operationType = stringOf(operation.operation, "operation");
+  const signatureLabel = pendingSignatureLabel(operation);
+  const signatureReason = stringOf(operation.signature_verification_reason, "");
+  const replayLabel = pendingReplayLabel(operation);
+  const replayReason = stringOf(operation.replay_reason, "");
+  const supersededByModel = stringOf(operation.superseded_by_model_id, "");
+  const retargetCandidate = stringOf(operation.runtime_remediation_runtime_target_id, "");
+  const target = [
+    stringOf(operation.device_id, ""),
+    stringOf(operation.slot, ""),
+    stringOf(operation.runtime_target_id, "")
+  ].filter(Boolean);
+  return (
+    <div className="pending-operation-row">
+      <span>{operationType} intent</span>
+      <strong>{stringOf(operation.summary, "queued operation")}</strong>
+      <small>
+        {stringOf(operation.actor, "operator")} - {compactDate(stringOf(operation.recorded_at, ""))}
+      </small>
+      <code>{digest ? `sha256:${digest.slice(0, 12)}` : "sha256:pending"}</code>
+      <small>{signatureLabel}</small>
+      {signatureReason && signatureLabel !== "verified intent" ? <small>{signatureReason}</small> : null}
+      <small>{replayLabel}</small>
+      {replayReason && replayLabel !== "ready to replay" ? <small>{replayReason}</small> : null}
+      <OperationRuntimeProof operation={operation} onCopyCommand={onCopyCommand} />
+      {retargetCandidate && onRetargetRuntime ? (
+        <button className="button-mini" type="button" onClick={() => onRetargetRuntime(operation)}>
+          <GitBranch size={14} aria-hidden="true" />
+          Use best runtime
+        </button>
+      ) : null}
+      {supersededByModel ? <small>final intent selects {supersededByModel}</small> : null}
+      {target.length ? <small>{target.join(" / ")}</small> : null}
+    </div>
+  );
+}
+
+function DeadLetteredOperationRow({
+  operation,
+  onCopyCommand,
+  onRequeue
+}: {
+  operation: Record<string, unknown>;
+  onCopyCommand?: (label: string, command: string) => void;
+  onRequeue?: (operation: Record<string, unknown>) => void;
+}): JSX.Element {
+  const digest = stringOf(operation.payload_sha256, "");
+  const operationType = stringOf(operation.operation, "operation");
+  const signatureLabel = pendingSignatureLabel(operation);
+  const replayLabel = pendingReplayLabel(operation);
+  const replayReason = stringOf(operation.replay_reason, "");
+  const quarantineReason = stringOf(operation.reason, "");
+  const target = [
+    stringOf(operation.device_id, ""),
+    stringOf(operation.slot, ""),
+    stringOf(operation.runtime_target_id, "")
+  ].filter(Boolean);
+  return (
+    <div className="pending-operation-row pending-operation-row-dead-letter">
+      <span>{operationType} quarantined</span>
+      <strong>{stringOf(operation.summary, "quarantined operation")}</strong>
+      <small>
+        {stringOf(operation.actor, "operator")} - {compactDate(stringOf(operation.quarantined_at, ""))}
+      </small>
+      <code>{digest ? `sha256:${digest.slice(0, 12)}` : "sha256:quarantined"}</code>
+      <small>{signatureLabel}</small>
+      <small>{replayLabel}</small>
+      {replayReason ? <small>{replayReason}</small> : null}
+      {quarantineReason ? <small>{quarantineReason}</small> : null}
+      <OperationRuntimeProof operation={operation} onCopyCommand={onCopyCommand} />
+      {onRequeue ? (
+        <button className="button-mini" type="button" onClick={() => onRequeue(operation)}>
+          <FileCheck2 size={14} aria-hidden="true" />
+          Requeue intent
+        </button>
+      ) : null}
+      {target.length ? <small>{target.join(" / ")}</small> : null}
+    </div>
+  );
+}
+
+function readinessMatchesContext(
+  readiness: DeploymentReadiness | undefined,
+  context: {
+    package_id?: string;
+    model_id?: string;
+    device_id?: string;
+    runtime_target_id?: string;
+    slot?: string;
+  }
+): boolean {
+  if (!readiness?.gates?.length) return false;
+  return selectionMatchesContext(asRecord(readiness.selection), context);
+}
+
+function selectionMatchesContext(
+  selection: Record<string, unknown>,
+  context: {
+    package_id?: string;
+    model_id?: string;
+    device_id?: string;
+    runtime_target_id?: string;
+    slot?: string;
+  }
+): boolean {
+  return (
+    matchesSelection(selection, "package_id", context.package_id) &&
+    matchesSelection(selection, "model_id", context.model_id) &&
+    matchesSelection(selection, "device_id", context.device_id) &&
+    matchesSelection(selection, "runtime_target_id", context.runtime_target_id) &&
+    matchesSelection(selection, "slot", context.slot)
+  );
+}
+
+function matchesSelection(
+  selection: Record<string, unknown>,
+  key: string,
+  expected: string | undefined
+): boolean {
+  return !expected || stringOf(selection[key], "") === expected;
+}
+
+function syncingReadinessVerdict(): ReadinessVerdict {
+  const gates: ReadinessGate[] = [
+    "Model inventory",
+    "Runtime target",
+    "Edge telemetry",
+    "Rollout state",
+    "DDIL queue",
+    "Evidence chain"
+  ].map((label) => ({
+    label,
+    state: "syncing",
+    detail: "Waiting for the latest Hub snapshot",
+    tone: "neutral"
+  }));
+  return {
+    label: "syncing",
+    headline: "Synchronizing edge state",
+    detail: "Fetching model, runtime, rollout, DDIL, and evidence state from Hub.",
+    nextAction: "Waiting for Hub snapshot",
+    tone: "neutral",
+    gates
+  };
+}
+
+function readinessVerdictFromApi(readiness: DeploymentReadiness): ReadinessVerdict {
+  const status = stringOf(readiness.status, "attention");
+  return {
+    label: status,
+    headline: stringOf(readiness.headline, "Deployment readiness needs review"),
+    detail: compactMetricDetail(stringOf(readiness.detail, "Review the deployment readiness gates before rollout.")),
+    nextAction: compactMetricDetail(stringOf(readiness.next_action, "Review the attention gate")),
+    tone: toneForReadinessStatus(status),
+    gates: (readiness.gates ?? []).map((gate) => {
+      const gateStatus = stringOf(gate.status, "");
+      const gateState = stringOf(gate.state, gateStatus || "unknown");
+      return {
+        label: stringOf(gate.label, stringOf(gate.gate_id, "Gate")),
+        state: gateState,
+        detail: compactMetricDetail(stringOf(gate.detail, "No additional detail")),
+        tone: gateStatus ? toneForReadinessStatus(gateStatus) : toneForPath(gateState),
+        actions: (gate.actions ?? [])
+          .map((action) => ({
+            id: stringOf(action.action_id, stringOf(action.kind, stringOf(action.label, ""))),
+            label: stringOf(action.label, ""),
+            kind: stringOf(action.kind, ""),
+            gateId: stringOf(action.gate_id, stringOf(gate.gate_id, "")),
+            refs: asRecord(action.refs),
+            command: readinessCommandFromValue(action.command)
+          }))
+          .filter((action) => action.label)
+      };
+    })
+  };
+}
+
+function workflowTargetLabel(target: WorkflowTarget): string {
+  const labels: Record<WorkflowTarget, string> = {
+    model: "Selected model",
+    deployment: "Deployment path",
+    plans: "Rollout coordination",
+    rollouts: "Rollout activation",
+    ddil: "DDIL readiness",
+    evidence: "Mission proof",
+    assets: "Asset enrollment"
+  };
+  return labels[target];
+}
+
+function hubStageForWorkflowTarget(target: WorkflowTarget): HubStage {
+  if (target === "model") return "model";
+  if (target === "deployment" || target === "plans" || target === "rollouts" || target === "ddil") {
+    return "deploy";
+  }
+  if (target === "evidence" || target === "assets") return "field";
+  return "runtime";
+}
+
+function hubStageRunbookFor({
+  activeStage,
+  currentStage,
+  deadLetteredOperations,
+  latestRollout,
+  missionPackageStageStatus,
+  missionProofComplete,
+  missionReady,
+  offlineMode,
+  proofEvents,
+  replayBlockedOperations,
+  runtimeFitDisplay,
+  selectedDevice,
+  selectedModel,
+  selectedRuntime,
+  onDownloadPackage,
+  onGenerateProof,
+  onGoDeploy,
+  onGoFieldOps,
+  onGoHandling,
+  onGoModels,
+  onGoPackage,
+  onGoRuntime,
+  onPlanPackage,
+  onStageDeploy,
+  onSync
+}: {
+  activeStage: HubStage;
+  currentStage: HubStageItem;
+  deadLetteredOperations: number;
+  latestRollout: Rollout | undefined;
+  missionPackageStageStatus: MissionPackageStageStatus;
+  missionProofComplete: boolean;
+  missionReady: boolean;
+  offlineMode: boolean;
+  proofEvents: number;
+  replayBlockedOperations: number;
+  runtimeFitDisplay: RuntimeFitDisplay;
+  selectedDevice: Device | undefined;
+  selectedModel: ModelRecord | undefined;
+  selectedRuntime: RuntimeTarget | undefined;
+  onDownloadPackage: () => void;
+  onGenerateProof: () => void;
+  onGoDeploy: () => void;
+  onGoFieldOps: () => void;
+  onGoHandling: () => void;
+  onGoModels: () => void;
+  onGoPackage: () => void;
+  onGoRuntime: () => void;
+  onPlanPackage: () => void;
+  onStageDeploy: () => void;
+  onSync: () => void;
+}): HubStageRunbook {
+  const pathReady = Boolean(selectedModel && selectedRuntime && selectedDevice);
+  const packagePlanned = missionPackageStageStatus.planned;
+  const packageDownloaded = missionPackageStageStatus.downloaded;
+  const packageStageable = missionPackageStageStatus.stageable;
+  const rolloutState = stringOf(latestRollout?.state, "not assigned");
+  const runtimeReady = runtimeFitDisplay.tone === "good";
+  const missionPath = [
+    selectedModel?.id || "model pending",
+    selectedRuntime ? runtimeTargetId(selectedRuntime) : "runtime pending",
+    selectedDevice ? deviceId(selectedDevice) : "edge pending"
+  ].join(" -> ");
+
+  switch (activeStage) {
+    case "mission":
+      return {
+        objective: "Capture the mission intent before choosing artifacts.",
+        ready: missionReady ? "Mission goal or YAML is present." : "Mission goal or YAML is still required.",
+        risk: "An unbound mission creates a rollout that cannot explain why the edge switched models.",
+        status: currentStage.detail,
+        tone: currentStage.tone,
+        actions: [
+          {
+            detail: "Move from intent capture to signed model/package selection.",
+            icon: "arrow",
+            label: "Model Plan",
+            onClick: onGoModels,
+            variant: "secondary"
+          },
+          {
+            detail: "Create the first advisory mission package manifest for this path.",
+            disabled: !missionReady,
+            icon: "package",
+            label: "Plan package",
+            onClick: onPlanPackage
+          }
+        ]
+      };
+    case "model":
+      return {
+        objective: "Select the signed model package that should satisfy the mission.",
+        ready: selectedModel ? `${selectedModel.name} from ${selectedModel.packageId} is selected.` : "A model package is still required.",
+        risk: "Runtime proof and deployment intent will bind the wrong artifact if model selection is vague.",
+        status: currentStage.detail,
+        tone: currentStage.tone,
+        actions: [
+          {
+            detail: "Evaluate the selected model against the edge runtime target.",
+            disabled: !selectedModel,
+            icon: "cpu",
+            label: "Runtime Fit",
+            onClick: onGoRuntime
+          }
+        ]
+      };
+    case "runtime":
+      return {
+        objective: "Bind the model to an on-device runtime with measured fit.",
+        ready: runtimeReady ? `${missionPath}; ${runtimeFitDisplay.label}.` : runtimeFitDisplay.detail,
+        risk: "Edge deploy is not credible without runtime/provider, benchmark, and capability-lock evidence.",
+        status: currentStage.detail,
+        tone: currentStage.tone,
+        actions: [
+          {
+            detail: "Generate the runtime proof for the selected model/runtime/device path.",
+            disabled: !pathReady,
+            icon: "shield",
+            label: "Generate proof",
+            onClick: onGenerateProof
+          },
+          {
+            detail: "Move to sensor, fallback, and DDIL handling policy.",
+            disabled: !pathReady,
+            icon: "arrow",
+            label: "Sensor Handling",
+            onClick: onGoHandling,
+            variant: "secondary"
+          }
+        ]
+      };
+    case "handling":
+      return {
+        objective: "Lock sensor input, SLOs, switching, fallback, and DDIL behavior.",
+        ready: currentStage.tone === "good" ? currentStage.detail : "Sensor and slot policy need review.",
+        risk: "The edge daemon cannot switch or queue safely if handling policy is outside the package boundary.",
+        status: `${selectedModel?.name ?? "model pending"} / ${selectedDevice ? deviceId(selectedDevice) : "edge pending"}`,
+        tone: currentStage.tone,
+        actions: [
+          {
+            detail: "Hash mission, selection, runtime plan, and handling policy into the package plan.",
+            disabled: !missionReady || !pathReady,
+            icon: "package",
+            label: "Plan package",
+            onClick: onPlanPackage
+          },
+          {
+            detail: "Open the package handoff boundary.",
+            icon: "arrow",
+            label: "Package Handoff",
+            onClick: onGoPackage,
+            variant: "secondary"
+          }
+        ]
+      };
+    case "package":
+      return {
+        objective: "Produce the package identity and deployment intent for the edge.",
+        ready: packageDownloaded
+          ? packageStageable
+            ? "Mission package file and digest headers are retained."
+            : "Mission package file is retained; proof gate must pass before staging."
+          : packagePlanned
+            ? packageStageable
+              ? "Mission package identity exists; download or stage next."
+              : "Mission package identity exists; proof gate must pass before staging."
+            : missionPackageStageStatus.detail,
+        risk: "Staging before package planning leaves rollout intent detached from the hashed mission handoff.",
+        status: missionPackageStageStatus.detail,
+        tone: missionPackageStageStatus.tone,
+        actions: [
+          {
+            detail: "Compute or refresh the mission package identity and deployment intent.",
+            disabled: !missionReady || !pathReady,
+            icon: "package",
+            label: "Plan package",
+            onClick: onPlanPackage
+          },
+          {
+            detail: "Retain the exact mission package artifact and digest headers.",
+            disabled: !missionReady || !pathReady,
+            icon: "download",
+            label: "Download package",
+            onClick: onDownloadPackage,
+            variant: "secondary"
+          },
+          {
+            detail: packageStageable
+              ? "Create the rollout from the package deployment intent."
+              : "Stage rollout unlocks only after the mission package proof gate passes.",
+            disabled: !packageStageable,
+            icon: "rocket",
+            label: "Stage rollout",
+            onClick: onStageDeploy
+          }
+        ]
+      };
+    case "deploy":
+      return {
+        objective: "Stage and operate the planned package on the selected edge.",
+        ready: latestRollout ? `Latest rollout is ${rolloutState}.` : "No rollout has been assigned for the selected package path.",
+        risk: "A package that is never staged never becomes an edge-controlled runtime state.",
+        status: currentStage.detail,
+        tone: currentStage.tone,
+        actions: [
+          {
+            detail: packageStageable
+              ? "Create the rollout from the current mission package deployment intent."
+              : "Stage rollout unlocks only after the mission package proof gate passes.",
+            disabled: !packageStageable,
+            icon: "rocket",
+            label: "Stage rollout",
+            onClick: onStageDeploy
+          },
+          {
+            detail: "Inspect DDIL queues and evidence after rollout staging.",
+            icon: "activity",
+            label: "Field Ops",
+            onClick: onGoFieldOps,
+            variant: "secondary"
+          }
+        ]
+      };
+    case "field":
+    default:
+      return {
+        objective: "Monitor DDIL, rollout evidence, and runtime repair while the mission runs.",
+        ready: missionProofComplete
+          ? "Mission replay is complete."
+          : proofEvents
+            ? `${proofEvents} proof events are available.`
+            : "Mission evidence has not been exported yet.",
+        risk: replayBlockedOperations || deadLetteredOperations
+          ? "Blocked or quarantined DDIL operations need review before field replay."
+          : offlineMode
+            ? "Offline operation is active; sync gates must be checked before replay."
+            : "Evidence gaps make the field story harder to prove after the demo.",
+        status: currentStage.detail,
+        tone: currentStage.tone,
+        actions: [
+          {
+            detail: "Refresh Hub state from the daemon.",
+            icon: "refresh",
+            label: "Sync",
+            onClick: onSync,
+            variant: "secondary"
+          },
+          {
+            detail: "Return to package handoff if the mission path needs another artifact.",
+            icon: "package",
+            label: "Package Handoff",
+            onClick: onGoPackage
+          }
+        ]
+      };
+  }
+}
+
+function buildMissionPackageManifest({
+  device,
+  draft,
+  model,
+  runtime
+}: {
+  device: Device | undefined;
+  draft: MissionDraft;
+  model: ModelRecord | undefined;
+  runtime: RuntimeTarget | undefined;
+}): JsonObject {
+  const latencyBudget = Number(draft.latencyBudgetMs);
+  const throughputMin = Number(draft.throughputMinIps);
+  const confidenceThreshold = Number(draft.confidenceThreshold);
+  return {
+    schema_version: "temms-edge-mission-package/v1",
+    mission: {
+      goal: draft.goal,
+      sensor: draft.sensor,
+      slot: draft.slot || "vision",
+      source_yaml: draft.yaml
+    },
+    selection: {
+      package_id: model?.packageId ?? "",
+      model_id: model?.id ?? "",
+      runtime_target_id: runtime ? runtimeTargetId(runtime) : "",
+      device_id: device ? deviceId(device) : ""
+    },
+    slo: {
+      latency_budget_ms: Number.isFinite(latencyBudget) ? latencyBudget : draft.latencyBudgetMs,
+      min_throughput_ips: Number.isFinite(throughputMin) ? throughputMin : draft.throughputMinIps
+    },
+    model_handling: {
+      switch_policy: draft.switchPolicy,
+      confidence_threshold: Number.isFinite(confidenceThreshold)
+        ? confidenceThreshold
+        : draft.confidenceThreshold,
+      fallback_model_id: draft.fallbackModelId || "auto"
+    },
+    ddil: {
+      mode: draft.ddilMode,
+      replay_requires_readiness: true,
+      proof_required: true
+    },
+    package: {
+      includes: [
+        "mission_spec",
+        "model_artifacts",
+        "runtime_contract",
+        "sensor_bindings",
+        "model_switch_policy",
+        "ddil_replay_policy",
+        "edge_runtime_proof"
+      ]
+    }
+  };
+}
+
+function buildMissionPackageStageStatus({
+  handoff,
+  manifest,
+  missionReady,
+  plan
+}: {
+  handoff: MissionPackageDownloadHandoff | undefined;
+  manifest: JsonObject;
+  missionReady: boolean;
+  plan: JsonObject | undefined;
+}): MissionPackageStageStatus {
+  const selection = asRecord(manifest.selection);
+  const deploymentIntent = asRecord(manifest.deployment_intent);
+  const proofGate = asRecord(manifest.proof_gate);
+  const integrity = asRecord(manifest.integrity);
+  const packageIdentity = asRecord(manifest.package_identity);
+  const hasEdgePath = Boolean(
+    selection.package_id &&
+    selection.model_id &&
+    selection.device_id &&
+    selection.runtime_target_id
+  );
+  const rolloutIdValue = String(
+    deploymentIntent.rollout_id || (hasEdgePath ? missionPackageRolloutId(manifest) : "")
+  );
+  const packageIdentitySha256 = handoff?.packageIdentitySha256 || stringOf(
+    integrity.package_identity_sha256,
+    stringOf(packageIdentity.package_identity_sha256, "")
+  );
+  const gateStatus = stringOf(proofGate.status, plan || handoff ? "planned" : "");
+  const hasPackageArtifact = Boolean(plan || handoff);
+
+  if (hasPackageArtifact && gateStatus === "failed") {
+    return {
+      detail: "resolve readiness blockers before staging package to edge",
+      downloaded: Boolean(handoff),
+      gateStatus,
+      planned: hasPackageArtifact,
+      stageable: false,
+      tone: "bad",
+      value: "proof gate failed"
+    };
+  }
+
+  if (hasPackageArtifact && gateStatus !== "passed") {
+    const retainedDetail = handoff && packageIdentitySha256
+      ? `identity ${shortProofDigest(packageIdentitySha256)}; `
+      : handoff
+        ? "package identity retained; "
+        : "";
+    return {
+      detail: `${retainedDetail}proof gate ${gateStatus || "pending"}; pass readiness before staging`,
+      downloaded: Boolean(handoff),
+      gateStatus: gateStatus || "pending",
+      planned: hasPackageArtifact,
+      stageable: false,
+      tone: "warn",
+      value: "proof gate pending"
+    };
+  }
+
+  if (handoff) {
+    return {
+      detail: `${packageIdentitySha256 ? `identity ${shortProofDigest(packageIdentitySha256)}` : "package identity retained"}; deploy ${rolloutIdValue || "intent retained"}`,
+      downloaded: true,
+      gateStatus,
+      planned: true,
+      stageable: true,
+      tone: "good",
+      value: "downloaded"
+    };
+  }
+
+  if (plan) {
+    return {
+      detail: `${packageIdentitySha256 ? `identity ${shortProofDigest(packageIdentitySha256)}` : rolloutIdValue || "deployment intent retained"}; proof gate ${gateStatus}`,
+      downloaded: false,
+      gateStatus,
+      planned: true,
+      stageable: true,
+      tone: "good",
+      value: "package planned"
+    };
+  }
+
+  if (!missionReady) {
+    return {
+      detail: "define mission goal or YAML before package planning",
+      downloaded: false,
+      gateStatus,
+      planned: false,
+      stageable: false,
+      tone: "warn",
+      value: "mission pending"
+    };
+  }
+
+  if (hasEdgePath) {
+    return {
+      detail: `${rolloutIdValue}; plan package to hash mission handoff`,
+      downloaded: false,
+      gateStatus,
+      planned: false,
+      stageable: false,
+      tone: "warn",
+      value: "draft handoff"
+    };
+  }
+
+  return {
+    detail: "select model, runtime, and edge target",
+    downloaded: false,
+    gateStatus,
+    planned: false,
+    stageable: false,
+    tone: "warn",
+    value: "path pending"
+  };
+}
+
+function missionPackageRolloutId(manifest: JsonObject): string {
+  const selection = asRecord(manifest.selection);
+  const parts = [
+    stringOf(selection.model_id, ""),
+    stringOf(selection.runtime_target_id, ""),
+    stringOf(selection.device_id, "")
+  ]
+    .map((part) => part.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""))
+    .filter(Boolean)
+    .join("-");
+  return `rollout-${parts || "mission-package"}`;
+}
+
+function readinessActionTitle(action: ReadinessGateAction): string {
+  const context = readinessActionContext(action);
+  const command = readinessCommand(action);
+  const prefix = command ? `Review ${command.method ?? "command"} ${command.path}` : `Focus ${workflowTargetLabel(workflowTargetForReadinessAction(action))}`;
+  return `${prefix}${
+    context ? ` for ${context}` : ""
+  }`;
+}
+
+function readinessApiCommandText(command: DeploymentReadinessCommand): string {
+  const method = command.method || "POST";
+  const body = command.body && Object.keys(command.body).length
+    ? ` -H "Content-Type: application/json" -d '${JSON.stringify(command.body)}'`
+    : "";
+  return `curl -fsS -X ${method} ${command.path}${body}`;
+}
+
+function edgeReadinessCommandReason(
+  action: ReadinessGateAction,
+  command: DeploymentReadinessCommand
+): string {
+  const note = command.edge_command_note;
+  if (note) return note;
+  if (action.kind === "refresh_edge_inventory") {
+    return "Run on the edge node to refresh heartbeat, runtime/provider inventory, and capability-lock freshness.";
+  }
+  if (action.kind === "record_benchmark") {
+    return "Run on the edge node so latency, throughput, and provider evidence are measured on the actual runtime.";
+  }
+  if (action.kind === "validate_runtime") {
+    return "Run against the target runtime image or edge node so validation proof is tied to the actual execution surface.";
+  }
+  return "Run on the edge node so TEMMS records proof from the actual on-device runtime.";
+}
+
+function readinessCommand(action: ReadinessGateAction): DeploymentReadinessCommand | undefined {
+  return readinessCommandFromValue(action.command);
+}
+
+function readinessCommandFromValue(value: unknown): DeploymentReadinessCommand | undefined {
+  const record = asRecord(value);
+  const method = stringOf(record.method, "").toUpperCase();
+  const path = stringOf(record.path, "");
+  if (!method || !path) return undefined;
+  const body = "body" in record ? asRecord(record.body) : undefined;
+  return {
+    method,
+    path,
+    ...(body === undefined ? {} : { body }),
+    requires_edge_execution: record.requires_edge_execution === true,
+    edge_command: Array.isArray(record.edge_command)
+      ? record.edge_command.map((part) => String(part))
+      : undefined,
+    edge_command_text: stringOf(record.edge_command_text, ""),
+    edge_command_note: stringOf(record.edge_command_note, "")
+  };
+}
+
+function readinessActionContext(action: ReadinessGateAction): string {
+  const refs = asRecord(action.refs);
+  const deviceIds = Array.isArray(refs.device_ids)
+    ? refs.device_ids.map((item) => String(item)).filter(Boolean)
+    : [];
+  const model = stringOf(refs.model_id, "");
+  const device = stringOf(refs.device_id, deviceIds.join(", "));
+  const runtime = stringOf(refs.runtime_target_id, "");
+  const slot = stringOf(refs.slot, "");
+  const parts = [];
+  if (model) parts.push(model);
+  if (device) parts.push(`on ${device}`);
+  if (runtime) parts.push(`via ${runtime}`);
+  if (slot) parts.push(`slot ${slot}`);
+  return parts.join(" ");
+}
+
+function workflowTargetForReadinessAction(action: ReadinessGateAction): WorkflowTarget {
+  const key = action.kind || action.id;
+  if (
+    [
+      "register_package",
+      "enroll_device",
+      "enroll_edge_target"
+    ].includes(key)
+  ) {
+    return "assets";
+  }
+  if (["promote_package", "select_package"].includes(key)) return "model";
+  if (
+    [
+      "register_runtime_target",
+      "refresh_edge_inventory",
+      "record_benchmark",
+      "select_context",
+      "select_runtime_target",
+      "validate_runtime"
+    ].includes(key)
+  ) {
+    return "deployment";
+  }
+  if (key === "create_rollout") return "deployment";
+  if (key === "create_rollout_plan") return "plans";
+  if (["approve_rollout", "apply_rollout", "rollback_rollout", "inspect_rollout"].includes(key)) return "rollouts";
+  if (
+    [
+      "restore_connectivity",
+      "restore_online",
+      "sync_pending",
+      "quarantine_blocked",
+      "acknowledge_dead_letters"
+    ].includes(key)
+  ) {
+    return "ddil";
+  }
+  if (key === "export_replay") return "evidence";
+
+  if (action.gateId === "model_package") return action.id.includes("register") ? "assets" : "model";
+  if (action.gateId === "runtime_target") return "deployment";
+  if (action.gateId === "performance_fit") return "deployment";
+  if (action.gateId === "resource_envelope") return "deployment";
+  if (action.gateId === "edge_target") return "assets";
+  if (action.gateId === "rollout_gate") return "rollouts";
+  if (action.gateId === "ddil_queue") return "ddil";
+  if (action.gateId === "evidence_chain") return "evidence";
+  return "deployment";
+}
+
+function buildReadinessVerdict({
+  deadLetteredOperations,
+  edgeRuntimeFit,
+  evidenceValue,
+  invalidPendingOperations,
+  latestRollout,
+  missionPhaseTotal,
+  missionProofComplete,
+  offlineMode,
+  pendingOperations,
+  proofEvents,
+  replayBlockedOperations,
+  runtimeOptimizationAdvisories,
+  resourceEnvelopeFit,
+  selectedDevice,
+  selectedModel,
+  selectedRuntime,
+  selectedRuntimeValidation,
+  signedEvidenceImports
+}: {
+  deadLetteredOperations: number;
+  edgeRuntimeFit: EdgeRuntimeFit;
+  evidenceValue: number;
+  invalidPendingOperations: number;
+  latestRollout: Rollout | undefined;
+  missionPhaseTotal: number;
+  missionProofComplete: boolean;
+  offlineMode: boolean;
+  pendingOperations: number;
+  proofEvents: number;
+  replayBlockedOperations: number;
+  runtimeOptimizationAdvisories: number;
+  resourceEnvelopeFit: EdgeRuntimeFit;
+  selectedDevice: Device | undefined;
+  selectedModel: ModelRecord | undefined;
+  selectedRuntime: RuntimeTarget | undefined;
+  selectedRuntimeValidation: RuntimeValidation | undefined;
+  signedEvidenceImports: number;
+}): ReadinessVerdict {
+  const runtimeCompatible =
+    selectedModel && selectedRuntime ? targetSupportsModel(selectedRuntime, selectedModel) : false;
+  const approvalRequired = latestRollout?.approval_required === true;
+  const approvalReady = !approvalRequired || latestRollout?.approval?.approved === true;
+  const rolloutState = latestRollout?.state ?? "";
+  const rolloutTerminal = ["activated", "rolled_back"].includes(rolloutState);
+  const rolloutFailed = ["failed", "blocked"].includes(rolloutState);
+  const performanceTone = selectedModel ? performanceSloTone(selectedModel) : "bad";
+  const gates: ReadinessGate[] = [
+    selectedModel
+      ? selectedModel.signed
+        ? selectedModel.packagePromotion === "released"
+          ? {
+              label: "Model package",
+              state: "released",
+              detail: `${selectedModel.name} is signed and released`,
+              tone: "good"
+            }
+          : {
+              label: "Model package",
+              state: selectedModel.packagePromotion,
+              detail: "Promote the signed package to released before field assignment",
+              tone: "warn"
+            }
+        : {
+            label: "Model package",
+            state: "unsigned",
+            detail: "Register a package with verified signature metadata",
+            tone: "bad"
+          }
+      : {
+          label: "Model package",
+          state: "missing",
+          detail: "Register a signed TEMMS package with model metadata",
+          tone: "bad"
+        },
+    selectedRuntime
+      ? runtimeCompatible
+        ? edgeRuntimeFit.tone === "bad"
+          ? {
+              label: "Runtime target",
+              state: "edge mismatch",
+              detail: edgeRuntimeFit.detail,
+              tone: "bad"
+            }
+          : selectedRuntimeValidation
+          ? {
+              label: "Runtime target",
+              state: "validated",
+              detail: `${runtimeTargetId(selectedRuntime)} has passing package validation`,
+              tone: "good"
+            }
+          : {
+              label: "Runtime target",
+              state: edgeRuntimeFit.label,
+              detail: edgeRuntimeFit.detail,
+              tone: edgeRuntimeFit.tone === "good" ? "good" : "warn"
+            }
+        : {
+            label: "Runtime target",
+            state: "incompatible",
+            detail: "Selected runtime target does not satisfy model constraints",
+            tone: "bad"
+          }
+      : {
+          label: "Runtime target",
+          state: "missing",
+          detail: "Register or select a runtime target for this model",
+          tone: "bad"
+        },
+    selectedModel
+      ? {
+          label: "Performance fit",
+          state: performanceSloLabel(selectedModel),
+          detail: performanceSloDetail(selectedModel),
+          tone: performanceTone === "neutral" ? "good" : performanceTone
+        }
+      : {
+          label: "Performance fit",
+          state: "missing",
+          detail: "Select a model before evaluating on-device SLO evidence",
+          tone: "bad"
+        },
+    selectedModel
+      ? {
+          label: "Resource envelope",
+          state: resourceEnvelopeFit.label,
+          detail: resourceEnvelopeFit.detail,
+          tone: resourceEnvelopeFit.tone === "neutral" ? "good" : resourceEnvelopeFit.tone
+        }
+      : {
+          label: "Resource envelope",
+          state: "missing",
+          detail: "Select a model and edge target before evaluating resource fit",
+          tone: "bad"
+        },
+    selectedDevice
+      ? {
+          label: "Edge target",
+          state: selectedDevice.status ?? "registered",
+          detail: `${deviceId(selectedDevice)} reports profile ${selectedDevice.profile ?? "unknown"}`,
+          tone: selectedDevice.status === "offline" ? "warn" : "good"
+        }
+      : {
+          label: "Edge target",
+          state: "missing",
+          detail: "Enroll an edge node or connect a simulated device",
+          tone: "bad"
+        },
+    latestRollout
+      ? rolloutFailed
+        ? {
+            label: "Rollout gate",
+            state: rolloutState,
+            detail: "Inspect rollout failure before advancing this model",
+            tone: "bad"
+          }
+        : approvalReady
+          ? {
+              label: "Rollout gate",
+              state: rolloutState || "assigned",
+              detail: rolloutTerminal ? "Latest rollout reached a terminal audited outcome" : "Rollout can advance through apply",
+              tone: rolloutTerminal ? "good" : "warn"
+            }
+          : {
+              label: "Rollout gate",
+              state: "approval pending",
+              detail: "Approve the rollout policy before edge apply",
+              tone: "warn"
+            }
+      : {
+          label: "Rollout gate",
+          state: "not assigned",
+          detail: "Create a rollout or staged rollout plan for the selected model",
+          tone: "warn"
+        },
+    invalidPendingOperations || replayBlockedOperations
+      ? {
+          label: "DDIL queue",
+          state: "blocked",
+          detail: `${invalidPendingOperations + replayBlockedOperations} unsafe intent${invalidPendingOperations + replayBlockedOperations === 1 ? "" : "s"} need quarantine or review`,
+          tone: "bad"
+        }
+      : pendingOperations
+        ? {
+            label: "DDIL queue",
+            state: runtimeOptimizationAdvisories
+              ? "runtime advisory"
+              : offlineMode
+                ? "offline queued"
+                : "pending replay",
+            detail: runtimeOptimizationAdvisories
+              ? `${pendingOperations} signed intent${pendingOperations === 1 ? "" : "s"} replayable; ${runtimeOptimizationAdvisories} runtime target advisor${runtimeOptimizationAdvisories === 1 ? "y" : "ies"}`
+              : `${pendingOperations} signed intent${pendingOperations === 1 ? "" : "s"} waiting for reconciliation`,
+            tone: "warn"
+          }
+        : deadLetteredOperations
+          ? {
+              label: "DDIL queue",
+              state: "quarantined",
+              detail: `${deadLetteredOperations} unresolved quarantined intent${deadLetteredOperations === 1 ? "" : "s"}`,
+              tone: "warn"
+            }
+          : {
+              label: "DDIL queue",
+              state: offlineMode ? "offline" : "clear",
+              detail: offlineMode ? "Link is intentionally offline with no queued intents" : "No pending or blocked DDIL intents",
+              tone: offlineMode ? "warn" : "good"
+            },
+    missionProofComplete
+      ? {
+          label: "Evidence chain",
+          state: "complete",
+          detail: `${missionPhaseTotal} replay phases complete`,
+          tone: "good"
+        }
+      : evidenceValue && signedEvidenceImports
+        ? {
+            label: "Evidence chain",
+            state: "partial",
+            detail: `${proofEvents || evidenceValue} proof events with signed package evidence`,
+            tone: "warn"
+          }
+        : {
+            label: "Evidence chain",
+            state: "missing",
+            detail: "Generate mission proof after rollout or DDIL activity",
+            tone: "warn"
+          }
+  ];
+  const blocker = gates.find((gate) => gate.tone === "bad");
+  const warning = gates.find((gate) => gate.tone === "warn");
+  if (blocker) {
+    return {
+      label: "blocked",
+      headline: "Deployment is blocked",
+      detail: "One or more safety gates prevent field rollout for the selected model.",
+      nextAction: blocker.detail,
+      tone: "bad",
+      gates
+    };
+  }
+  if (warning) {
+    return {
+      label: "attention",
+      headline: "Deployment is stageable with operator action",
+      detail: "The selected model has no hard blockers, but one runtime, resource, performance, or proof gate still needs review.",
+      nextAction: warning.detail,
+      tone: "warn",
+      gates
+    };
+  }
+  return {
+    label: "go",
+    headline: "Deployment loop is ready",
+    detail: "Model package, runtime target, performance SLO, resource envelope, edge target, rollout, DDIL queue, and evidence chain are aligned.",
+    nextAction: "Export mission replay or stage the next rollout batch",
+    tone: "good",
+    gates
+  };
+}
+
+function ddilStatusDetail({
+  deploymentStateName,
+  invalidPendingOperations,
+  pendingOperations,
+  replayBlockedOperations,
+  replayReadyOperations,
+  runtimeOptimizationAdvisories,
+  supersededOperations,
+  verifiedPendingOperations
+}: {
+  deploymentStateName: string;
+  invalidPendingOperations: number;
+  pendingOperations: number;
+  replayBlockedOperations: number;
+  replayReadyOperations: number;
+  runtimeOptimizationAdvisories: number;
+  supersededOperations: number;
+  verifiedPendingOperations: number;
+}): string {
+  if (!pendingOperations) return deploymentStateName.toLowerCase();
+  if (replayBlockedOperations) {
+    return `${replayBlockedOperations} blocked intent${replayBlockedOperations === 1 ? "" : "s"}`;
+  }
+  if (invalidPendingOperations) {
+    return `${invalidPendingOperations} invalid intent${invalidPendingOperations === 1 ? "" : "s"}`;
+  }
+  if (runtimeOptimizationAdvisories) {
+    return `${runtimeOptimizationAdvisories} runtime target advisor${runtimeOptimizationAdvisories === 1 ? "y" : "ies"}`;
+  }
+  if (supersededOperations) {
+    return `${supersededOperations} superseded intent${supersededOperations === 1 ? "" : "s"}`;
+  }
+  if (replayReadyOperations === pendingOperations) {
+    return `${replayReadyOperations} replay-ready intent${replayReadyOperations === 1 ? "" : "s"}`;
+  }
+  if (verifiedPendingOperations === pendingOperations) {
+    return `${verifiedPendingOperations} verified intent${verifiedPendingOperations === 1 ? "" : "s"}`;
+  }
+  return `${pendingOperations} pending ops`;
+}
+
+function pendingSignatureLabel(operation: Record<string, unknown>): string {
+  const status = stringOf(operation.signature_status, "");
+  if (status === "verified") return "verified intent";
+  if (status === "invalid") return "tampered intent";
+  if (status === "missing_signature") return "missing signature";
+  if (status === "key_unavailable") return "key unavailable";
+  if (status === "unsigned_allowed") return "unsigned allowed";
+  return operation.signature_present === true ? "signed intent" : "unsigned intent";
+}
+
+function pendingReplayLabel(operation: Record<string, unknown>): string {
+  const status = stringOf(operation.replay_status, "");
+  if (status === "superseded" || operation.superseded === true) return "superseded intent";
+  if (status === "ready_with_runtime_advisory") return "runtime advisory";
+  if (operation.replay_ready === true || status === "ready") return "ready to replay";
+  if (status === "blocked") return "replay blocked";
+  return "replay pending";
+}
+
+function RolloutRow({
+  rollout,
+  onApprove,
+  onApply,
+  onRollback
+}: {
+  rollout: Rollout;
+  onApprove: (id: string) => void;
+  onApply: (id: string) => void;
+  onRollback: (id: string) => void;
+}): JSX.Element {
+  const id = rolloutId(rollout);
+  const approvalPending = rollout.approval_required && !rollout.approval?.approved;
+  const approval = rollout.approval_required
+    ? rollout.approval?.approved
+      ? "approved"
+      : rollout.approval?.state ?? "pending"
+    : "not required";
+  return (
+    <article className="rollout-row">
+      <div>
+        <strong>{id}</strong>
+        <small>
+          {rollout.model_id ?? rollout.package_id ?? "-"} to {rollout.device_id ?? "-"}
+        </small>
+      </div>
+      <Badge value={rollout.state ?? "unknown"} />
+      <Badge value={approval} />
+      <div className="row-actions">
+        {approvalPending ? (
+          <button className="button-mini" type="button" onClick={() => onApprove(id)}>
+            <CheckCircle2 size={14} /> Approve
+          </button>
+        ) : null}
+        <button className="button-mini" type="button" disabled={approvalPending || rollout.state === "activated"} onClick={() => onApply(id)}>
+          <PlayCircle size={14} /> Apply
+        </button>
+        <button className="button-mini" type="button" disabled={rollout.state !== "activated"} onClick={() => onRollback(id)}>
+          <RefreshCw size={14} /> Rollback
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function RolloutPlanRow({
+  plan,
+  onAdvance,
+  onPause,
+  onResume
+}: {
+  plan: RolloutPlan;
+  onAdvance: (id: string) => void;
+  onPause: (id: string) => void;
+  onResume: (id: string) => void;
+}): JSX.Element {
+  const id = planId(plan);
+  const targets = plan.targets ?? [];
+  const counts = asRecord(plan.counts);
+  const targetCount = planCount(plan, "targets", targets.length);
+  const activated = planCount(plan, "activated", targets.filter((target) => target.state === "activated").length);
+  const rolledBack = planCount(plan, "rolled_back", targets.filter((target) => target.state === "rolled_back").length);
+  const failed = planCount(plan, "failed", targets.filter((target) => target.state === "failed").length);
+  const inFlight =
+    planCount(plan, "assigned", targets.filter((target) => target.state === "assigned").length) +
+    planCount(plan, "downloading", targets.filter((target) => target.state === "downloading").length) +
+    planCount(plan, "imported", targets.filter((target) => target.state === "imported").length);
+  const pending = planCount(plan, "pending", targets.filter((target) => target.state === "pending").length);
+  const reconciled = activated + rolledBack;
+  const paused = plan.state === "paused";
+  const terminal = plan.state === "complete" || plan.state === "completed" || plan.state === "failed";
+  const blocked = plan.state === "blocked";
+  const currentBatch = numberOf(plan.current_batch) ?? numberOf(counts.current_batch) ?? 0;
+  return (
+    <article className="rollout-row rollout-plan-row">
+      <div>
+        <strong>{id}</strong>
+        <small>
+          {plan.model_id ?? plan.package_id ?? "-"} across {targetCount} target{targetCount === 1 ? "" : "s"}
+        </small>
+        <small>{rolloutPlanProgress({ batchSize: plan.batch_size ?? 1, currentBatch, failed, inFlight, pending, reconciled })}</small>
+      </div>
+      <Badge value={plan.state ?? "unknown"} />
+      <Badge value={plan.runtime_target_id ?? "runtime"} />
+      <div className="row-actions">
+        <button className="button-mini" type="button" disabled={paused || terminal || blocked} onClick={() => onAdvance(id)}>
+          <GitBranch size={14} /> Advance
+        </button>
+        {paused ? (
+          <button className="button-mini" type="button" onClick={() => onResume(id)}>
+            <PlayCircle size={14} /> Resume
+          </button>
+        ) : (
+          <button className="button-mini" type="button" disabled={terminal || blocked} onClick={() => onPause(id)}>
+            <RefreshCw size={14} /> Pause
+          </button>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function planCount(plan: RolloutPlan, key: string, fallback: number): number {
+  return numberOf(asRecord(plan.counts)[key]) ?? fallback;
+}
+
+function rolloutPlanProgress({
+  batchSize,
+  currentBatch,
+  failed,
+  inFlight,
+  pending,
+  reconciled
+}: {
+  batchSize: number;
+  currentBatch: number;
+  failed: number;
+  inFlight: number;
+  pending: number;
+  reconciled: number;
+}): string {
+  const parts = [currentBatch ? `batch ${currentBatch}` : "not advanced", `size ${batchSize}`];
+  if (pending) parts.push(`${pending} pending`);
+  if (inFlight) parts.push(`${inFlight} in flight`);
+  if (reconciled) parts.push(`${reconciled} reconciled`);
+  if (failed) parts.push(`${failed} failed`);
+  if (parts.length === 1) parts.push("no active targets");
+  return parts.join(" / ");
+}
+
+function EvidenceSummaryRow({
+  headline,
+  events,
+  signedImports
+}: {
+  headline: string;
+  events: number;
+  signedImports: number;
+}): JSX.Element {
+  return (
+    <div className="proof-summary-row">
+      <div>
+        <strong>{headline}</strong>
+        <small>{events} proof events - {signedImports} signed imports</small>
+      </div>
+      <Badge value="ready" />
+    </div>
+  );
+}
+
+function MissionPhaseRow({ phase }: { phase: MissionReplayPhase }): JSX.Element {
+  const status = stringOf(phase.status, "missing");
+  const refs = Array.isArray(phase.evidence_refs) ? phase.evidence_refs : [];
+  return (
+    <div className={`mission-phase-row mission-phase-row-${phaseTone(status)}`}>
+      <div>
+        <strong>{phase.label ?? phase.phase ?? "Mission phase"}</strong>
+        <small>{phase.summary ?? "no evidence recorded"}</small>
+        {refs.length ? <code>{refs.slice(0, 3).join(" / ")}</code> : null}
+      </div>
+      <Badge value={phaseStatusLabel(status)} />
+    </div>
+  );
+}
+
+function TargetRow({ label, detail, status }: { label: string; detail: string; status: string }): JSX.Element {
+  return (
+    <div className="target-row">
+      <div>
+        <strong>{label}</strong>
+        <small>{detail}</small>
+      </div>
+      <Badge value={status} />
+    </div>
+  );
+}
+
+function EmptyState({ title, detail }: { title: string; detail: string }): JSX.Element {
+  return (
+    <div className="empty-state">
+      <strong>{title}</strong>
+      <span>{detail}</span>
+    </div>
+  );
+}
+
+function modelsForPackage(pkg: HubPackage): ModelRecord[] {
+  const pkgId = packageId(pkg);
+  const metadata = asRecord(pkg.metadata);
+  const validation = asRecord(metadata.validation);
+  const models = Array.isArray(metadata.models) ? metadata.models : [];
+  return models.map((rawModel, index) => {
+    const model = asRecord(rawModel);
+    const benchmark = asRecord(model.benchmark);
+    const constraints = asRecord(model.runtime_constraints);
+    const modelMetadata = asRecord(model.metadata);
+    const performanceSlo = asRecord(model.performance_slo ?? model.slo ?? modelMetadata.performance_slo);
+    const resourceRequirements = asRecord(
+      model.resource_requirements ??
+        model.resources ??
+        modelMetadata.resource_requirements ??
+        modelMetadata.resources ??
+        asRecord(constraints.resource_requirements)
+    );
+    const provenance = asRecord(model.provenance);
+    const name = stringOf(model.name, `model-${index + 1}`);
+    const artifactSizeBytes = numberOf(model.size_bytes);
+    return {
+      id: stringOf(model.id, `${pkgId}:${name}`),
+      name,
+      version: stringOf(model.version, pkg.version ?? "-"),
+      format: stringOf(model.format, "model"),
+      packageId: pkgId,
+      packageName: pkg.name ?? pkgId,
+      packageVersion: pkg.version ?? "-",
+      packagePromotion: pkg.promotion?.state ?? "candidate",
+      profiles: stringsOf(constraints.device_profiles ?? metadata.compatibility),
+      runtimes: stringsOf(constraints.runtimes),
+      providers: stringsOf(constraints.providers),
+      latencyMs: numberOf(benchmark.latency_ms_p95),
+      maxLatencyP95Ms: numberOf(
+        performanceSlo.max_latency_ms_p95 ??
+          performanceSlo.latency_ms_p95_max ??
+          performanceSlo.p95_latency_ms_max
+      ),
+      minThroughputIps: numberOf(
+        performanceSlo.min_throughput_ips ??
+          performanceSlo.throughput_ips_min ??
+          performanceSlo.min_inferences_per_second
+      ),
+      maxBenchmarkAgeSeconds: numberOf(
+        performanceSlo.max_benchmark_age_seconds ??
+          performanceSlo.benchmark_stale_after_seconds ??
+          performanceSlo.benchmark_freshness_seconds ??
+          performanceSlo.max_age_seconds
+      ),
+      minMemoryAvailableMb: numberOf(
+        resourceRequirements.min_memory_available_mb ??
+          resourceRequirements.min_available_memory_mb ??
+          resourceRequirements.memory_available_mb_min ??
+          resourceRequirements.min_memory_mb ??
+          resourceRequirements.min_ram_mb ??
+          resourceRequirements.peak_memory_mb
+      ),
+      minStorageAvailableMb: numberOf(
+        resourceRequirements.min_storage_available_mb ??
+          resourceRequirements.min_available_storage_mb ??
+          resourceRequirements.storage_available_mb_min ??
+          resourceRequirements.min_disk_available_mb ??
+          resourceRequirements.min_storage_mb ??
+          resourceRequirements.min_disk_mb
+      ),
+      maxTemperatureC: numberOf(
+        resourceRequirements.max_temperature_c ??
+          resourceRequirements.max_cpu_temp_c ??
+          resourceRequirements.max_thermal_c ??
+          resourceRequirements.temperature_c_max
+      ),
+      minBatteryPercent: numberOf(
+        resourceRequirements.min_battery_percent ??
+          resourceRequirements.battery_percent_min ??
+          resourceRequirements.min_battery_pct
+      ),
+      requiredPowerSource: stringOf(
+        resourceRequirements.required_power_source ?? resourceRequirements.power_source,
+        ""
+      ),
+      artifactSizeMb: artifactSizeBytes === undefined ? undefined : Math.round((artifactSizeBytes / (1024 * 1024)) * 1000) / 1000,
+      signed: validation.signature_verified === true,
+      source: stringOf(provenance.source, stringOf(metadata.source_registry, "package")),
+      updatedAt: pkg.updated_at ?? pkg.created_at
+    };
+  });
+}
+
+function withBenchmarkEvidence(models: ModelRecord[], benchmarks: Benchmark[]): ModelRecord[] {
+  return models.map((model) => {
+    const benchmark = benchmarkForModel(model, benchmarks);
+    if (!benchmark) return model;
+    const result = asRecord(benchmark.result);
+    const latency = asRecord(result.latency_ms);
+    const throughput = asRecord(result.throughput);
+    return {
+      ...model,
+      latencyMs: numberOf(latency.p95) ?? model.latencyMs,
+      throughputIps: numberOf(throughput.inferences_per_second),
+      benchmarkDeviceId: benchmark.device_id,
+      benchmarkRuntimeId: benchmark.runtime_target_id,
+      benchmarkedAt: benchmark.created_at
+    };
+  });
+}
+
+function benchmarkForModel(model: ModelRecord, benchmarks: Benchmark[]): Benchmark | undefined {
+  const matching = benchmarks.filter(
+    (benchmark) => benchmark.package_id === model.packageId && benchmark.model_id === model.id
+  );
+  return latestByTime(matching);
+}
+
+function runtimeValidationForModel(
+  model: ModelRecord,
+  runtime: RuntimeTarget | undefined,
+  validations: RuntimeValidation[]
+): RuntimeValidation | undefined {
+  const runtimeId = runtime ? runtimeTargetId(runtime) : "";
+  return latestByTime(
+    validations.filter((validation) => {
+      const result = asRecord(validation.result);
+      return (
+        validation.package_id === model.packageId &&
+        (!runtimeId || validation.runtime_target_id === runtimeId) &&
+        result.ok === true &&
+        result.dry_run !== true
+      );
+    })
+  );
+}
+
+function formatBenchmark(model: ModelRecord): string {
+  if (!model.latencyMs && !model.throughputIps) return "no benchmark";
+  const parts = [];
+  if (model.latencyMs) parts.push(`${formatMetricNumber(model.latencyMs)} ms p95`);
+  if (model.throughputIps) parts.push(`${formatThroughput(model.throughputIps)} ips`);
+  return parts.join(" / ");
+}
+
+function formatBenchmarkTarget(model: ModelRecord): string {
+  if (!model.benchmarkDeviceId && !model.benchmarkRuntimeId) return "no benchmark target";
+  return [model.benchmarkDeviceId, model.benchmarkRuntimeId].filter(Boolean).join(" / ");
+}
+
+function formatBenchmarkFreshness(model: ModelRecord): string {
+  const freshness = benchmarkFreshness(model);
+  if (!freshness.createdAt) return "not recorded";
+  if (freshness.ageSeconds === undefined) return "timestamp invalid";
+  return `${formatAge(freshness.ageSeconds)} old / ${formatAge(freshness.staleAfterSeconds)} budget`;
+}
+
+function formatPerformanceSlo(model: ModelRecord): string {
+  const parts = [];
+  if (model.maxLatencyP95Ms) parts.push(`p95 <= ${formatMetricNumber(model.maxLatencyP95Ms)} ms`);
+  if (model.minThroughputIps) parts.push(`>= ${formatThroughput(model.minThroughputIps)} ips`);
+  return parts.length ? parts.join(" / ") : "not declared";
+}
+
+function formatResourceEnvelope(model: ModelRecord): string {
+  const parts = [];
+  if (model.minMemoryAvailableMb) parts.push(`RAM >= ${Math.round(model.minMemoryAvailableMb)} MB`);
+  if (model.minStorageAvailableMb) parts.push(`storage >= ${Math.round(model.minStorageAvailableMb)} MB`);
+  if (model.maxTemperatureC) parts.push(`temp <= ${Math.round(model.maxTemperatureC)} C`);
+  if (model.minBatteryPercent) parts.push(`battery >= ${Math.round(model.minBatteryPercent)}%`);
+  if (model.requiredPowerSource) parts.push(`power ${model.requiredPowerSource}`);
+  return parts.length ? parts.join(" / ") : "not declared";
+}
+
+function performanceSloLabel(model: ModelRecord | undefined): string {
+  if (!model) return "missing";
+  if (!model.maxLatencyP95Ms && !model.minThroughputIps) return "not required";
+  const failures = performanceSloFailures(model);
+  if (!model.latencyMs && !model.throughputIps) return "needs benchmark";
+  const freshness = benchmarkFreshness(model);
+  if (freshness.state === "stale") return "benchmark stale";
+  if (freshness.state === "unknown") return "age unknown";
+  return failures.length ? "SLO miss" : "SLO met";
+}
+
+function performanceSloDetail(model: ModelRecord): string {
+  const slo = formatPerformanceSlo(model);
+  if (slo === "not declared") return "no model performance budget declared";
+  const failures = performanceSloFailures(model);
+  if (!model.latencyMs && !model.throughputIps) return `${slo}; benchmark required`;
+  const freshness = benchmarkFreshness(model);
+  if (freshness.state !== "fresh") return benchmarkFreshnessDetail(freshness);
+  if (failures.length) return failures.join("; ");
+  return `${formatBenchmark(model)} meets ${slo}`;
+}
+
+function performanceSloTone(model: ModelRecord | undefined): GateTone {
+  if (!model) return "bad";
+  if (!model.maxLatencyP95Ms && !model.minThroughputIps) return "neutral";
+  if (!model.latencyMs && !model.throughputIps) return "warn";
+  if (benchmarkFreshness(model).state !== "fresh") return "warn";
+  return performanceSloFailures(model).length ? "warn" : "good";
+}
+
+function performanceSloFailures(model: ModelRecord): string[] {
+  const failures: string[] = [];
+  if (model.maxLatencyP95Ms && model.latencyMs && model.latencyMs > model.maxLatencyP95Ms) {
+    failures.push(
+      `p95 ${formatMetricNumber(model.latencyMs)} ms exceeds ${formatMetricNumber(model.maxLatencyP95Ms)} ms`
+    );
+  } else if (model.maxLatencyP95Ms && !model.latencyMs) {
+    failures.push("missing p95 latency");
+  }
+  if (
+    model.minThroughputIps &&
+    model.throughputIps &&
+    model.throughputIps < model.minThroughputIps
+  ) {
+    failures.push(`${formatThroughput(model.throughputIps)} ips below ${formatThroughput(model.minThroughputIps)} ips`);
+  } else if (model.minThroughputIps && !model.throughputIps) {
+    failures.push("missing throughput");
+  }
+  return failures;
+}
+
+function formatMetricNumber(value: number): string {
+  if (!Number.isFinite(value)) return "";
+  const abs = Math.abs(value);
+  if (abs >= 100) return String(Math.round(value));
+  if (abs >= 10) return String(Math.round(value * 10) / 10);
+  return String(Math.round(value * 10) / 10);
+}
+
+function formatArtifactSizeMb(value: number | undefined): string {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return "";
+  if (value < 0.1) return "<0.1 MB artifact";
+  return `${formatMetricNumber(value)} MB artifact`;
+}
+
+function formatThroughput(value: number): string {
+  if (!Number.isFinite(value)) return "";
+  return String(Math.round(value));
+}
+
+interface BenchmarkFreshness {
+  state: "fresh" | "stale" | "unknown";
+  createdAt?: string;
+  ageSeconds?: number;
+  staleAfterSeconds: number;
+}
+
+function benchmarkFreshness(model: ModelRecord): BenchmarkFreshness {
+  const staleAfterSeconds = model.maxBenchmarkAgeSeconds ?? DEFAULT_BENCHMARK_STALE_SECONDS;
+  if (!model.benchmarkedAt) {
+    return { state: "unknown", staleAfterSeconds };
+  }
+  const createdAtMs = Date.parse(model.benchmarkedAt);
+  if (Number.isNaN(createdAtMs)) {
+    return { state: "unknown", createdAt: model.benchmarkedAt, staleAfterSeconds };
+  }
+  const ageSeconds = Math.max(0, Math.floor((Date.now() - createdAtMs) / 1000));
+  return {
+    state: ageSeconds > staleAfterSeconds ? "stale" : "fresh",
+    createdAt: model.benchmarkedAt,
+    ageSeconds,
+    staleAfterSeconds
+  };
+}
+
+function benchmarkFreshnessDetail(freshness: BenchmarkFreshness): string {
+  if (!freshness.createdAt || freshness.ageSeconds === undefined) {
+    return "benchmark timestamp missing; record fresh edge performance proof";
+  }
+  return `benchmark evidence is ${formatAge(freshness.ageSeconds)} old; freshness budget is ${formatAge(freshness.staleAfterSeconds)}`;
+}
+
+function formatAge(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d`;
+}
+
+function formatMb(value: number | undefined): string {
+  return value === undefined ? "not reported" : `${Math.round(value)} MB`;
+}
+
+function formatTemperature(value: number | undefined): string {
+  return value === undefined ? "not reported" : `${Math.round(value)} C`;
+}
+
+function formatPower(observed: Record<string, number | string | undefined>): string {
+  const source = stringOf(observed.powerSource, "");
+  const battery = numberOf(observed.batteryPercent);
+  if (source && battery !== undefined) return `${source} / ${Math.round(battery)}%`;
+  if (source) return source;
+  if (battery !== undefined) return `${Math.round(battery)}%`;
+  return "not reported";
+}
+
+function resourceEnvelopeCapabilityFit(
+  model: ModelRecord | undefined,
+  device: Device | undefined
+): EdgeRuntimeFit {
+  if (!model || !device) {
+    return {
+      label: "missing context",
+      detail: "select a model and edge node",
+      tone: "bad",
+      failures: ["missing model or edge node"]
+    };
+  }
+  if (!resourceEnvelopeDeclared(model)) {
+    return {
+      label: "not declared",
+      detail: "no model resource envelope declared",
+      tone: "neutral",
+      failures: []
+    };
+  }
+  const observed = deviceResourceSnapshot(device);
+  const failures = resourceEnvelopeFailures(model, observed);
+  const missing = resourceEnvelopeMissing(model, observed);
+  if (failures.length) {
+    return {
+      label: "constrained",
+      detail: failures[0],
+      tone: "bad",
+      failures
+    };
+  }
+  if (missing.length) {
+    return {
+      label: "telemetry missing",
+      detail: `missing ${missing.join(", ")}`,
+      tone: "warn",
+      failures: []
+    };
+  }
+  return {
+    label: "met",
+    detail: resourceEnvelopeObservedDetail(model, observed),
+    tone: "good",
+    failures: []
+  };
+}
+
+function resourceEnvelopeDeclared(model: ModelRecord): boolean {
+  return Boolean(
+    model.minMemoryAvailableMb ||
+      model.minStorageAvailableMb ||
+      model.maxTemperatureC ||
+      model.minBatteryPercent ||
+      model.requiredPowerSource
+  );
+}
+
+function deviceResourceSnapshot(device: Device): Record<string, number | string | undefined> {
+  const inventory = asRecord(device.inventory);
+  const memory = asRecord(inventory.memory);
+  const storage = asRecord(inventory.storage);
+  const disk = asRecord(inventory.disk);
+  const thermal = asRecord(inventory.thermal);
+  const power = asRecord(inventory.power);
+  return {
+    memoryAvailableMb: numberOf(
+      memory.available_mb ??
+        inventory.memory_available_mb ??
+        inventory.available_memory_mb ??
+        inventory.free_memory_mb
+    ),
+    storageAvailableMb: numberOf(
+      storage.available_mb ??
+        disk.available_mb ??
+        inventory.storage_available_mb ??
+        inventory.disk_available_mb ??
+        inventory.disk_free_mb
+    ),
+    temperatureC: numberOf(
+      thermal.temperature_c ??
+        thermal.cpu_temp_c ??
+        thermal.max_observed_c ??
+        inventory.temperature_c ??
+        inventory.cpu_temp_c
+    ),
+    batteryPercent: numberOf(
+      power.battery_percent ?? inventory.battery_percent ?? inventory.battery_pct
+    ),
+    powerSource: stringOf(power.source ?? inventory.power_source, "")
+  };
+}
+
+function resourceEnvelopeFailures(
+  model: ModelRecord,
+  observed: Record<string, number | string | undefined>
+): string[] {
+  const failures: string[] = [];
+  const memory = numberOf(observed.memoryAvailableMb);
+  if (model.minMemoryAvailableMb && memory !== undefined && memory < model.minMemoryAvailableMb) {
+    failures.push(`RAM ${Math.round(memory)} MB below ${Math.round(model.minMemoryAvailableMb)} MB`);
+  }
+  const storage = numberOf(observed.storageAvailableMb);
+  if (model.minStorageAvailableMb && storage !== undefined && storage < model.minStorageAvailableMb) {
+    failures.push(`storage ${Math.round(storage)} MB below ${Math.round(model.minStorageAvailableMb)} MB`);
+  }
+  const temperature = numberOf(observed.temperatureC);
+  if (model.maxTemperatureC && temperature !== undefined && temperature > model.maxTemperatureC) {
+    failures.push(`temperature ${Math.round(temperature)} C exceeds ${Math.round(model.maxTemperatureC)} C`);
+  }
+  const battery = numberOf(observed.batteryPercent);
+  if (model.minBatteryPercent && battery !== undefined && battery < model.minBatteryPercent) {
+    failures.push(`battery ${Math.round(battery)}% below ${Math.round(model.minBatteryPercent)}%`);
+  }
+  const powerSource = stringOf(observed.powerSource, "").toLowerCase();
+  if (model.requiredPowerSource && powerSource && powerSource !== model.requiredPowerSource.toLowerCase()) {
+    failures.push(`power source ${powerSource} does not match ${model.requiredPowerSource}`);
+  }
+  return failures;
+}
+
+function resourceEnvelopeMissing(
+  model: ModelRecord,
+  observed: Record<string, number | string | undefined>
+): string[] {
+  const missing = [];
+  if (model.minMemoryAvailableMb && numberOf(observed.memoryAvailableMb) === undefined) missing.push("RAM");
+  if (model.minStorageAvailableMb && numberOf(observed.storageAvailableMb) === undefined) missing.push("storage");
+  if (model.maxTemperatureC && numberOf(observed.temperatureC) === undefined) missing.push("temperature");
+  if (model.minBatteryPercent && numberOf(observed.batteryPercent) === undefined) missing.push("battery");
+  if (model.requiredPowerSource && !stringOf(observed.powerSource, "")) missing.push("power source");
+  return missing;
+}
+
+function resourceEnvelopeObservedDetail(
+  model: ModelRecord,
+  observed: Record<string, number | string | undefined>
+): string {
+  const parts = [];
+  const memory = numberOf(observed.memoryAvailableMb);
+  if (memory !== undefined && model.minMemoryAvailableMb) parts.push(`${Math.round(memory)} MB RAM`);
+  const storage = numberOf(observed.storageAvailableMb);
+  if (storage !== undefined && model.minStorageAvailableMb) parts.push(`${Math.round(storage)} MB storage`);
+  const temperature = numberOf(observed.temperatureC);
+  if (temperature !== undefined && model.maxTemperatureC) parts.push(`${Math.round(temperature)} C`);
+  const powerSource = stringOf(observed.powerSource, "");
+  if (powerSource && model.requiredPowerSource) parts.push(`power ${powerSource}`);
+  return parts.length ? `${parts.join(" / ")} satisfies declared envelope` : "resource envelope met";
+}
+
+function edgeRuntimeCapabilityFit(
+  model: ModelRecord | undefined,
+  device: Device | undefined,
+  target: RuntimeTarget | undefined,
+  validation: RuntimeValidation | undefined
+): EdgeRuntimeFit {
+  if (!model || !device || !target) {
+    return {
+      label: "missing context",
+      detail: "select a model, edge node, and runtime target",
+      tone: "bad",
+      failures: ["missing model, edge node, or runtime target"]
+    };
+  }
+  const targetModelMismatch = !targetSupportsModel(target, model);
+
+  const inventory = asRecord(device.inventory);
+  const reportsInventory =
+    Object.keys(asRecord(inventory.runtimes)).length > 0 ||
+    Object.keys(asRecord(inventory.accelerators)).length > 0;
+  if (targetModelMismatch && !reportsInventory) {
+    return {
+      label: "target mismatch",
+      detail: "runtime target does not satisfy the selected model constraints",
+      tone: "bad",
+      failures: ["runtime target does not satisfy the selected model constraints"]
+    };
+  }
+  if (!reportsInventory) {
+    return {
+      label: "inventory missing",
+      detail: `${deviceId(device)} has not reported runtime/provider inventory`,
+      tone: "warn",
+      failures: []
+    };
+  }
+
+  const failures = runtimeTargetInventoryFailures(target, device);
+  if (targetModelMismatch && failures.length) {
+    return {
+      label: "edge mismatch",
+      detail: `runtime target does not satisfy model constraints; ${failures[0]}`,
+      tone: "bad",
+      failures: ["runtime target does not satisfy the selected model constraints", ...failures]
+    };
+  }
+  if (targetModelMismatch) {
+    return {
+      label: "target mismatch",
+      detail: "runtime target does not satisfy the selected model constraints",
+      tone: "bad",
+      failures: ["runtime target does not satisfy the selected model constraints"]
+    };
+  }
+  if (failures.length) {
+    return {
+      label: "edge mismatch",
+      detail: failures[0],
+      tone: "bad",
+      failures
+    };
+  }
+
+  if (validation) {
+    return {
+      label: "validated",
+      detail: `${runtimeTargetId(target)} passed package validation for ${model.packageId}`,
+      tone: "good",
+      failures: []
+    };
+  }
+  if (model.benchmarkDeviceId === deviceId(device) && model.benchmarkRuntimeId === runtimeTargetId(target)) {
+    return {
+      label: "benchmarked",
+      detail: `${formatBenchmark(model)} on ${deviceId(device)} / ${runtimeTargetId(target)}`,
+      tone: "good",
+      failures: []
+    };
+  }
+  return {
+    label: "inventory match",
+    detail: "edge inventory matches the target; run validation before field rollout",
+    tone: "warn",
+    failures: []
+  };
+}
+
+function runtimeTargetInventoryFailures(target: RuntimeTarget, device: Device): string[] {
+  const inventory = asRecord(device.inventory);
+  const liveRuntimes = asRecord(inventory.runtimes);
+  const liveAccelerators = asRecord(inventory.accelerators);
+  const constraints = runtimeTargetInventoryConstraints(target);
+  const failures: string[] = [];
+
+  const missingRuntimes = constraints.runtimes.filter((runtime) => !runtimeAvailable(liveRuntimes, runtime));
+  if (missingRuntimes.length) failures.push(`missing runtimes: ${missingRuntimes.join(", ")}`);
+
+  const availableProviders = new Set(stringsOf(asRecord(liveRuntimes.onnxruntime).providers));
+  const missingProviders = constraints.providers.filter((provider) => !availableProviders.has(provider));
+  if (missingProviders.length) failures.push(`missing ONNX providers: ${missingProviders.join(", ")}`);
+  if (
+    constraints.preferredProviders.length &&
+    !constraints.preferredProviders.some((provider) => availableProviders.has(provider))
+  ) {
+    failures.push(`none of preferred ONNX providers are available: ${constraints.preferredProviders.join(", ")}`);
+  }
+
+  const missingAccelerators = constraints.accelerators.filter(
+    (accelerator) => asRecord(liveAccelerators[accelerator]).available !== true
+  );
+  if (missingAccelerators.length) failures.push(`missing accelerators: ${missingAccelerators.join(", ")}`);
+  if (
+    constraints.requiresGpu &&
+    !Object.values(liveAccelerators).some((accelerator) => asRecord(accelerator).available === true)
+  ) {
+    failures.push("GPU accelerator is required but none was reported");
+  }
+  return failures;
+}
+
+function runtimeTargetInventoryConstraints(target: RuntimeTarget): {
+  runtimes: string[];
+  providers: string[];
+  preferredProviders: string[];
+  accelerators: string[];
+  requiresGpu: boolean;
+} {
+  const constraints = asRecord(target.runtime_constraints);
+  const runtimes = asRecord(target.runtimes);
+  const accelerators = asRecord(target.accelerators);
+  const onnxruntime = asRecord(runtimes.onnxruntime);
+
+  const requiredRuntimes = stringsOf(constraints.runtimes);
+  const inferredRuntimes = Object.entries(runtimes)
+    .filter(([, status]) => asRecord(status).available !== false)
+    .map(([runtime]) => runtime);
+  const providers = stringsOf(constraints.providers);
+  const preferredProviders =
+    stringsOf(constraints.provider_order).length > 0
+      ? stringsOf(constraints.provider_order)
+      : stringsOf(constraints.preferred_providers).length > 0
+        ? stringsOf(constraints.preferred_providers)
+        : providers.length
+          ? []
+          : stringsOf(onnxruntime.providers);
+  const requiredAccelerators = stringsOf(constraints.accelerators);
+  const inferredAccelerators = Object.entries(accelerators)
+    .filter(([, status]) => asRecord(status).available === true)
+    .map(([accelerator]) => accelerator);
+
+  return {
+    runtimes: requiredRuntimes.length ? requiredRuntimes : inferredRuntimes,
+    providers,
+    preferredProviders,
+    accelerators: requiredAccelerators.length ? requiredAccelerators : inferredAccelerators,
+    requiresGpu: constraints.requires_gpu === true
+  };
+}
+
+function runtimeAvailable(runtimes: Record<string, unknown>, name: string): boolean {
+  const normalized = name.toLowerCase().replaceAll("-", "_");
+  const aliases: Record<string, string> = {
+    onnx: "onnxruntime",
+    ort: "onnxruntime",
+    tflite: "tflite_runtime",
+    torchscript: "torch",
+    trt: "tensorrt"
+  };
+  const key = aliases[normalized] ?? normalized;
+  return asRecord(runtimes[key]).available === true;
+}
+
+function runtimeInventoryLabel(device: Device | undefined): string {
+  if (!device) return "missing";
+  const inventory = asRecord(device.inventory);
+  const runtimes = Object.entries(asRecord(inventory.runtimes)).filter(([, status]) => asRecord(status).available === true);
+  return runtimes.length ? `${runtimes.length} runtime${runtimes.length === 1 ? "" : "s"}` : "not reported";
+}
+
+function runtimeInventoryDetail(device: Device | undefined): string {
+  if (!device) return "select an edge node";
+  const inventory = asRecord(device.inventory);
+  const runtimes = Object.entries(asRecord(inventory.runtimes))
+    .filter(([, status]) => asRecord(status).available === true)
+    .map(([runtime]) => runtime);
+  const accelerators = Object.entries(asRecord(inventory.accelerators))
+    .filter(([, status]) => asRecord(status).available === true)
+    .map(([accelerator]) => accelerator);
+  const parts = [];
+  if (runtimes.length) parts.push(`runtimes ${runtimes.join(", ")}`);
+  if (accelerators.length) parts.push(`accelerators ${accelerators.join(", ")}`);
+  return parts.join(" / ") || `${deviceId(device)} has not reported runtime inventory`;
+}
+
+function runtimeInventoryTone(device: Device | undefined): GateTone {
+  if (!device) return "bad";
+  const inventory = asRecord(device.inventory);
+  return Object.keys(asRecord(inventory.runtimes)).length || Object.keys(asRecord(inventory.accelerators)).length
+    ? "good"
+    : "warn";
+}
+
+function runtimeTargetCapabilityDetail(target: RuntimeTarget | undefined): string {
+  if (!target) return "select a runtime target";
+  const constraints = runtimeTargetInventoryConstraints(target);
+  const parts = [];
+  if (constraints.runtimes.length) parts.push(`requires ${constraints.runtimes.join(", ")}`);
+  if (constraints.providers.length) parts.push(`providers ${constraints.providers.join(", ")}`);
+  if (constraints.preferredProviders.length) parts.push(`prefers ${constraints.preferredProviders.join(", ")}`);
+  if (constraints.accelerators.length) parts.push(`accelerators ${constraints.accelerators.join(", ")}`);
+  return parts.join(" / ") || `${runtimeTargetId(target)} has no declared runtime constraints`;
+}
+
+function providerDisplayForModel(
+  model: ModelRecord,
+  target: RuntimeTarget | undefined
+): string {
+  if (model.providers.length) return model.providers.join(", ");
+  if (!target) return "runtime target required";
+  const constraints = runtimeTargetInventoryConstraints(target);
+  if (constraints.providers.length) return constraints.providers.join(", ");
+  if (constraints.preferredProviders.length) return constraints.preferredProviders.join(", ");
+  const onnxruntime = asRecord(asRecord(target.runtimes).onnxruntime);
+  const providers = stringsOf(onnxruntime.providers);
+  if (providers.length) return providers.join(", ");
+  return "provider inherited from runtime target";
+}
+
+function runtimeForModel(targets: RuntimeTarget[], model?: ModelRecord): RuntimeTarget | undefined {
+  if (!model) return targets[0];
+  return targets.find((target) => targetSupportsModel(target, model)) ?? targets[0];
+}
+
+function targetSupportsModel(target: RuntimeTarget, model: ModelRecord): boolean {
+  const targetProfiles = target.device_profiles ?? [];
+  if (model.profiles.length && targetProfiles.length && !model.profiles.some((profile) => targetProfiles.includes(profile))) {
+    return false;
+  }
+  const runtimeMap = asRecord(target.runtimes);
+  if (model.runtimes.length && !model.runtimes.some((runtime) => runtime in runtimeMap)) {
+    return false;
+  }
+  return true;
+}
+
+function latestByTime<T extends { updated_at?: string; created_at?: string }>(items: T[]): T | undefined {
+  return [...items].sort((a, b) => timeOf(b) - timeOf(a))[0];
+}
+
+async function loadSnapshotAfterReconciliation(token: string): Promise<HubSnapshot> {
+  let next = await loadSnapshot(token);
+  for (let attempt = 0; attempt < 5 && isAwaitingReconciliation(next); attempt += 1) {
+    await delay(350);
+    next = await loadSnapshot(token);
+  }
+  return next;
+}
+
+function isAwaitingReconciliation(snapshot: HubSnapshot): boolean {
+  const runtime = asRecord(snapshot.evidenceSummary?.runtime);
+  const deployment = asRecord(runtime.deployment_state);
+  const pendingOperations = numberOf(runtime.pending_operations_count) ?? 0;
+  return runtime.offline_mode === false && pendingOperations === 0 && stringOf(deployment.state, "") === "PENDING";
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function timeOf(value: { updated_at?: string; created_at?: string }): number {
+  const date = new Date(value.updated_at ?? value.created_at ?? 0);
+  return Number.isNaN(date.valueOf()) ? 0 : date.valueOf();
+}
+
+function isSigned(pkg: HubPackage): boolean {
+  const validation = asRecord(asRecord(pkg.metadata).validation);
+  return validation.signature_verified === true;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function stringsOf(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((item) => String(item)).filter(Boolean);
+  if (typeof value === "string") return csv(value);
+  const record = asRecord(value);
+  const profiles = record.device_profiles;
+  return Array.isArray(profiles) ? profiles.map((item) => String(item)).filter(Boolean) : [];
+}
+
+function stringOf(value: unknown, fallback: string): string {
+  return value === undefined || value === null || value === "" ? fallback : String(value);
+}
+
+function numberOf(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function booleanOf(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function actionTitle(action: string): string {
+  return action
+    .split("-")
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function toneForPath(state: string): "good" | "warn" | "bad" | "neutral" {
+  const normalized = state.toLowerCase();
+  if (["ready", "released", "approved", "activated", "rolled_back", "complete"].includes(normalized)) return "good";
+  if (["blocked", "failed", "error", "missing"].includes(normalized)) return "bad";
+  if (["pending", "assigned", "advancing", "downloading", "imported", "preview", "preview_only"].includes(normalized)) return "warn";
+  return "neutral";
+}
+
+function toneForReadinessStatus(status: string): "good" | "warn" | "bad" | "neutral" {
+  const normalized = status.toLowerCase();
+  if (normalized === "go") return "good";
+  if (normalized === "attention") return "warn";
+  if (normalized === "blocked") return "bad";
+  return toneForPath(normalized);
+}
+
+function phaseTone(status: string): "good" | "warn" | "bad" | "neutral" {
+  const normalized = status.toLowerCase();
+  if (normalized === "complete") return "good";
+  if (normalized === "preview_only") return "warn";
+  if (normalized === "missing") return "bad";
+  return "neutral";
+}
+
+function phaseStatusLabel(status: string): string {
+  return status === "preview_only" ? "preview" : status || "missing";
+}

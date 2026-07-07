@@ -92,6 +92,8 @@ async def test_mvp_acceptance_two_edges_online_airgap_rollback_and_evidence(temp
     )
     assert airgap_packaged.status_code == 200, airgap_packaged.text
     assert airgap_packaged.json()["package"]["package_id"] == "mlflow-airgap-detector-1"
+    _release_package(central["hub_lite"], "mlflow-online-detector-1")
+    _release_package(central["hub_lite"], "mlflow-airgap-detector-1")
 
     with pytest.raises(ValueError, match="not compatible"):
         central["hub_lite"].assign_rollout(
@@ -346,6 +348,27 @@ def _create_app(
         daemon_config=daemon_config,
         hub_lite=hub_lite or system["hub_lite"],
         telemetry=telemetry or system["telemetry"],
+    )
+
+
+def _release_package(hub: HubLiteStore, package_id: str) -> dict:
+    hub.promote_package(
+        package_id,
+        "validated",
+        actor="operator:validator",
+        reason="runtime validation passed",
+    )
+    hub.promote_package(
+        package_id,
+        "approved",
+        actor="operator:approver",
+        reason="package approved for release",
+    )
+    return hub.promote_package(
+        package_id,
+        "released",
+        actor="operator:release",
+        reason="package released for rollout",
     )
 
 

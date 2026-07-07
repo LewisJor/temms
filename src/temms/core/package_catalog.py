@@ -119,6 +119,8 @@ def catalog_entry_from_package(
                 "runtime_constraints": model.runtime_constraints,
                 "runtime_options": model.runtime_options,
                 "benchmark": model.benchmark,
+                "performance_slo": model.performance_slo,
+                "resource_requirements": model.resource_requirements,
                 "provenance": model.provenance,
             }
             for model in manifest.models

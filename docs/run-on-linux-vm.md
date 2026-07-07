@@ -220,6 +220,21 @@ condition injection, override clearing, and UI package import require
 `X-TEMMS-Token` or a bearer token. UI package import also inherits the daemon's
 signed-package policy.
 
+For role-scoped access, set `TEMMS_RBAC_TOKENS` in addition to or instead of
+the admin control token. Use comma- or semicolon-separated `role=token` pairs;
+repeat a token to give it multiple roles, or use JSON mapping tokens to role
+lists. TEMMS never prints these tokens in doctor output.
+
+```bash
+export TEMMS_RBAC_TOKENS="operator=op-token;approver=approve-token;edge=edge-token;auditor=audit-token"
+```
+
+When RBAC tokens are configured, Hub/API/UI writes require the matching role:
+`operator` can package, assign, override, roll back, and export air-gap bundles;
+`approver` can approve gated rollouts; `edge` can heartbeat, publish runtime
+evidence, update rollout state, and apply local rollouts; `auditor` can export
+evidence summaries. `TEMMS_API_TOKEN`, when configured, remains an admin token.
+
 ## 9. Telemetry export
 
 For disconnected deployments, export buffered telemetry after the VM is back in range:
@@ -250,7 +265,15 @@ curl -X POST \
 
 ## 10. Optional Hub Lite online sync
 
-Set `TEMMS_HUB_URL` when an edge VM should sync to a central Hub Lite API while it has network access. The edge agent enrolls itself, sends heartbeat/inventory/deployment status, mirrors assigned rollouts for its `TEMMS_DEVICE_ID`, downloads package archives for assigned rollouts into its local Hub Lite package cache, and pushes local rollout state changes back to the hub.
+The daemon refreshes its local Hub Lite heartbeat/inventory/deployment status
+even when no central Hub is configured. Set `TEMMS_EDGE_HEARTBEAT_INTERVAL_S`
+to tune how often local runtime, resource, and deployment telemetry is
+refreshed for readiness gates. Set `TEMMS_HUB_URL` when an edge VM should also
+sync to a central Hub Lite API while it has network access. The edge agent uses
+the same detected inventory upstream, mirrors assigned rollouts for its
+`TEMMS_DEVICE_ID`, downloads package archives for assigned rollouts into its
+local Hub Lite package cache, and pushes local rollout state changes back to
+the hub.
 
 Repeated syncs preserve a valid local package artifact when its registered `source_sha256` still matches the central catalog. If the central package source changes or the cached artifact digest drifts, the edge fetches a fresh artifact before apply.
 Heartbeat inventory includes the detected device profile, runtime availability, ONNX providers, and accelerators. Hub Lite uses that inventory when assigning rollouts, so a package that requires TensorRT, CUDA, or TFLite is rejected before it is sent to an incompatible VM.
@@ -260,6 +283,7 @@ TEMMS_HUB_URL=http://hub-vm:8080
 TEMMS_HUB_TOKEN=change-me
 TEMMS_DEVICE_ID=edge-1
 TEMMS_DEVICE_PROFILE=x86_64-cpu
+TEMMS_EDGE_HEARTBEAT_INTERVAL_S=60
 TEMMS_HUB_SYNC_INTERVAL_S=30
 ```
 
@@ -273,7 +297,7 @@ TEMMS_ROLLOUT_REQUIRE_SIGNATURE=true
 TEMMS_PACKAGE_SIGNING_KEY_FILE=/etc/temms/hub-signing.key
 ```
 
-With auto-apply enabled, the edge agent applies only rollouts in `assigned` state that were mirrored for its `TEMMS_DEVICE_ID`. The rollout package is still imported through the normal verified package path, policies are promoted into the active policy directory, runtime/device constraints are checked, the target slot is activated, and the edge replays the local rollout lifecycle back to Hub Lite so central history includes `downloading`, `imported`, and `activated` transitions.
+With auto-apply enabled, the edge agent applies only rollouts in `assigned` state that were mirrored for its `TEMMS_DEVICE_ID`. The rollout package is still imported through the normal verified package path, policies are promoted into the active policy directory, runtime/device constraints are checked, apply-time readiness preflight verifies pinned runtime evidence plus declared SLO/resource envelopes, the target slot is activated, and the edge replays the local rollout lifecycle back to Hub Lite so central history includes `downloading`, `imported`, and `activated` transitions. If readiness blocks auto-apply, the rollout remains assigned and `rollout.auto_apply_failed` telemetry records `failure_kind`, `blocking_gates`, and the readiness selection.
 
 The same signature settings are inherited by manual Hub Lite API calls on a daemon-backed VM, including package artifact registration and rollout apply. Rollout assignment also rejects package catalog entries without verified signature metadata when signatures are required. This keeps operator-driven recovery paths on the same verification policy as automatic sync.
 

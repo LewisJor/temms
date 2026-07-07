@@ -213,6 +213,21 @@ register_package() {
     echo "registered package ${package_id} from ${package_path}"
 }
 
+promote_package() {
+    local hub="$1"
+    local package_id="$2"
+    local state
+    local payload
+    for state in validated approved released; do
+        payload="$(json_payload \
+            "state=${state}" \
+            "actor=operator:acceptance" \
+            "reason=package ${state} for acceptance rollout")"
+        curl_json POST "$(hub_api "${hub}")/packages/${package_id}/promote" "${HUB_TOKEN}" "${payload}" >/dev/null
+    done
+    echo "promoted package ${package_id} to released"
+}
+
 enroll_device() {
     local hub="$1"
     local device_id="$2"
@@ -268,6 +283,8 @@ prepare_hub() {
     enroll_device "${HUB_URL}" "${AIRGAP_DEVICE_ID}" "${AIRGAP_DEVICE_PROFILE}" "airgap"
     register_package "${HUB_URL}" "${ONLINE_PACKAGE_ID}" "${ONLINE_PACKAGE_PATH}" "${ONLINE_DEVICE_PROFILE}" "${ONLINE_PACKAGE_HOST_PATH}"
     register_package "${HUB_URL}" "${AIRGAP_PACKAGE_ID}" "${AIRGAP_PACKAGE_PATH}" "${AIRGAP_DEVICE_PROFILE}" "${AIRGAP_PACKAGE_HOST_PATH}"
+    promote_package "${HUB_URL}" "${ONLINE_PACKAGE_ID}"
+    promote_package "${HUB_URL}" "${AIRGAP_PACKAGE_ID}"
     assign_rollout "${HUB_URL}" "${ONLINE_DEVICE_ID}" "${ONLINE_PACKAGE_ID}" "${ONLINE_ROLLOUT_ID}"
     assign_rollout "${HUB_URL}" "${AIRGAP_DEVICE_ID}" "${AIRGAP_PACKAGE_ID}" "${AIRGAP_ROLLOUT_ID}"
 }

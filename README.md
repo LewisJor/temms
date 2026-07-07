@@ -18,6 +18,8 @@ runtime, mission phase, or operator input.
 - Fallback chains when a selected model fails to load
 - Offline mode with buffered control operations
 - Decision log and evidence bundle export
+- Hub product UI for model inventory, runtime compatibility, rollout approval,
+  activation, and evidence export
 - Docker simulation with example ONNX models
 
 ## Install
@@ -36,20 +38,120 @@ make test
 
 ## Quick Start
 
+Run the canonical control-loop demo:
+
+```bash
+make product-demo
+```
+
+This builds and signs a demo package, catalogs it in Hub Lite, records runtime
+validation, coordinates a staged rollout plan, records rollout approval, applies
+the first batch on a local edge runtime, simulates fog, low battery, model-load
+failure, offline inference serving, rollback, and operator override, then writes
+`temms-canonical-evidence.json` and ingests that evidence back into Hub Lite for
+central aggregation and mission replay.
+
+Replay the evidence as an operator-readable summary:
+
+```bash
+temms evidence --input temms-canonical-evidence.json --summary
+temms evidence --input temms-canonical-evidence.json --replay
+```
+
+For a local product UI rehearsal with seeded models, rollout state, and evidence,
+follow [Functional Testing](docs/functional-testing.md).
+
 Start the Docker environment:
 
 ```bash
 make docker-up
 ```
 
+The local Docker daemon seeds Hub Lite with a signed, released example package,
+an online `edge-sim` target, and a demo signing key. That makes
+`/ui/hub` open directly into a model deployment workflow instead of an empty
+catalog. Docker demo mode also publishes a stable simulated resource envelope
+for `edge-sim` so the first-open mission package path starts green; explicit
+heartbeat/resource-drift tests still exercise the same readiness blockers used
+for real constrained edges.
+
 Services:
 
 ```text
-TEMMS UI    http://localhost:8080/ui/
+TEMMS Hub   http://localhost:8080/ui/hub
 TEMMS API   http://localhost:8080/v1/health
 API docs    http://localhost:8080/docs
 MLflow UI   http://localhost:5001
 ```
+
+Build or run the React Hub UI from the repo root:
+
+```bash
+npm --prefix ui install
+npm run typecheck
+npm run build
+npm run smoke:workbench
+
+# Optional: Vite dev server with /v1 proxied to the local daemon
+npm run dev
+```
+
+The Makefile exposes the same workflow as `make ui-install`, `make ui-build`,
+`make ui-smoke`, `make ui-ci`, and `make ui-dev` for shell sessions that prefer Make.
+
+When the Docker stack is running, verify that the live daemon and UI agree on
+the current Mission Package Workbench contract, including explicit JSON and
+YAML-only mission package planning:
+
+```bash
+make docker-product-smoke
+```
+
+The same package handoff is available without the browser:
+
+```bash
+uv run temms hub mission-package-plan ./mission.yaml --hub-url http://localhost:8080 --json
+uv run temms hub mission-package-download ./mission.yaml --hub-url http://localhost:8080 \
+  --output /tmp/temms-edge-mission-package.json
+uv run temms hub mission-package-stage /tmp/temms-edge-mission-package.json \
+  --hub-url http://localhost:8080 --actor operator:cli-demo
+```
+
+The production Hub app is served by the daemon at `http://localhost:8080/ui/hub`.
+Hub-enabled daemons also redirect `http://localhost:8080/ui/` to the React Hub.
+The Hub opens as **Mission Package Workbench**: a product cockpit for signed model
+inventory, targeted runtime selection, edge rollout status, DDIL readiness, and
+mission evidence. The first viewport now opens as a **Mission workflow cockpit**:
+an operator path rail, a focused current-stage decision panel, package path
+signals, and a compact **Live context** drawer for inventory, rollout, evidence,
+and DDIL telemetry. Its first operator pass now follows
+**Mission -> Model Plan -> Runtime Fit -> Sensor Handling -> Package Handoff ->
+Edge Deploy -> Field Ops**:
+define the mission spec or YAML, choose models, rank the target runtime, set
+sensor/model-switch handling, package the edge handoff, stage deployment, and
+operate through DDIL/evidence proof. Setup-only controls such as package
+registration and edge enrollment are under **Advanced intake**, and direct
+rollout forms are under **Manual controls** so the demo path stays focused on
+the mission package handoff. Package planning now separates the stable package
+identity hash from the exact downloaded payload hash, so repeated plan/download
+actions can be audited as the same mission/runtime package even when artifact
+timestamps differ. **Model Plan** owns model selection and package release
+context; **Runtime Fit** preserves that selected model as locked context, lets
+the operator choose the edge node and target runtime, ranks available runtime
+targets by fit, validation, benchmark, and live inventory state, and then
+exposes a runtime proof artifact lane that can generate a
+`temms-edge-runtime-proof/v1` payload through Hub and download the exact
+server-backed JSON proof for offline handoff. The same proof includes the
+canonical `temms-runtime-workbench/v1` contract used by the UI, CLI, API, and
+DDIL retarget checks to agree on selected target, best target, capability lock,
+benchmark, telemetry, and blocked-runtime reasons. When the
+daemon has a package signing key, that proof carries an attestation with the
+payload hash, signer, and key fingerprint, and the local `verify-edge-proof`
+command can fail closed with `--require-proof-signature`. It keeps copyable
+`edge-runtime-mission` plus local verification commands for the selected
+model/runtime/device path. The legacy diagnostic pages remain available for
+standalone agent debugging, but Hub-enabled daemons redirect those diagnostic
+GET pages back to `/ui/hub` so they are not competing demo paths.
 
 Run a headless scenario:
 
@@ -197,6 +299,8 @@ Export evidence:
 
 ```bash
 curl http://localhost:8080/v1/evidence?slot=vision | python -m json.tool
+curl "http://localhost:8080/v1/evidence?summary=true&summary_limit=20" | python -m json.tool
+curl "http://localhost:8080/v1/evidence?replay=true&replay_limit=50" | python -m json.tool
 ```
 
 ## CLI
@@ -239,6 +343,7 @@ Policies and evidence:
 temms policy load examples/policies/weather-adaptive.yaml --config ./local.temms.yaml
 temms policy list --config ./local.temms.yaml
 temms evidence --slot vision --output evidence.json --config ./local.temms.yaml
+temms evidence --input evidence.json --summary
 ```
 
 ## Offline Mode

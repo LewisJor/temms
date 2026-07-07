@@ -112,6 +112,13 @@ temms benchmark detector-7 \
 
 The benchmark JSON includes load latency, inference latency percentiles, derived throughput, input shape, model metadata, the selected runtime type/options, and detected runtime capabilities. When `--hub-url` is set, TEMMS also records benchmark evidence in Hub Lite so operators can compare package/runtime performance across edge VMs with `temms hub benchmarks`.
 
+If Hub Lite readiness reports missing or stale performance proof, use the
+readiness action as the command generator: the `record_benchmark` action shows
+the exact `temms benchmark ... --hub-url ...` command for the selected
+device/package/model/runtime and marks it as edge-execution required. Run that
+command on the target edge VM after the package is cached; do not publish a
+central benchmark body unless it came from the on-device benchmark run.
+
 ## Runtime selection
 
 TEMMS chooses the runtime from the imported model format:

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from temms.controller import AdaptiveInferenceController
+from temms.controller import ActivationPreflightBlocked, AdaptiveInferenceController
 from temms.core.cache import ModelFormat
 
 
@@ -114,3 +114,52 @@ async def test_controller_falls_back_when_selected_model_fails(controller_system
     assert decision.activated_model == "model-normal-v1"
     assert decision.fallback_attempted == ["model-normal-v1"]
     assert controller_system["slot_manager"].get_slot("vision").active_model_id == "model-normal-v1"
+
+
+@pytest.mark.asyncio
+async def test_controller_falls_back_when_activation_preflight_blocks_selected_model(
+    controller_system,
+):
+    def activation_preflight(
+        *,
+        slot_name,
+        model_id,
+        trigger_type,
+        trigger_detail,
+        conditions,
+    ):
+        if model_id == "model-tiny-v1":
+            raise ActivationPreflightBlocked(
+                "resource envelope blocked",
+                blocking_gates=[
+                    {
+                        "gate_id": "resource_envelope",
+                        "status": "blocked",
+                        "state": "constrained",
+                    }
+                ],
+            )
+        return {
+            "schema_version": "temms-activation-preflight/v1",
+            "status": "go",
+            "selection": {
+                "slot": slot_name,
+                "model_id": model_id,
+                "trigger_type": trigger_type,
+                "trigger_detail": trigger_detail,
+            },
+        }
+
+    controller_system["controller"].activation_preflight = activation_preflight
+
+    decision = await controller_system["controller"].evaluate_slot("vision", apply=True)
+
+    assert decision.status == "fallback_activated"
+    assert decision.selected_model == "model-tiny-v1"
+    assert decision.activated_model == "model-normal-v1"
+    controller_system["runtime"].load_model.assert_awaited_once_with(
+        "vision",
+        "model-normal-v1",
+    )
+    decision_log = controller_system["slot_manager"].get_decision_log("vision", limit=1)[0]
+    assert '"activation_preflight"' in decision_log["audit_metadata"]

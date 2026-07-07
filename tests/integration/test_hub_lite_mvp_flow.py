@@ -78,6 +78,7 @@ def test_mlflow_signed_airgap_rollout_bundle_imports_and_activates_on_edge(temp_
     assert package_payload["package"]["package_id"] == "mlflow-detector-7"
     assert package_payload["package"]["created_by"] == "operator:mlops"
     assert package_payload["package"]["metadata"]["validation"]["signature_verified"] is True
+    _api_release_package(central_client, "mlflow-detector-7")
 
     assign = central_client.post(
         "/v1/hub/rollouts",
@@ -86,10 +87,21 @@ def test_mlflow_signed_airgap_rollout_bundle_imports_and_activates_on_edge(temp_
             "device_id": "edge-1",
             "package_id": "mlflow-detector-7",
             "slot": "vision",
+            "require_approval": True,
         },
     )
     assert assign.status_code == 200, assign.text
     assert assign.json()["state"] == "assigned"
+    assert assign.json()["approval"]["state"] == "pending"
+
+    approval = central_client.post(
+        "/v1/hub/rollouts/rollout-e2e/approve",
+        headers={"X-TEMMS-Actor": "operator:approver"},
+        json={"reason": "mission policy approved"},
+    )
+    assert approval.status_code == 200, approval.text
+    assert approval.json()["approval"]["approved"] is True
+    assert approval.json()["history"][-1]["state"] == "approved"
 
     export = central_client.post(
         "/v1/hub/airgap/export",
@@ -131,11 +143,30 @@ def test_mlflow_signed_airgap_rollout_bundle_imports_and_activates_on_edge(temp_
 
     rollout = edge["hub_lite"].get_rollout("rollout-e2e")
     assert rollout["state"] == "activated"
+    assert rollout["approval"]["approved"] is True
+    assert rollout["approval"]["actor"] == "operator:approver"
     assert edge["model_cache"].get_model("detector-7") is not None
     edge["inference_runtime"].load_model.assert_awaited_once_with(
         "vision",
         "detector-7",
     )
+
+
+def _api_release_package(client: TestClient, package_id: str) -> None:
+    for state, actor in [
+        ("validated", "operator:validator"),
+        ("approved", "operator:approver"),
+        ("released", "operator:release"),
+    ]:
+        response = client.post(
+            f"/v1/hub/packages/{package_id}/promote",
+            json={
+                "state": state,
+                "actor": actor,
+                "reason": f"package {state}",
+            },
+        )
+        assert response.status_code == 200, response.text
 
 
 def _build_system(root):

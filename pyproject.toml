@@ -5,14 +5,23 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "temms"
 version = "0.1.0"
-description = "Adaptive inference control and decision evidence for disconnected edge devices"
+description = "Mission-first edge MLOps, DDIL operations, and on-device runtime deployment control"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "TEMMS Team"}
 ]
-keywords = ["ml", "edge", "autonomous", "offline", "adaptive-inference", "decision-evidence"]
+keywords = [
+    "ml",
+    "mlops",
+    "edge",
+    "autonomous",
+    "offline",
+    "ddil",
+    "runtime-deployment",
+    "mission-packages",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -108,6 +117,14 @@ Issues = "https://github.com/LewisJor/temms/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"temms.ui" = [
+    "templates/*.html",
+    "static/hub/index.html",
+    "static/hub/.vite/*.json",
+    "static/hub/assets/*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -67,6 +67,14 @@ DEFAULT_RUNTIME_TARGETS = {
             }
         },
         "accelerators": {},
+        "runtime_lane": {
+            "lane_id": "cpu-onnx",
+            "label": "CPU portable",
+            "execution_engine": "onnxruntime",
+            "acceleration": "cpu",
+            "target_class": "portable_cpu",
+            "optimization_goal": "broad compatibility and deterministic CPU fallback",
+        },
         "runtime_constraints": {
             "device_profiles": ["x86_64-cpu"],
             "runtimes": ["onnxruntime"],
@@ -91,6 +99,14 @@ DEFAULT_RUNTIME_TARGETS = {
             }
         },
         "accelerators": {"nvidia": {"available": True}},
+        "runtime_lane": {
+            "lane_id": "jetson-cuda",
+            "label": "Jetson CUDA",
+            "execution_engine": "onnxruntime",
+            "acceleration": "nvidia_cuda",
+            "target_class": "jetson_arm64",
+            "optimization_goal": "CUDA acceleration with ONNXRuntime fallback",
+        },
         "runtime_constraints": {
             "device_profiles": ["arm64-jetson"],
             "runtimes": ["onnxruntime"],
@@ -116,6 +132,14 @@ DEFAULT_RUNTIME_TARGETS = {
             }
         },
         "accelerators": {},
+        "runtime_lane": {
+            "lane_id": "rpi5-tflite",
+            "label": "Raspberry Pi 5 TFLite",
+            "execution_engine": "tflite_runtime",
+            "acceleration": "arm_cpu",
+            "target_class": "low_power_arm",
+            "optimization_goal": "low-power ARM inference with TensorFlow Lite",
+        },
         "runtime_constraints": {
             "device_profiles": ["rpi5-tflite"],
             "runtimes": ["tflite_runtime"],
@@ -144,6 +168,14 @@ DEFAULT_RUNTIME_TARGETS = {
             "tensorrt": {"available": True},
         },
         "accelerators": {"nvidia": {"available": True}},
+        "runtime_lane": {
+            "lane_id": "orin-tensorrt",
+            "label": "Orin TensorRT",
+            "execution_engine": "tensorrt",
+            "acceleration": "nvidia_tensorrt",
+            "target_class": "orin_arm64",
+            "optimization_goal": "TensorRT acceleration on Jetson Orin",
+        },
         "runtime_constraints": {
             "device_profiles": ["orin-tensorrt"],
             "runtimes": ["onnxruntime", "tensorrt"],
@@ -186,6 +218,10 @@ class RuntimeCapabilities:
     board_model: str | None = None
     runtimes: dict[str, Any] = field(default_factory=dict)
     accelerators: dict[str, Any] = field(default_factory=dict)
+    memory: dict[str, Any] = field(default_factory=dict)
+    storage: dict[str, Any] = field(default_factory=dict)
+    thermal: dict[str, Any] = field(default_factory=dict)
+    power: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable representation."""
@@ -198,6 +234,10 @@ class RuntimeCapabilities:
             "board_model": self.board_model,
             "runtimes": self.runtimes,
             "accelerators": self.accelerators,
+            "memory": self.memory,
+            "storage": self.storage,
+            "thermal": self.thermal,
+            "power": self.power,
         }
 
 
@@ -218,6 +258,10 @@ def detect_runtime_capabilities() -> RuntimeCapabilities:
     machine = platform.machine() or "unknown"
     board_model = _detect_board_model()
     device_profile = normalize_device_profile(os.environ.get("TEMMS_DEVICE_PROFILE"))
+    memory = _memory_status()
+    storage = _storage_status()
+    thermal = _thermal_status()
+    power = _power_status()
 
     return RuntimeCapabilities(
         os=platform.platform(),
@@ -229,6 +273,10 @@ def detect_runtime_capabilities() -> RuntimeCapabilities:
         board_model=board_model,
         runtimes=runtimes,
         accelerators=accelerators,
+        memory=memory,
+        storage=storage,
+        thermal=thermal,
+        power=power,
     )
 
 
@@ -248,6 +296,91 @@ def known_device_profiles() -> dict[str, dict[str, Any]]:
 def default_runtime_targets() -> dict[str, dict[str, Any]]:
     """Return built-in container runtime targets for Hub Lite."""
     return {target_id: dict(target) for target_id, target in DEFAULT_RUNTIME_TARGETS.items()}
+
+
+RUNTIME_LANE_DEFAULTS = {
+    "cpu-onnx": {
+        "label": "CPU portable",
+        "execution_engine": "onnxruntime",
+        "acceleration": "cpu",
+        "target_class": "portable_cpu",
+        "optimization_goal": "broad compatibility and deterministic CPU fallback",
+    },
+    "jetson-cuda": {
+        "label": "Jetson CUDA",
+        "execution_engine": "onnxruntime",
+        "acceleration": "nvidia_cuda",
+        "target_class": "jetson_arm64",
+        "optimization_goal": "CUDA acceleration with ONNXRuntime fallback",
+    },
+    "rpi5-tflite": {
+        "label": "Raspberry Pi 5 TFLite",
+        "execution_engine": "tflite_runtime",
+        "acceleration": "arm_cpu",
+        "target_class": "low_power_arm",
+        "optimization_goal": "low-power ARM inference with TensorFlow Lite",
+    },
+    "orin-tensorrt": {
+        "label": "Orin TensorRT",
+        "execution_engine": "tensorrt",
+        "acceleration": "nvidia_tensorrt",
+        "target_class": "orin_arm64",
+        "optimization_goal": "TensorRT acceleration on Jetson Orin",
+    },
+    "device-inventory": {
+        "label": "Device inventory",
+        "execution_engine": "reported_inventory",
+        "acceleration": "reported_inventory",
+        "target_class": "unmanaged_edge",
+        "optimization_goal": "live inventory compatibility",
+    },
+}
+
+
+def runtime_lane_summary(runtime_target: dict[str, Any] | None) -> dict[str, Any]:
+    """Return normalized execution-lane metadata for a runtime target."""
+    if runtime_target is None:
+        lane_id = "device-inventory"
+        explicit_lane: dict[str, Any] = {}
+        runtime_target = {}
+    else:
+        explicit_lane = (
+            runtime_target.get("runtime_lane")
+            if isinstance(runtime_target.get("runtime_lane"), dict)
+            else {}
+        )
+        lane_id = str(explicit_lane.get("lane_id") or _infer_runtime_lane_id(runtime_target))
+
+    defaults = RUNTIME_LANE_DEFAULTS.get(lane_id, RUNTIME_LANE_DEFAULTS["cpu-onnx"])
+    device_profiles = [
+        normalized
+        for normalized in (
+            normalize_device_profile(profile)
+            for profile in runtime_target.get("device_profiles", [])
+        )
+        if normalized
+    ]
+    providers = _runtime_target_onnx_providers(runtime_target)
+    runtime_names = _runtime_target_runtime_names(runtime_target)
+    accelerators = _runtime_target_accelerators(runtime_target)
+
+    return {
+        "schema_version": "temms-runtime-lane/v1",
+        "lane_id": lane_id,
+        "label": str(explicit_lane.get("label") or defaults["label"]),
+        "execution_engine": str(
+            explicit_lane.get("execution_engine") or defaults["execution_engine"]
+        ),
+        "acceleration": str(explicit_lane.get("acceleration") or defaults["acceleration"]),
+        "target_class": str(explicit_lane.get("target_class") or defaults["target_class"]),
+        "optimization_goal": str(
+            explicit_lane.get("optimization_goal") or defaults["optimization_goal"]
+        ),
+        "device_profiles": device_profiles,
+        "runtimes": runtime_names,
+        "providers": providers,
+        "accelerators": accelerators,
+    }
 
 
 def runtime_defaults_for_profile(
@@ -410,6 +543,89 @@ def _tflite_status() -> dict[str, Any]:
     }
 
 
+def _memory_status() -> dict[str, Any]:
+    """Return best-effort memory capacity in MiB."""
+    try:
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        total_pages = os.sysconf("SC_PHYS_PAGES")
+        available_pages = os.sysconf("SC_AVPHYS_PAGES")
+        return {
+            "total_mb": round((page_size * total_pages) / (1024 * 1024), 1),
+            "available_mb": round((page_size * available_pages) / (1024 * 1024), 1),
+        }
+    except (AttributeError, OSError, ValueError):
+        return {}
+
+
+def _storage_status() -> dict[str, Any]:
+    """Return best-effort free storage near the TEMMS data path in MiB."""
+    raw_path = os.environ.get("TEMMS_DATA_DIR") or "/var/lib/temms"
+    path = Path(raw_path if Path(raw_path).exists() else ".")
+    try:
+        usage = shutil.disk_usage(path)
+    except OSError:
+        return {}
+    return {
+        "path": str(path),
+        "total_mb": round(usage.total / (1024 * 1024), 1),
+        "available_mb": round(usage.free / (1024 * 1024), 1),
+    }
+
+
+def _thermal_status() -> dict[str, Any]:
+    """Return best-effort CPU/board temperature in Celsius."""
+    readings: list[float] = []
+    for temp_path in Path("/sys/class/thermal").glob("thermal_zone*/temp"):
+        try:
+            raw = temp_path.read_text(encoding="utf-8", errors="ignore").strip()
+            value = float(raw)
+            readings.append(value / 1000 if value > 1000 else value)
+        except (OSError, ValueError):
+            continue
+    if not readings:
+        return {}
+    return {
+        "temperature_c": round(max(readings), 1),
+        "max_observed_c": round(max(readings), 1),
+    }
+
+
+def _power_status() -> dict[str, Any]:
+    """Return best-effort power source and battery state."""
+    power_root = Path("/sys/class/power_supply")
+    if not power_root.exists():
+        return {}
+    status: dict[str, Any] = {}
+    try:
+        for supply in power_root.iterdir():
+            supply_type = _read_text(supply / "type").lower()
+            if supply_type in {"mains", "usb", "usb-c"}:
+                online = _read_text(supply / "online")
+                if online:
+                    status["source"] = "mains" if online == "1" else "battery"
+                    status["mains_online"] = online == "1"
+            elif supply_type == "battery":
+                capacity = _read_text(supply / "capacity")
+                battery_status = _read_text(supply / "status")
+                if capacity:
+                    try:
+                        status["battery_percent"] = float(capacity)
+                    except ValueError:
+                        pass
+                if battery_status:
+                    status["battery_status"] = battery_status
+    except OSError:
+        return status
+    return status
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="ignore").strip()
+    except OSError:
+        return ""
+
+
 def _runtime_available(runtimes: dict[str, Any], name: str) -> bool:
     normalized = name.lower().replace("-", "_")
     aliases = {
@@ -421,6 +637,76 @@ def _runtime_available(runtimes: dict[str, Any], name: str) -> bool:
     }
     key = aliases.get(normalized, normalized)
     return bool(runtimes.get(key, {}).get("available", False))
+
+
+def _runtime_target_runtime_names(runtime_target: dict[str, Any]) -> list[str]:
+    runtimes = runtime_target.get("runtimes") if isinstance(runtime_target, dict) else {}
+    if not isinstance(runtimes, dict):
+        return []
+    names = [
+        str(name)
+        for name, status in runtimes.items()
+        if not isinstance(status, dict) or status.get("available") is not False
+    ]
+    constraints = runtime_target.get("runtime_constraints")
+    if isinstance(constraints, dict):
+        names.extend(str(runtime) for runtime in constraints.get("runtimes", []) or [])
+    return sorted({name for name in names if name})
+
+
+def _runtime_target_onnx_providers(runtime_target: dict[str, Any]) -> list[str]:
+    providers: list[str] = []
+    runtimes = runtime_target.get("runtimes") if isinstance(runtime_target, dict) else {}
+    onnxruntime = runtimes.get("onnxruntime") if isinstance(runtimes, dict) else {}
+    if isinstance(onnxruntime, dict):
+        providers.extend(str(provider) for provider in onnxruntime.get("providers", []) or [])
+    constraints = runtime_target.get("runtime_constraints")
+    if isinstance(constraints, dict):
+        providers.extend(str(provider) for provider in constraints.get("providers", []) or [])
+        providers.extend(
+            str(provider) for provider in constraints.get("preferred_providers", []) or []
+        )
+        providers.extend(str(provider) for provider in constraints.get("provider_order", []) or [])
+    return list(dict.fromkeys(provider for provider in providers if provider))
+
+
+def _runtime_target_accelerators(runtime_target: dict[str, Any]) -> list[str]:
+    accelerators = runtime_target.get("accelerators") if isinstance(runtime_target, dict) else {}
+    names: list[str] = []
+    if isinstance(accelerators, dict):
+        names.extend(
+            str(name)
+            for name, status in accelerators.items()
+            if not isinstance(status, dict) or status.get("available") is not False
+        )
+    constraints = runtime_target.get("runtime_constraints")
+    if isinstance(constraints, dict):
+        names.extend(str(accelerator) for accelerator in constraints.get("accelerators", []) or [])
+        if constraints.get("requires_gpu") and "gpu" not in names:
+            names.append("gpu")
+    return sorted({name for name in names if name})
+
+
+def _infer_runtime_lane_id(runtime_target: dict[str, Any]) -> str:
+    runtime_names = {name.lower() for name in _runtime_target_runtime_names(runtime_target)}
+    providers = {provider.lower() for provider in _runtime_target_onnx_providers(runtime_target)}
+    accelerators = {accelerator.lower() for accelerator in _runtime_target_accelerators(runtime_target)}
+    device_profiles = {
+        profile
+        for profile in (
+            normalize_device_profile(profile)
+            for profile in runtime_target.get("device_profiles", [])
+        )
+        if profile
+    }
+
+    if "tensorrt" in runtime_names or any("tensorrt" in provider for provider in providers):
+        return "orin-tensorrt"
+    if any("cuda" in provider for provider in providers) or "nvidia" in accelerators:
+        return "jetson-cuda"
+    if "tflite_runtime" in runtime_names or "tflite" in runtime_names or "rpi5-tflite" in device_profiles:
+        return "rpi5-tflite"
+    return "cpu-onnx"
 
 
 def _normalize_arch(machine: str | None) -> str:

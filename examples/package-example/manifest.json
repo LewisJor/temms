@@ -57,6 +57,14 @@
         "reason": "example package fixture",
         "source": "example-package"
       },
+      "performance_slo": {
+        "max_latency_ms_p95": 10.0,
+        "min_throughput_ips": 100.0
+      },
+      "resource_requirements": {
+        "min_memory_available_mb": 384.0,
+        "min_storage_available_mb": 64.0
+      },
       "provenance": {
         "source": "example-package",
         "run_id": "abc123def456",
@@ -112,6 +120,14 @@
         "available": false,
         "reason": "example package fixture",
         "source": "example-package"
+      },
+      "performance_slo": {
+        "max_latency_ms_p95": 12.0,
+        "min_throughput_ips": 85.0
+      },
+      "resource_requirements": {
+        "min_memory_available_mb": 512.0,
+        "min_storage_available_mb": 64.0
       },
       "provenance": {
         "source": "example-package",
@@ -169,6 +185,14 @@
         "available": false,
         "reason": "example package fixture",
         "source": "example-package"
+      },
+      "performance_slo": {
+        "max_latency_ms_p95": 5.0,
+        "min_throughput_ips": 250.0
+      },
+      "resource_requirements": {
+        "min_memory_available_mb": 128.0,
+        "min_storage_available_mb": 32.0
       },
       "provenance": {
         "source": "example-package",

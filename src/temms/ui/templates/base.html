@@ -222,7 +222,7 @@
             <div class="flex flex-col gap-3 py-3">
                 <div class="flex shrink-0 items-center justify-between gap-4">
                     <div class="flex items-center gap-4">
-                    <a href="/ui/" class="text-xl font-bold text-green-400">TEMMS</a>
+                    <a href="/ui/hub" class="text-xl font-bold text-green-400">TEMMS</a>
                     <span class="hidden text-sm sm:inline" style="color: var(--temms-muted)">Offline Edge ML Ops</span>
                     </div>
                     <button type="button" data-theme-toggle class="theme-toggle-button" aria-label="Toggle color mode">
@@ -243,9 +243,7 @@
                     </button>
                 </div>
                 <div class="flex gap-2 overflow-x-auto pb-1 lg:pb-0">
-                    <a href="/ui/" class="temms-nav-link whitespace-nowrap border px-3 py-2 text-sm font-semibold {% if active_page == 'operate' %}temms-nav-link-active{% endif %}">Deploy</a>
-                    <a href="/ui/runtimes" class="temms-nav-link whitespace-nowrap border px-3 py-2 text-sm font-semibold {% if active_page == 'runtimes' %}temms-nav-link-active{% endif %}">Runtime Images</a>
-                    <a href="/ui/hub" class="temms-nav-link whitespace-nowrap border px-3 py-2 text-sm font-semibold {% if active_page == 'hub' %}temms-nav-link-active{% endif %}">Admin Workbench</a>
+                    <a href="/ui/hub" class="temms-nav-link whitespace-nowrap border px-3 py-2 text-sm font-semibold {% if active_page == 'hub' %}temms-nav-link-active{% endif %}">Mission Package Workbench</a>
                     <a href="http://localhost:5000" target="_blank" class="whitespace-nowrap border border-transparent px-3 py-2 text-sm text-emerald-300 hover:border-emerald-500/50 hover:bg-emerald-500/10">MLflow &#8599;</a>
                 </div>
                 <details class="text-xs" {% if active_page in ['dashboard', 'slots', 'conditions', 'decisions', 'models', 'import'] %}open{% endif %}>

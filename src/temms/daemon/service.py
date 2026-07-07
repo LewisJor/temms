@@ -19,13 +19,13 @@ import socket
 import time
 from pathlib import Path
 from typing import List, Optional, Dict, Any
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 
 from temms.slots.manager import SlotManager, SlotState
 from temms.conditions.store import ConditionStore
-from temms.conditions.collectors import ConditionCollector, collect_all_async
-from temms.policy.engine import PolicyEngine, PolicyEvalResult
+from temms.conditions.collectors import AsyncConditionCollector, ConditionCollector
+from temms.policy.engine import PolicyEngine
 from temms.core.cache import ModelCache
 from temms.core.storage import ModelStorage
 from temms.inference.runtime import InferenceRuntime
@@ -46,6 +46,28 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_DATA_DIR = Path("/var/lib/temms")
 SYSTEM_POLICY_DIR = Path("/etc/temms/policies")
+COLLECTOR_HEALTH_PRIORITY = 900
+DEMO_EDGE_MEMORY_TOTAL_MB = 8192.0
+DEMO_EDGE_MEMORY_AVAILABLE_MB = 4096.0
+DEMO_EDGE_STORAGE_TOTAL_MB = 32768.0
+DEMO_EDGE_STORAGE_AVAILABLE_MB = 24576.0
+
+
+class ActivationPreflightBlocked(RuntimeError):
+    """Raised when local edge readiness refuses a model activation."""
+
+    def __init__(self, message: str, *, readiness: Dict[str, Any], blocking_gates: List[Dict[str, Any]]):
+        super().__init__(message)
+        self.readiness = readiness
+        self.blocking_gates = blocking_gates
+
+
+def _condition_path_segment(value: str) -> str:
+    """Normalize a free-form source name into a condition path segment."""
+    segment = "".join(
+        char.lower() if char.isalnum() or char == "_" else "_" for char in str(value)
+    ).strip("_")
+    return segment or "collector"
 
 
 def _hub_base_url(url: str) -> str:
@@ -61,6 +83,93 @@ def _hub_headers(token: Optional[str]) -> Dict[str, str]:
     if not token:
         return {}
     return {"X-TEMMS-Token": token}
+
+
+def _hub_error_payload(response: Any) -> Dict[str, Any]:
+    """Return structured telemetry for a failed Hub Lite HTTP response."""
+    payload: Dict[str, Any] = {
+        "status_code": getattr(response, "status_code", None),
+        "failure_kind": "http_error",
+    }
+    try:
+        body = response.json()
+    except Exception:
+        payload["detail"] = getattr(response, "text", "")
+        return payload
+
+    detail = body.get("detail") if isinstance(body, dict) else body
+    if isinstance(detail, dict):
+        message = detail.get("message")
+        blocking_gates = detail.get("blocking_gates")
+        readiness = detail.get("readiness") if isinstance(detail.get("readiness"), dict) else {}
+        payload.update(
+            {
+                "detail": detail,
+                "message": message,
+                "failure_kind": (
+                    "readiness_preflight"
+                    if message == "Rollout apply preflight failed" or blocking_gates
+                    else "http_error"
+                ),
+                "blocking_gates": blocking_gates if isinstance(blocking_gates, list) else [],
+                "blocking_gate_count": (
+                    len(blocking_gates) if isinstance(blocking_gates, list) else 0
+                ),
+                "readiness_status": readiness.get("status"),
+                "readiness_selection": readiness.get("selection"),
+            }
+        )
+        return payload
+
+    payload["detail"] = detail
+    return payload
+
+
+def _activation_blocking_gates(readiness: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return readiness gates that should block local policy/fallback activation."""
+    blocked_gate_ids = {
+        "model_package",
+        "runtime_target",
+        "performance_fit",
+        "resource_envelope",
+        "edge_target",
+    }
+    attention_gate_ids = {"performance_fit", "resource_envelope", "edge_target"}
+    blocking: List[Dict[str, Any]] = []
+    for gate in readiness.get("gates") or []:
+        if not isinstance(gate, dict):
+            continue
+        gate_id = str(gate.get("gate_id") or "")
+        status = str(gate.get("status") or "")
+        should_block = (
+            status == "blocked" and gate_id in blocked_gate_ids
+        ) or (
+            status == "attention" and gate_id in attention_gate_ids
+        )
+        if not should_block:
+            continue
+        blocking.append(
+            {
+                "gate_id": gate_id,
+                "label": gate.get("label"),
+                "status": gate.get("status"),
+                "state": gate.get("state"),
+                "detail": gate.get("detail"),
+                "refs": gate.get("refs") if isinstance(gate.get("refs"), dict) else {},
+            }
+        )
+    return blocking
+
+
+def _gate_summary(gates: List[Dict[str, Any]]) -> str:
+    parts = [
+        f"{gate.get('label') or gate.get('gate_id')} {gate.get('state')}: {gate.get('detail')}"
+        for gate in gates[:3]
+    ]
+    remaining = len(gates) - len(parts)
+    if remaining > 0:
+        parts.append(f"{remaining} more gate{'s' if remaining != 1 else ''}")
+    return "; ".join(parts)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -80,6 +189,77 @@ def _env_int(name: str, default: int) -> int:
         return int(value)
     except ValueError as exc:
         raise ValueError(f"{name} must be an integer") from exc
+
+
+def _env_float(name: str, default: float) -> float:
+    """Parse a floating point environment variable."""
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return default
+    try:
+        return float(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number") from exc
+
+
+def _float_or_none(value: Any) -> Optional[float]:
+    """Return a finite float for numeric telemetry values."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _apply_resource_floor(
+    resource: Dict[str, Any],
+    *,
+    available_mb: float,
+    total_mb: float,
+) -> Dict[str, Any]:
+    """Raise demo resource telemetry to a deterministic healthy floor."""
+    current_available = _float_or_none(resource.get("available_mb"))
+    current_total = _float_or_none(resource.get("total_mb"))
+    floored_available = max(current_available or 0.0, available_mb)
+    floored_total = max(current_total or 0.0, total_mb, floored_available)
+    resource["available_mb"] = round(floored_available, 1)
+    resource["total_mb"] = round(floored_total, 1)
+    return resource
+
+
+def _apply_demo_edge_inventory_floor(inventory: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep the local Docker demo from starting in accidental resource drift."""
+    memory = inventory.get("memory") if isinstance(inventory.get("memory"), dict) else {}
+    storage = inventory.get("storage") if isinstance(inventory.get("storage"), dict) else {}
+    inventory["memory"] = _apply_resource_floor(
+        memory,
+        available_mb=_env_float(
+            "TEMMS_DEMO_EDGE_MEMORY_AVAILABLE_MB",
+            DEMO_EDGE_MEMORY_AVAILABLE_MB,
+        ),
+        total_mb=_env_float("TEMMS_DEMO_EDGE_MEMORY_TOTAL_MB", DEMO_EDGE_MEMORY_TOTAL_MB),
+    )
+    inventory["storage"] = _apply_resource_floor(
+        storage,
+        available_mb=_env_float(
+            "TEMMS_DEMO_EDGE_STORAGE_AVAILABLE_MB",
+            DEMO_EDGE_STORAGE_AVAILABLE_MB,
+        ),
+        total_mb=_env_float("TEMMS_DEMO_EDGE_STORAGE_TOTAL_MB", DEMO_EDGE_STORAGE_TOTAL_MB),
+    )
+    inventory["simulated"] = True
+    inventory["source"] = "docker-demo-heartbeat"
+    inventory["demo_inventory"] = {
+        "resource_floor": True,
+        "memory_available_mb": inventory["memory"]["available_mb"],
+        "storage_available_mb": inventory["storage"]["available_mb"],
+    }
+    return inventory
 
 
 def _default_data_dir() -> Path:
@@ -186,6 +366,7 @@ class DaemonConfig:
     hub_device_id: Optional[str] = None
     hub_device_profile: Optional[str] = None
     hub_sync_interval_s: float = 30.0
+    edge_heartbeat_interval_s: float = 60.0
     hub_auto_apply: bool = False
     rollout_require_signature: bool = True
     rollout_signing_key: Optional[str] = None
@@ -239,6 +420,9 @@ class DaemonConfig:
         env_sync_interval = os.environ.get("TEMMS_HUB_SYNC_INTERVAL_S")
         if env_sync_interval:
             self.hub_sync_interval_s = float(env_sync_interval)
+        env_edge_heartbeat_interval = os.environ.get("TEMMS_EDGE_HEARTBEAT_INTERVAL_S")
+        if env_edge_heartbeat_interval:
+            self.edge_heartbeat_interval_s = float(env_edge_heartbeat_interval)
         self.hub_auto_apply = self.hub_auto_apply or _env_bool("TEMMS_HUB_AUTO_APPLY")
         self.rollout_require_signature = _env_bool(
             "TEMMS_ROLLOUT_REQUIRE_SIGNATURE",
@@ -401,6 +585,10 @@ class TEMMSDaemon:
                 asyncio.create_task(self._condition_loop(), name="condition_loop"),
                 asyncio.create_task(self._policy_loop(), name="policy_loop"),
                 asyncio.create_task(self._reconciliation_loop(), name="reconciliation_loop"),
+                asyncio.create_task(
+                    self._edge_heartbeat_loop(),
+                    name="edge_heartbeat_loop",
+                ),
             ]
             if self.config.hub_url:
                 self._tasks.append(asyncio.create_task(self._hub_sync_loop(), name="hub_sync_loop"))
@@ -480,18 +668,30 @@ class TEMMSDaemon:
                 continue
 
             try:
+                conditions = self.condition_store.get_snapshot()
+                activation_preflight = self._activation_preflight(
+                    slot_name=slot.name,
+                    model_id=model.id,
+                    trigger_type="startup",
+                    trigger_detail="default_model",
+                    conditions=conditions,
+                )
+
                 # Load model
                 self.slot_manager.update_slot_state(slot.name, SlotState.LOADING)
                 await self.inference_runtime.load_model(slot.name, model.id)
 
                 # Activate
+                audit_metadata = self._model_audit_metadata(model.id)
+                if activation_preflight:
+                    audit_metadata["activation_preflight"] = activation_preflight
                 self.slot_manager.activate_model(
                     slot_name=slot.name,
                     model_id=model.id,
                     trigger_type="startup",
                     trigger_detail="default_model",
-                    conditions=self.condition_store.get_snapshot(),
-                    audit_metadata=self._model_audit_metadata(model.id),
+                    conditions=conditions,
+                    audit_metadata=audit_metadata,
                 )
 
                 logger.info(f"Auto-started slot {slot.name} with model {model.id}")
@@ -501,19 +701,28 @@ class TEMMSDaemon:
                         "slot": slot.name,
                         "model_id": model.id,
                         "trigger": "default_model",
-                        "model": self._model_audit_metadata(model.id),
+                        "model": audit_metadata,
                     },
                 )
 
             except Exception as e:
+                preflight_blocked = isinstance(e, ActivationPreflightBlocked)
+                blocking_gates = e.blocking_gates if preflight_blocked else []
                 logger.error(f"Failed to auto-start slot {slot.name}: {e}")
-                self.slot_manager.update_slot_state(slot.name, SlotState.ERROR)
+                self.slot_manager.update_slot_state(
+                    slot.name,
+                    SlotState.STOPPED if preflight_blocked else SlotState.ERROR,
+                )
                 self._emit_telemetry(
                     "slot.startup_failed",
                     {
                         "slot": slot.name,
                         "model": slot.default_model,
                         "detail": str(e),
+                        "failure_kind": (
+                            "readiness_preflight" if preflight_blocked else "load_error"
+                        ),
+                        "blocking_gates": blocking_gates,
                     },
                 )
 
@@ -521,7 +730,7 @@ class TEMMSDaemon:
         """
         Periodically collect conditions from all collectors concurrently.
 
-        Uses collect_all_async for concurrent collection (#15).
+        Preserves each collector's source and priority for decision evidence.
         Signals the policy loop via _conditions_changed event (#3).
         """
         logger.info(
@@ -530,24 +739,19 @@ class TEMMSDaemon:
 
         while self._running:
             try:
-                # Collect from all collectors concurrently
-                all_conditions = await collect_all_async(self.collectors)
+                collected_conditions = await self._collect_conditions_with_sources()
 
-                # Store collected conditions
-                for path, value in all_conditions.items():
-                    # Determine source and priority from the collector that produced this
-                    # Since collect_all_async merges results, use a default
-                    # The individual collector's priority is embedded in the result
+                for path, value, source, priority in collected_conditions:
                     self.condition_store.set(
                         path=path,
                         value=value,
-                        source="collector",
-                        priority=100,  # Sensor priority
+                        source=source,
+                        priority=priority,
                     )
                     condition_update_count.inc()
 
                 # Signal the policy loop that conditions changed
-                if all_conditions:
+                if collected_conditions:
                     self._conditions_changed.set()
 
             except Exception as e:
@@ -564,6 +768,81 @@ class TEMMSDaemon:
                 pass  # Continue loop
 
         logger.info("Condition collection loop stopped")
+
+    async def _collect_conditions_with_sources(self) -> List[tuple[str, Any, str, int]]:
+        """Collect condition values while retaining each collector's source metadata."""
+        loop = asyncio.get_running_loop()
+
+        async def collect_one(collector: ConditionCollector) -> List[tuple[str, Any, str, int]]:
+            source = str(getattr(collector, "source_name", None) or "collector")
+            priority = int(getattr(collector, "source_priority", 100))
+            health_prefix = f"runtime.collectors.{_condition_path_segment(source)}"
+            health_source = f"{source}:health"
+            try:
+                if isinstance(collector, AsyncConditionCollector):
+                    result = await collector.collect_async()
+                else:
+                    result = await loop.run_in_executor(None, collector.collect)
+            except Exception as e:
+                logger.error(f"Collector {source} failed: {e}")
+                return [
+                    (
+                        f"{health_prefix}.healthy",
+                        False,
+                        health_source,
+                        COLLECTOR_HEALTH_PRIORITY,
+                    ),
+                    (
+                        f"{health_prefix}.last_error",
+                        str(e),
+                        health_source,
+                        COLLECTOR_HEALTH_PRIORITY,
+                    ),
+                    (
+                        f"{health_prefix}.reported_count",
+                        0,
+                        health_source,
+                        COLLECTOR_HEALTH_PRIORITY,
+                    ),
+                ]
+            if not isinstance(result, dict):
+                result = {}
+            collected = [(path, value, source, priority) for path, value in result.items()]
+            collected.extend(
+                [
+                    (
+                        f"{health_prefix}.healthy",
+                        True,
+                        health_source,
+                        COLLECTOR_HEALTH_PRIORITY,
+                    ),
+                    (
+                        f"{health_prefix}.last_error",
+                        None,
+                        health_source,
+                        COLLECTOR_HEALTH_PRIORITY,
+                    ),
+                    (
+                        f"{health_prefix}.reported_count",
+                        len(result),
+                        health_source,
+                        COLLECTOR_HEALTH_PRIORITY,
+                    ),
+                ]
+            )
+            return collected
+
+        results = await asyncio.gather(
+            *(collect_one(collector) for collector in self.collectors),
+            return_exceptions=True,
+        )
+        collected: List[tuple[str, Any, str, int]] = []
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error(f"Condition collection task failed: {result}")
+            else:
+                collected.extend(result)
+        return collected
 
     async def _policy_loop(self) -> None:
         """
@@ -680,6 +959,44 @@ class TEMMSDaemon:
                 pass
 
         logger.info("Hub Lite sync loop stopped")
+
+    async def _edge_heartbeat_loop(self) -> None:
+        """Keep local Hub Lite edge inventory fresh for readiness gates."""
+        logger.info(
+            "Local edge heartbeat loop started (device=%s, interval=%ss)",
+            self.config.hub_device_id or socket.gethostname(),
+            self.config.edge_heartbeat_interval_s,
+        )
+
+        while self._running:
+            try:
+                await asyncio.to_thread(self._edge_heartbeat_once)
+            except Exception as e:
+                logger.warning("Local edge heartbeat failed: %s", e)
+
+            try:
+                await asyncio.wait_for(
+                    self._shutdown_event.wait(),
+                    timeout=self.config.edge_heartbeat_interval_s,
+                )
+                break
+            except asyncio.TimeoutError:
+                pass
+
+        logger.info("Local edge heartbeat loop stopped")
+
+    def _edge_heartbeat_once(self) -> Dict[str, Any]:
+        """Refresh this daemon's local Hub Lite heartbeat and capability inventory."""
+        device_id = self.config.hub_device_id or socket.gethostname()
+        inventory = self._hub_inventory()
+        profile = self.config.hub_device_profile or inventory.get("device_profile")
+        self.hub_lite.enroll_device(device_id, profile=profile, inventory=inventory)
+        return self.hub_lite.heartbeat(
+            device_id,
+            status="online",
+            inventory=inventory,
+            deployment_status=self._hub_deployment_status(),
+        )
 
     async def _hub_sync_once(self) -> None:
         """Run one online sync pass against a central Hub Lite endpoint."""
@@ -838,6 +1155,8 @@ class TEMMSDaemon:
         inventory = detect_runtime_capabilities().to_dict()
         if self.config.hub_device_profile:
             inventory["device_profile"] = normalize_device_profile(self.config.hub_device_profile)
+        if _env_bool("TEMMS_DEMO_SEED_HUB"):
+            inventory = _apply_demo_edge_inventory_floor(inventory)
         inventory["temms"] = {
             "offline_mode": self.config.offline_mode,
             "api_host": self.config.inference_host,
@@ -905,8 +1224,10 @@ class TEMMSDaemon:
             self.hub_lite.assign_rollout(
                 device_id=device_id,
                 package_id=package_id,
+                model_id=rollout.get("model_id"),
                 slot=rollout.get("slot"),
                 rollout_id=rollout_id,
+                runtime_target_id=rollout.get("runtime_target_id"),
                 actor=rollout.get("actor"),
             )
             mirrored_rollouts += 1
@@ -1072,8 +1393,7 @@ class TEMMSDaemon:
                         "rollout.auto_apply_failed",
                         {
                             "rollout_id": rollout_id,
-                            "status_code": response.status_code,
-                            "detail": response.text,
+                            **_hub_error_payload(response),
                         },
                     )
                     continue
@@ -1179,6 +1499,13 @@ class TEMMSDaemon:
         old_model_id = slot.active_model_id
 
         try:
+            activation_preflight = self._activation_preflight(
+                slot_name=slot_name,
+                model_id=new_model_id,
+                trigger_type=trigger_type,
+                trigger_detail=trigger_detail,
+                conditions=conditions,
+            )
             # Set loading state
             self.slot_manager.update_slot_state(slot_name, SlotState.LOADING)
 
@@ -1187,6 +1514,8 @@ class TEMMSDaemon:
 
             # Activate model
             audit_metadata = self._model_audit_metadata(new_model_id)
+            if activation_preflight:
+                audit_metadata["activation_preflight"] = activation_preflight
             if decision_metadata:
                 audit_metadata.update(decision_metadata)
             self.slot_manager.activate_model(
@@ -1218,6 +1547,7 @@ class TEMMSDaemon:
             )
 
         except Exception as e:
+            preflight_blocked = isinstance(e, ActivationPreflightBlocked)
             logger.error(f"Model switch failed for {slot_name}: {e}")
             self._emit_telemetry(
                 "slot.model_switch_failed",
@@ -1236,7 +1566,17 @@ class TEMMSDaemon:
             # Try fallback chain
             fallback_chain = self.policy_engine.get_fallback_chain(slot_name)
             if fallback_chain:
-                await self._execute_fallback(slot_name, fallback_chain, conditions)
+                await self._execute_fallback(
+                    slot_name,
+                    fallback_chain,
+                    conditions,
+                    selected_model=new_model_id,
+                    trigger_detail=trigger_detail,
+                    load_error=str(e),
+                    preserve_slot_state_on_failure=preflight_blocked,
+                )
+            elif preflight_blocked:
+                self.slot_manager.update_slot_state(slot_name, SlotState.RUNNING)
             else:
                 self.slot_manager.update_slot_state(slot_name, SlotState.ERROR)
 
@@ -1245,45 +1585,153 @@ class TEMMSDaemon:
         slot_name: str,
         fallback_chain: List[str],
         conditions: Dict[str, Any],
+        selected_model: Optional[str] = None,
+        trigger_detail: str = "primary_failed",
+        load_error: Optional[str] = None,
+        preserve_slot_state_on_failure: bool = False,
     ) -> None:
         """Execute fallback chain for slot."""
         logger.info(f"Executing fallback chain for {slot_name}: {fallback_chain}")
 
-        loaded_model_id = await self.inference_runtime.try_fallback_chain(slot_name, fallback_chain)
+        attempted: List[str] = []
+        failures: List[str] = []
+        if selected_model and load_error:
+            failures.append(f"{selected_model}: {load_error}")
 
-        if loaded_model_id:
-            # Activate fallback model
+        for model_name in fallback_chain:
+            model = self.model_cache.find_model(model_name)
+            if model is None:
+                attempted.append(model_name)
+                failures.append(f"{model_name}: not found")
+                logger.warning(f"Fallback model not found: {model_name}")
+                continue
+
+            attempted.append(model.id)
+            try:
+                activation_preflight = self._activation_preflight(
+                    slot_name=slot_name,
+                    model_id=model.id,
+                    trigger_type="fallback",
+                    trigger_detail=trigger_detail,
+                    conditions=conditions,
+                )
+                await self.inference_runtime.load_model(slot_name, model.id)
+            except Exception as e:
+                failures.append(f"{model.id}: {e}")
+                logger.warning(f"Fallback model {model_name} failed: {e}")
+                continue
+
+            fallback_metadata = {
+                "selected_model": selected_model,
+                "attempted": attempted,
+                "failures": failures,
+            }
+            audit_metadata = self._model_audit_metadata(model.id)
+            if activation_preflight:
+                audit_metadata["activation_preflight"] = activation_preflight
+            audit_metadata["fallback"] = fallback_metadata
+            fallback_trigger = (
+                f"fallback after {trigger_detail}" if trigger_detail else "primary_failed"
+            )
             self.slot_manager.activate_model(
                 slot_name=slot_name,
-                model_id=loaded_model_id,
+                model_id=model.id,
                 trigger_type="fallback",
-                trigger_detail="primary_failed",
+                trigger_detail=fallback_trigger,
                 conditions=conditions,
-                audit_metadata=self._model_audit_metadata(loaded_model_id),
+                audit_metadata=audit_metadata,
             )
-            logger.info(f"Fallback successful for {slot_name}: {loaded_model_id}")
+            logger.info(f"Fallback successful for {slot_name}: {model.id}")
             self._emit_telemetry(
                 "slot.fallback",
                 {
                     "slot": slot_name,
-                    "model_id": loaded_model_id,
-                    "reason": "primary_failed",
+                    "model_id": model.id,
+                    "reason": fallback_trigger,
                     "conditions": conditions,
-                    "model": self._model_audit_metadata(loaded_model_id),
+                    "model": audit_metadata,
+                    "fallback": fallback_metadata,
                 },
             )
-        else:
-            # All fallbacks failed
-            self.slot_manager.update_slot_state(slot_name, SlotState.ERROR)
-            logger.critical(f"All fallbacks failed for slot {slot_name}")
-            self._emit_telemetry(
-                "slot.fallback_failed",
-                {
-                    "slot": slot_name,
-                    "fallback_chain": fallback_chain,
-                    "conditions": conditions,
-                },
-            )
+            return
+
+        # All fallbacks failed
+        self.slot_manager.update_slot_state(
+            slot_name,
+            SlotState.RUNNING if preserve_slot_state_on_failure else SlotState.ERROR,
+        )
+        logger.critical(f"All fallbacks failed for slot {slot_name}")
+        self._emit_telemetry(
+            "slot.fallback_failed",
+            {
+                "slot": slot_name,
+                "fallback_chain": fallback_chain,
+                "selected_model": selected_model,
+                "attempted": attempted,
+                "failures": failures,
+                "conditions": conditions,
+            },
+        )
+
+    def _activation_preflight(
+        self,
+        *,
+        slot_name: str,
+        model_id: str,
+        trigger_type: str,
+        trigger_detail: str,
+        conditions: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """Block local activation when Hub Lite proves this edge cannot host the model."""
+        model = self.model_cache.get_model(model_id)
+        if model is None or not model.package_id:
+            return None
+        package = self.hub_lite.get_package(model.package_id)
+        if package is None:
+            return None
+
+        device_id = self.config.hub_device_id or socket.gethostname()
+        if self.hub_lite.get_device(device_id) is None:
+            return None
+
+        readiness = self.hub_lite.deployment_readiness(
+            package_id=model.package_id,
+            model_id=model.id,
+            device_id=device_id,
+            slot=slot_name,
+        )
+        blocking_gates = _activation_blocking_gates(readiness)
+        summary = {
+            "schema_version": "temms-activation-preflight/v1",
+            "status": readiness.get("status"),
+            "selection": readiness.get("selection"),
+            "checked_at": readiness.get("checked_at"),
+        }
+        if not blocking_gates:
+            return summary
+
+        message = "activation preflight blocked: " + _gate_summary(blocking_gates)
+        self._emit_telemetry(
+            "slot.activation_preflight_blocked",
+            {
+                "slot": slot_name,
+                "model_id": model.id,
+                "package_id": model.package_id,
+                "device_id": device_id,
+                "trigger_type": trigger_type,
+                "trigger_detail": trigger_detail,
+                "conditions": conditions,
+                "blocking_gates": blocking_gates,
+                "blocking_gate_count": len(blocking_gates),
+                "readiness_status": readiness.get("status"),
+                "readiness_selection": readiness.get("selection"),
+            },
+        )
+        raise ActivationPreflightBlocked(
+            message,
+            readiness=readiness,
+            blocking_gates=blocking_gates,
+        )
 
     def _model_audit_metadata(self, model_id: str | None) -> Dict[str, Any]:
         """Return compact model/package context for decision logs and telemetry."""

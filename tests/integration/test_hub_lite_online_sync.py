@@ -77,6 +77,7 @@ async def test_online_sync_downloads_signed_package_and_auto_applies(temp_dir, m
     assert packaged.status_code == 200, packaged.text
     assert packaged.json()["package"]["package_id"] == "mlflow-detector-7"
     assert packaged.json()["package"]["metadata"]["validation"]["signature_verified"] is True
+    _release_package(central["hub_lite"], "mlflow-detector-7")
 
     central["hub_lite"].assign_rollout(
         "edge-online",
@@ -209,6 +210,27 @@ def _build_system(root):
         "inference_runtime": inference_runtime,
         "hub_lite": hub_lite,
     }
+
+
+def _release_package(hub: HubLiteStore, package_id: str) -> dict:
+    hub.promote_package(
+        package_id,
+        "validated",
+        actor="operator:validator",
+        reason="runtime validation passed",
+    )
+    hub.promote_package(
+        package_id,
+        "approved",
+        actor="operator:approver",
+        reason="package approved for release",
+    )
+    return hub.promote_package(
+        package_id,
+        "released",
+        actor="operator:release",
+        reason="package released for rollout",
+    )
 
 
 def _install_fake_mlflow(monkeypatch, root):
