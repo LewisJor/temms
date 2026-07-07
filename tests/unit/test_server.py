@@ -2448,6 +2448,19 @@ ddil:
             in mismatched_stage_response.json()["detail"]
         )
 
+        override_rollout_stage_response = hub_ui_client.post(
+            "/v1/hub/mission-package/stage",
+            json={
+                "mission_package": mission_package_download,
+                "rollout_id": "operator-override-rollout",
+            },
+        )
+        assert override_rollout_stage_response.status_code == 400
+        assert (
+            "rollout_id must match deployment intent"
+            in override_rollout_stage_response.json()["detail"]
+        )
+
         mission_package_stage_response = hub_ui_client.post(
             "/v1/hub/mission-package/stage",
             json={

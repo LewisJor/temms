@@ -3627,8 +3627,6 @@ class TestHubCommand:
                 str(package_path),
                 "--actor",
                 "operator:cli",
-                "--rollout-id",
-                "rollout-cli",
                 "--reason",
                 "field stage from signed mission package",
             ],
@@ -3643,7 +3641,7 @@ class TestHubCommand:
         assert calls[0][1]["mission_package"]["edge_handoff"]["mode"] == (
             "stage_approve_apply"
         )
-        assert calls[0][1]["rollout_id"] == "rollout-cli"
+        assert "rollout_id" not in calls[0][1]
         assert calls[0][1]["actor"] == "operator:cli"
         assert calls[0][1]["reason"] == "field stage from signed mission package"
 

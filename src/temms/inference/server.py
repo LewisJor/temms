@@ -3962,6 +3962,8 @@ def _mission_package_stage_request_body(
         raise ValueError("mission package deployment intent requires rollout_id")
     if deployment_rollout_id != command_rollout_id:
         raise ValueError("mission package deployment intent rollout_id mismatch")
+    if request.rollout_id and request.rollout_id != deployment_rollout_id:
+        raise ValueError("mission package stage rollout_id must match deployment intent")
 
     selection = (
         package_plan.get("selection")
@@ -3997,7 +3999,7 @@ def _mission_package_stage_request_body(
         ):
             body[field_name] = selection[field_name]
     if request.rollout_id:
-        body["rollout_id"] = request.rollout_id
+        body["rollout_id"] = deployment_rollout_id
     if request.reason:
         body["reason"] = request.reason
     body.setdefault("reason", "mission package deployment handoff")
