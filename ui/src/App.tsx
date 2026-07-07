@@ -2,17 +2,11 @@ import {
   Activity,
   BadgeCheck,
   Box,
-  CheckCircle2,
   Cpu,
-  Database,
-  Download,
-  FileCheck2,
   GitBranch,
   KeyRound,
   RefreshCw,
-  Rocket,
-  ShieldCheck,
-  UploadCloud
+  ShieldCheck
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -39,20 +33,9 @@ import {
   ReadinessCard,
   ToastView
 } from "./components/ui";
-import {
-  EmptyState,
-  EvidenceSummaryRow,
-  MissionPhaseRow,
-  TargetRow
-} from "./components/deploy-lists";
 import { EdgeDeployStage } from "./components/edge-deploy-stage";
 import { EdgeProofPanel } from "./components/edge-proof";
-import {
-  DeadLetteredOperationRow,
-  EvidenceEventRow,
-  PendingOperationRow,
-  RuntimeRepairProofPanel
-} from "./components/field-ops";
+import { FieldOpsStage } from "./components/field-ops-stage";
 import {
   EdgePackagePlanPanel,
   MissionPackageDownloadHandoffCard
@@ -74,7 +57,6 @@ import {
 import { ModelPlanStage } from "./components/model-plan";
 import { MissionWorkflowCockpit, StatusTile } from "./components/workbench-flow";
 import {
-  compactDate,
   csv,
   deviceId,
   errorToast,
@@ -1594,159 +1576,48 @@ function executePendingReadinessAction(): void {
       {showProductStage ? (
       <main className={`product-grid product-grid-stage-${activeHubStage}`} data-testid={`hub-stage-${activeHubStage}`}>
         {activeHubStage === "field" ? (
-        <section
-          className={workflowClass("ddil", "section section-wide readiness-section repair-section")}
-          aria-labelledby="readiness-heading"
-          ref={ddilWorkflowRef}
-          tabIndex={-1}
-        >
-          <div className="section-header">
-            <div>
-              <span className="section-kicker">DDIL readiness</span>
-              <h2 id="readiness-heading">Field operating picture</h2>
-            </div>
-            <Badge value={offlineMode ? "offline" : pendingOperations ? "pending" : "ready"} />
-          </div>
-
-          <div className="readiness-grid">
-            <ReadinessCard
-              title="Connectivity"
-              value={connectivityState}
-              detail={
-                offlineMode
-                  ? "link unavailable"
-                  : pendingOperations
-                    ? `${pendingOperations} pending operations`
-                    : "network available"
-              }
-              state={offlineMode ? "warn" : "good"}
-            />
-            <ReadinessCard
-              title="Deployment"
-              value={deploymentStateName}
-              detail={deploymentDetail}
-              state={deploymentStateName === "READY" ? "good" : "warn"}
-            />
-            <ReadinessCard
-              title="Active slot"
-              value={stringOf(activeSlot?.slot, "vision")}
-              detail={stringOf(activeSlot?.active_model, selectedModel?.id ?? "no active model")}
-              state={activeSlot?.active_model ? "good" : "warn"}
-            />
-            <ReadinessCard
-              title="Evidence chain"
-              value={`${proofEvents} events`}
-              detail={
-                deadLetteredOperations
-                  ? `${deadLetteredOperations} quarantined intent${deadLetteredOperations === 1 ? "" : "s"}`
-                  : missionPhaseTotal
-                    ? `${completedMissionPhases}/${missionPhaseTotal} replay phases`
-                    : `${signedEvidenceImports} signed package${signedEvidenceImports === 1 ? "" : "s"}`
-              }
-              state={
-                missionProofComplete || (proofEvents && signedEvidenceImports && !missionPhaseTotal)
-                  ? "good"
-                  : "warn"
-              }
-            />
-	          </div>
-
-	          {runtimeRepairProof ? (
-	            <RuntimeRepairProofPanel
-	              proof={runtimeRepairProof}
-	              onRetargetRuntime={
-	                runtimeRepairProof.operation ? retargetPendingRuntime : undefined
-	              }
-	            />
-	          ) : null}
-
-	          {latestEvents.length ? (
-	            <div className="readiness-timeline" aria-label="Latest evidence events">
-	              {latestEvents.map((event, index) => (
-                <EvidenceEventRow key={`${stringOf(event.timestamp, "event")}-${index}`} event={event} />
-              ))}
-            </div>
-          ) : null}
-
-          {pendingOperationLedger.length ? (
-            <div className="pending-operation-ledger" aria-label="Pending DDIL operations">
-              {pendingOperationLedger.map((operation, index) => (
-                <PendingOperationRow
-                  key={`${stringOf(operation.payload_sha256, "pending")}-${index}`}
-                  operation={operation}
-                  onCopyCommand={(label, command) => void copyCommand(label, command)}
-                  onRetargetRuntime={retargetPendingRuntime}
-                />
-              ))}
-            </div>
-          ) : null}
-
-          {deadLetteredOperationLedger.length ? (
-            <div className="dead-letter-operation-ledger" aria-label="Quarantined DDIL operations">
-              <div className="ddil-ledger-heading">
-                <span>Quarantined DDIL intents</span>
-                <strong>{deadLetteredOperations}</strong>
-              </div>
-              {deadLetteredOperationLedger.map((operation, index) => (
-                <DeadLetteredOperationRow
-                  key={`${stringOf(operation.payload_sha256, "dead-letter")}-${index}`}
-                  operation={operation}
-                  onCopyCommand={(label, command) => void copyCommand(label, command)}
-                  onRequeue={requeueDeadLetteredOperation}
-                />
-              ))}
-            </div>
-          ) : null}
-
-          <div className="ddil-controls" aria-label="DDIL drill controls">
-            <Button icon={<Activity size={16} />} variant="secondary" disabled={offlineMode} onClick={enterOfflineMode}>
-              Link loss
-            </Button>
-            <Button icon={<RefreshCw size={16} />} variant="secondary" disabled={!offlineMode} onClick={restoreOnlineMode}>
-              Restore link
-            </Button>
-            <Button
-              icon={<Rocket size={16} />}
-              variant="secondary"
-              disabled={!selectedModel || !selectedDevice}
-              onClick={queueDeploymentIntent}
-            >
-              Queue intent
-            </Button>
-            <Button
-              icon={<UploadCloud size={16} />}
-              variant="secondary"
-              disabled={!pendingOperations || Boolean(replayBlockedOperations)}
-              onClick={syncPendingOperations}
-            >
-              Sync pending
-            </Button>
-            <Button
-              icon={<Database size={16} />}
-              variant="secondary"
-              disabled={!replayBlockedOperations}
-              onClick={quarantineBlockedOperations}
-            >
-              Quarantine blocked
-            </Button>
-            <Button
-              icon={<FileCheck2 size={16} />}
-              variant="secondary"
-              disabled={!deadLetteredOperations}
-              onClick={requeueDeadLetteredOperations}
-            >
-              Requeue quarantined
-            </Button>
-            <Button
-              icon={<CheckCircle2 size={16} />}
-              variant="secondary"
-              disabled={!deadLetteredOperations}
-              onClick={acknowledgeDeadLetteredOperations}
-            >
-              Acknowledge quarantine
-            </Button>
-          </div>
-        </section>
+          <FieldOpsStage
+            activeSlot={activeSlot}
+            completedMissionPhases={completedMissionPhases}
+            connectivityState={connectivityState}
+            ddilSectionClassName={workflowClass("ddil", "section section-wide readiness-section repair-section")}
+            ddilRef={ddilWorkflowRef}
+            deadLetteredOperationLedger={deadLetteredOperationLedger}
+            deadLetteredOperations={deadLetteredOperations}
+            deploymentDetail={deploymentDetail}
+            deploymentStateName={deploymentStateName}
+            evidenceBundles={snapshot.evidenceBundles}
+            evidenceSectionClassName={workflowClass("evidence", "section evidence-section")}
+            evidenceRef={evidenceWorkflowRef}
+            evidenceSummary={snapshot.evidenceSummary}
+            incompleteMissionPhases={incompleteMissionPhases}
+            latestEvents={latestEvents}
+            missionPhaseTotal={missionPhaseTotal}
+            missionPhases={missionPhases}
+            missionProofComplete={missionProofComplete}
+            missionReplayHeadline={snapshot.missionReplay?.headline}
+            offlineMode={offlineMode}
+            pendingOperationLedger={pendingOperationLedger}
+            pendingOperations={pendingOperations}
+            proofEvents={proofEvents}
+            replayBlockedOperations={replayBlockedOperations}
+            runtimeRepairProof={runtimeRepairProof}
+            selectedDevice={selectedDevice}
+            selectedModel={selectedModel}
+            signedEvidenceImports={signedEvidenceImports}
+            onAcknowledgeDeadLetteredOperations={acknowledgeDeadLetteredOperations}
+            onCopyCommand={(label, command) => void copyCommand(label, command)}
+            onEnterOfflineMode={enterOfflineMode}
+            onExportAirgap={exportAirgap}
+            onExportEvidence={exportEvidence}
+            onQuarantineBlockedOperations={quarantineBlockedOperations}
+            onQueueDeploymentIntent={queueDeploymentIntent}
+            onRequeueDeadLetteredOperation={requeueDeadLetteredOperation}
+            onRequeueDeadLetteredOperations={requeueDeadLetteredOperations}
+            onRestoreOnlineMode={restoreOnlineMode}
+            onRetargetRuntime={retargetPendingRuntime}
+            onSyncPendingOperations={syncPendingOperations}
+          />
         ) : null}
 
         {activeHubStage === "model" ? (
@@ -1816,75 +1687,6 @@ function executePendingReadinessAction(): void {
             onStageMissionPackageRollout={stageMissionPackageRollout}
             onSubmitForm={submitForm}
           />
-        ) : null}
-
-        {activeHubStage === "field" ? (
-        <section
-          className={workflowClass("evidence", "section evidence-section")}
-          aria-labelledby="evidence-heading"
-          ref={evidenceWorkflowRef}
-          tabIndex={-1}
-        >
-          <div className="section-header">
-            <div>
-              <span className="section-kicker">Evidence</span>
-              <h2 id="evidence-heading">Mission proof</h2>
-            </div>
-            <span className="section-count">
-              {missionPhaseTotal ? `${completedMissionPhases}/${missionPhaseTotal}` : snapshot.evidenceBundles.length}
-            </span>
-          </div>
-          <div className="button-row">
-            <Button icon={<ShieldCheck size={16} />} onClick={() => exportEvidence("summary")}>
-              Summary
-            </Button>
-            <Button icon={<GitBranch size={16} />} variant="secondary" onClick={() => exportEvidence("replay")}>
-              Replay
-            </Button>
-            <Button icon={<Download size={16} />} variant="secondary" onClick={() => exportEvidence("full")}>
-              Full bundle
-            </Button>
-            <Button icon={<Database size={16} />} variant="secondary" onClick={() => exportAirgap(true)}>
-              Air-gap bundle
-            </Button>
-          </div>
-          {missionPhases.length ? (
-            <div className="mission-phase-list" aria-label="Mission replay phases">
-              <div className="mission-phase-heading">
-                <span>{snapshot.missionReplay?.headline ?? "mission replay"}</span>
-                <strong>
-                  {incompleteMissionPhases.length
-                    ? `${incompleteMissionPhases.length} remaining`
-                    : "complete"}
-                </strong>
-              </div>
-              {missionPhases.map((phase) => (
-                <MissionPhaseRow key={phase.phase ?? phase.label ?? phase.summary} phase={phase} />
-	              ))}
-	            </div>
-	          ) : null}
-	          {runtimeRepairProof ? <RuntimeRepairProofPanel compact proof={runtimeRepairProof} /> : null}
-	          <div className="compact-list evidence-list">
-            {snapshot.evidenceBundles.length ? (
-              snapshot.evidenceBundles.slice(0, 4).map((record) => (
-                <TargetRow
-                  key={record.evidence_id ?? `${record.device_id}-${record.created_at}`}
-                  label={record.evidence_id ?? "evidence"}
-                  detail={`${record.device_id ?? "unknown device"} - ${compactDate(record.created_at)}`}
-                  status={record.schema_version ?? "evidence"}
-                />
-              ))
-            ) : proofEvents ? (
-              <EvidenceSummaryRow
-                headline={snapshot.evidenceSummary?.headline ?? "mission proof ready"}
-                events={proofEvents}
-                signedImports={signedEvidenceImports}
-              />
-            ) : (
-              <EmptyState title="No evidence yet" detail="Export or ingest evidence after rollout activity." />
-            )}
-          </div>
-        </section>
         ) : null}
 
       </main>
