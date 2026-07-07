@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { toneFor } from "../lib/hub-format";
+import type { GateTone } from "../lib/workbench-types";
 import type { Preview, Toast } from "../types";
 
 export function Button({
@@ -36,6 +37,26 @@ export function Button({
 
 export function Badge({ value }: { value: string }): JSX.Element {
   return <span className={`badge badge-${toneFor(value)}`}>{value || "unknown"}</span>;
+}
+
+export function CapabilityMetric({
+  detail,
+  label,
+  tone,
+  value
+}: {
+  detail: string;
+  label: string;
+  tone: GateTone;
+  value: string;
+}): JSX.Element {
+  return (
+    <div className={`capability-metric capability-metric-${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </div>
+  );
 }
 
 export function ToastView({ toast }: { toast: Toast }): JSX.Element {

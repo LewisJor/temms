@@ -33,6 +33,10 @@ export function shortProofDigest(value: string): string {
   return value.replace(/^sha256:/, "").slice(0, 12) || "pending";
 }
 
+export function normalizeSha256Digest(value: string): string {
+  return value.replace(/^sha256:/, "").toLowerCase();
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
