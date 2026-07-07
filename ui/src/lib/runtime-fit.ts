@@ -410,6 +410,59 @@ export function productionAdmissionTone(admission: JsonObject): GateTone {
   return "neutral";
 }
 
+export function runtimeFitComponentRows(runtimeFit: Record<string, unknown>): [string, string][] {
+  const components = asRecord(runtimeFit.components);
+  const rows = [
+    runtimeFitComponentRow("Compatibility", asRecord(components.compatibility)),
+    runtimeFitComponentRow("Validation", asRecord(components.runtime_validation)),
+    runtimeFitComponentRow("Performance", asRecord(components.performance)),
+    runtimeFitComponentRow("Resource", asRecord(components.resource)),
+    runtimeFitComponentRow("Telemetry", asRecord(components.telemetry))
+  ].filter((row): row is [string, string] => row !== undefined);
+  return rows.length ? rows : [["Runtime score", "waiting for readiness evidence"]];
+}
+
+function runtimeFitComponentRow(
+  label: string,
+  component: Record<string, unknown>
+): [string, string] | undefined {
+  const score = numberOf(component.score);
+  const maxScore = numberOf(component.max_score);
+  const state = stringOf(component.state, stringOf(component.status, "unknown")).replace(/_/g, " ");
+  if (score === undefined && maxScore === undefined && state === "unknown") return undefined;
+  const parts = [];
+  if (score !== undefined && maxScore !== undefined) parts.push(`${score}/${maxScore}`);
+  else if (score !== undefined) parts.push(`${score}`);
+  parts.push(state);
+
+  const failures = stringsOf(component.failures);
+  if (failures.length) parts.push(failures.slice(0, 2).join("; "));
+
+  if (label === "Performance") {
+    const latencyHeadroom = numberOf(component.latency_headroom_pct);
+    const throughputHeadroom = numberOf(component.throughput_headroom_pct);
+    if (latencyHeadroom !== undefined) parts.push(`latency ${formatSignedPercent(latencyHeadroom)}`);
+    if (throughputHeadroom !== undefined) parts.push(`throughput ${formatSignedPercent(throughputHeadroom)}`);
+  }
+  if (label === "Resource") {
+    const memoryHeadroom = numberOf(component.memory_headroom_mb);
+    const storageHeadroom = numberOf(component.storage_headroom_mb);
+    if (memoryHeadroom !== undefined) parts.push(`RAM ${formatSignedMb(memoryHeadroom)}`);
+    if (storageHeadroom !== undefined) parts.push(`storage ${formatSignedMb(storageHeadroom)}`);
+  }
+  return [label, parts.join(", ")];
+}
+
+function formatSignedPercent(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return `${rounded >= 0 ? "+" : ""}${rounded}%`;
+}
+
+function formatSignedMb(value: number): string {
+  const rounded = Math.round(value);
+  return `${rounded >= 0 ? "+" : ""}${rounded} MB`;
+}
+
 export interface BenchmarkFreshness {
   state: "fresh" | "stale" | "unknown";
   createdAt?: string;

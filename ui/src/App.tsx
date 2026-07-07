@@ -52,6 +52,7 @@ import {
   RolloutRow,
   TargetRow
 } from "./components/deploy-lists";
+import { CapabilityDossier } from "./components/capability-dossier";
 import { EdgeProofPanel } from "./components/edge-proof";
 import {
   DeadLetteredOperationRow,
@@ -141,19 +142,15 @@ import {
   artifactLaneValue,
   benchmarkFreshness,
   compactMetricDetail,
-  deviceResourceSnapshot,
   edgeRuntimeCapabilityFit,
   formatAge,
   formatArtifactSizeMb,
   formatBenchmark,
   formatBenchmarkFreshness,
   formatBenchmarkTarget,
-  formatMb,
   formatMetricNumber,
   formatPerformanceSlo,
-  formatPower,
   formatResourceEnvelope,
-  formatTemperature,
   formatThroughput,
   isSigned,
   modelsForPackage,
@@ -176,11 +173,9 @@ import {
   runtimeTargetCapabilityDetail,
   runtimeTargetImageDetail,
   runtimeTargetImageValue,
-  runtimeTargetInventoryConstraints,
   runtimeTargetInventoryFailures,
   runtimeTargetSelectionDetail,
   runtimeTargetSelectionTone,
-  runtimeTargetSelectionValue,
   runtimeValidationForModel,
   productionAdmissionDetail,
   productionAdmissionTone,
@@ -3039,189 +3034,6 @@ function TargetRuntimeAssessmentRow({
   );
 }
 
-function CapabilityDossier({
-  device,
-  edgeRuntimeFit,
-  model,
-  readiness,
-  readinessVerdict,
-  resourceEnvelopeFit,
-  runtime,
-  runtimeValidation
-}: {
-  device: Device | undefined;
-  edgeRuntimeFit: EdgeRuntimeFit;
-  model: ModelRecord | undefined;
-  readiness: DeploymentReadiness | undefined;
-  readinessVerdict: ReadinessVerdict;
-  resourceEnvelopeFit: EdgeRuntimeFit;
-  runtime: RuntimeTarget | undefined;
-  runtimeValidation: RuntimeValidation | undefined;
-}): JSX.Element {
-  const observed = device ? deviceResourceSnapshot(device) : {};
-  const constraints = runtime ? runtimeTargetInventoryConstraints(runtime) : undefined;
-  const inventory = asRecord(device?.inventory);
-  const runtimes = Object.entries(asRecord(inventory.runtimes))
-    .filter(([, status]) => asRecord(status).available === true)
-    .map(([name]) => name);
-  const providers = stringsOf(asRecord(asRecord(inventory.runtimes).onnxruntime).providers);
-  const accelerators = Object.entries(asRecord(inventory.accelerators))
-    .filter(([, status]) => asRecord(status).available === true)
-    .map(([name]) => name);
-  const apiGates = readiness?.gates ?? [];
-  const attentionGates = apiGates.filter((gate) => toneForReadinessStatus(stringOf(gate.status, "")) !== "good");
-  const selectedGate = attentionGates[0];
-  const validationResult = asRecord(runtimeValidation?.result);
-  const runtimeFit = asRecord(readiness?.runtime_fit);
-  const runtimeLane = runtimeLaneFor(runtimeFit, runtime);
-  const artifactLane = asRecord(runtimeFit.artifact_lane);
-  const productionAdmission = asRecord(readiness?.production_admission);
-  const runtimeFitScore = numberOf(runtimeFit.score);
-  const runtimeFitTier = stringOf(runtimeFit.tier, edgeRuntimeFit.label).replace(/_/g, " ");
-  const runtimeFitDetail = stringOf(runtimeFit.detail, edgeRuntimeFit.detail);
-  const targetSelection = asRecord(runtimeFit.target_selection);
-  const runtimeFitComponents = runtimeFitComponentRows(runtimeFit);
-  const runtimeFitTone =
-    runtimeFit.tier === "blocked"
-      ? "bad"
-      : runtimeFit.tier === "needs_evidence"
-        ? "warn"
-        : runtimeFitScore !== undefined
-          ? "good"
-          : edgeRuntimeFit.tone;
-
-  return (
-    <div className="capability-dossier" aria-label="Selected on-device capability dossier">
-      <div className="capability-dossier-header">
-        <div>
-          <span className="section-kicker">On-device capability dossier</span>
-          <strong>{model ? `${model.id} on ${device ? deviceId(device) : "edge"}` : "Select a model path"}</strong>
-        </div>
-        <Badge value={readinessVerdict.label} />
-      </div>
-      <div className="capability-dossier-grid">
-        <CapabilityMetric
-          label="Runtime fit"
-          value={runtimeFitScore !== undefined ? `${runtimeFitScore}/100` : edgeRuntimeFit.label}
-          detail={runtimeFitScore !== undefined ? `${runtimeFitTier}: ${runtimeFitDetail}` : edgeRuntimeFit.detail}
-          tone={runtimeFitTone}
-        />
-        <CapabilityMetric
-          label="Runtime lane"
-          value={runtimeLaneValue(runtimeLane)}
-          detail={runtimeLaneDetail(runtimeLane)}
-          tone={runtimeLaneTone(runtimeLane)}
-        />
-        <CapabilityMetric
-          label="Artifact fit"
-          value={artifactLaneValue(artifactLane)}
-          detail={artifactLaneDetail(artifactLane)}
-          tone={artifactLaneTone(artifactLane)}
-        />
-        <CapabilityMetric
-          label="Target rank"
-          value={runtimeTargetSelectionValue(targetSelection)}
-          detail={runtimeTargetSelectionDetail(targetSelection)}
-          tone={runtimeTargetSelectionTone(targetSelection)}
-        />
-        <CapabilityMetric
-          label="Resource envelope"
-          value={resourceEnvelopeFit.label}
-          detail={resourceEnvelopeFit.detail}
-          tone={resourceEnvelopeFit.tone}
-        />
-        <CapabilityMetric
-          label="Performance proof"
-          value={performanceSloLabel(model)}
-          detail={model ? performanceSloDetail(model) : "select a model"}
-          tone={performanceSloTone(model)}
-        />
-        <CapabilityMetric
-          label="Production apply"
-          value={productionAdmissionValue(productionAdmission)}
-          detail={productionAdmissionDetail(productionAdmission)}
-          tone={productionAdmissionTone(productionAdmission)}
-        />
-        <CapabilityMetric
-          label="Validation"
-          value={runtimeValidation ? "validated" : "not validated"}
-          detail={
-            runtimeValidation
-              ? `${runtime ? runtimeTargetId(runtime) : "runtime target"} passed ${compactDate(runtimeValidation.created_at)}`
-              : "run package validation before field rollout"
-          }
-          tone={runtimeValidation ? "good" : "warn"}
-        />
-      </div>
-
-      <div className="capability-dossier-detail">
-        <CapabilityBlock
-          title="Runtime fit components"
-          items={runtimeFitComponents}
-        />
-        <CapabilityBlock
-          title="Live edge inventory"
-          items={[
-            ["RAM", formatMb(numberOf(observed.memoryAvailableMb))],
-            ["Storage", formatMb(numberOf(observed.storageAvailableMb))],
-            ["Thermal", formatTemperature(numberOf(observed.temperatureC))],
-            ["Power", formatPower(observed)],
-            ["Runtimes", runtimes.join(", ") || "not reported"],
-            ["Providers", providers.join(", ") || "not reported"],
-            ["Accelerators", accelerators.join(", ") || "none reported"]
-          ]}
-        />
-        <CapabilityBlock
-          title="Target requirements"
-          items={[
-            ["Model", model?.id ?? "missing"],
-            ["Package", model?.packageId ?? "missing"],
-            ["Runtime target", runtime ? runtimeTargetId(runtime) : "missing"],
-            ["Lane", runtimeLaneValue(runtimeLane)],
-            ["Artifact", artifactLaneValue(artifactLane)],
-            ["Requires", constraints?.runtimes.join(", ") || model?.runtimes.join(", ") || "not declared"],
-            ["Providers", constraints?.providers.join(", ") || constraints?.preferredProviders.join(", ") || "not declared"],
-            ["Accelerators", constraints?.accelerators.join(", ") || (constraints?.requiresGpu ? "GPU required" : "not declared")],
-            ["Validation result", runtimeValidation ? stringOf(validationResult.validation_state, "passed") : "missing"]
-          ]}
-        />
-        <CapabilityBlock
-          title="Admission gates"
-          items={[
-            ["Apply admission", productionAdmissionValue(productionAdmission)],
-            ["Verdict", readinessVerdict.headline],
-            ["Next action", readinessVerdict.nextAction],
-            [
-              "Review gate",
-              selectedGate
-                ? `${stringOf(selectedGate.label, stringOf(selectedGate.gate_id, "gate"))}: ${displayGateState(stringOf(selectedGate.state, stringOf(selectedGate.status, "unknown")))}`
-                : "none"
-            ],
-            ["Gate detail", selectedGate ? stringOf(selectedGate.detail, "no detail") : "all gates aligned"],
-            ["Checked", compactDate(readiness?.checked_at)]
-          ]}
-        />
-      </div>
-    </div>
-  );
-}
-
-function CapabilityBlock({ items, title }: { items: [string, string][]; title: string }): JSX.Element {
-  return (
-    <div className="capability-block">
-      <strong>{title}</strong>
-      <dl>
-        {items.map(([label, value]) => (
-          <div key={label}>
-            <dt>{label}</dt>
-            <dd>{value || "-"}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
-  );
-}
-
 function capabilityLockValue(lock: JsonObject): string {
   const status = stringOf(lock.status, "");
   if (status) return status.replace(/_/g, " ");
@@ -3294,49 +3106,6 @@ function runtimeFitTone(runtimeFit: Record<string, unknown>, fallback: GateTone)
   if (tier === "blocked") return "bad";
   if (tier === "needs_evidence") return "warn";
   return numberOf(runtimeFit.score) !== undefined ? "good" : fallback;
-}
-
-function runtimeFitComponentRows(runtimeFit: Record<string, unknown>): [string, string][] {
-  const components = asRecord(runtimeFit.components);
-  const rows = [
-    runtimeFitComponentRow("Compatibility", asRecord(components.compatibility)),
-    runtimeFitComponentRow("Validation", asRecord(components.runtime_validation)),
-    runtimeFitComponentRow("Performance", asRecord(components.performance)),
-    runtimeFitComponentRow("Resource", asRecord(components.resource)),
-    runtimeFitComponentRow("Telemetry", asRecord(components.telemetry))
-  ].filter((row): row is [string, string] => row !== undefined);
-  return rows.length ? rows : [["Runtime score", "waiting for readiness evidence"]];
-}
-
-function runtimeFitComponentRow(
-  label: string,
-  component: Record<string, unknown>
-): [string, string] | undefined {
-  const score = numberOf(component.score);
-  const maxScore = numberOf(component.max_score);
-  const state = stringOf(component.state, stringOf(component.status, "unknown")).replace(/_/g, " ");
-  if (score === undefined && maxScore === undefined && state === "unknown") return undefined;
-  const parts = [];
-  if (score !== undefined && maxScore !== undefined) parts.push(`${score}/${maxScore}`);
-  else if (score !== undefined) parts.push(`${score}`);
-  parts.push(state);
-
-  const failures = stringsOf(component.failures);
-  if (failures.length) parts.push(failures.slice(0, 2).join("; "));
-
-  if (label === "Performance") {
-    const latencyHeadroom = numberOf(component.latency_headroom_pct);
-    const throughputHeadroom = numberOf(component.throughput_headroom_pct);
-    if (latencyHeadroom !== undefined) parts.push(`latency ${formatSignedPercent(latencyHeadroom)}`);
-    if (throughputHeadroom !== undefined) parts.push(`throughput ${formatSignedPercent(throughputHeadroom)}`);
-  }
-  if (label === "Resource") {
-    const memoryHeadroom = numberOf(component.memory_headroom_mb);
-    const storageHeadroom = numberOf(component.storage_headroom_mb);
-    if (memoryHeadroom !== undefined) parts.push(`RAM ${formatSignedMb(memoryHeadroom)}`);
-    if (storageHeadroom !== undefined) parts.push(`storage ${formatSignedMb(storageHeadroom)}`);
-  }
-  return [label, parts.join(", ")];
 }
 
 function runtimeDecisionActionLabel(value: string): string {
@@ -4358,16 +4127,6 @@ function runtimeCandidateTone(
   if (candidateId === bestRuntimeTargetId) return "good";
   if (candidateId === selectedRuntimeTargetId && bestRuntimeTargetId !== selectedRuntimeTargetId) return "warn";
   return "neutral";
-}
-
-function formatSignedPercent(value: number): string {
-  const rounded = Math.round(value * 10) / 10;
-  return `${rounded >= 0 ? "+" : ""}${rounded}%`;
-}
-
-function formatSignedMb(value: number): string {
-  const rounded = Math.round(value);
-  return `${rounded >= 0 ? "+" : ""}${rounded} MB`;
 }
 
 function edgeRuntimeMissionFromApi(value: unknown): EdgeRuntimeMission | undefined {

@@ -10,6 +10,7 @@ const uiRoot = resolve(scriptDir, "..");
 const repoRoot = resolve(uiRoot, "..");
 const indexPath = join(uiRoot, "index.html");
 const sourcePath = join(uiRoot, "src", "App.tsx");
+const capabilityDossierPath = join(uiRoot, "src", "components", "capability-dossier.tsx");
 const deployListsPath = join(uiRoot, "src", "components", "deploy-lists.tsx");
 const edgeProofPath = join(uiRoot, "src", "components", "edge-proof.tsx");
 const fieldOpsPath = join(uiRoot, "src", "components", "field-ops.tsx");
@@ -85,6 +86,7 @@ function assertAssetBudget(label, content, { rawBytes, gzipBytes }) {
 
 const indexHtml = readFileSync(indexPath, "utf8");
 const source = readFileSync(sourcePath, "utf8");
+const capabilityDossierSource = readFileSync(capabilityDossierPath, "utf8");
 const deployListsSource = readFileSync(deployListsPath, "utf8");
 const edgeProofSource = readFileSync(edgeProofPath, "utf8");
 const fieldOpsSource = readFileSync(fieldOpsPath, "utf8");
@@ -98,7 +100,7 @@ const runtimeOptimizerSource = readFileSync(runtimeOptimizerPath, "utf8");
 const workbenchFlowSource = readFileSync(workbenchFlowPath, "utf8");
 const missionPackageSource = readFileSync(missionPackagePath, "utf8");
 const missionWorkflowSource = readFileSync(missionWorkflowPath, "utf8");
-const workbenchSource = `${source}\n${deployListsSource}\n${edgeProofSource}\n${fieldOpsSource}\n${packageHandoffSource}\n${missionStagesSource}\n${modelPlanSource}\n${readinessPanelsSource}\n${runtimeDecisionTraceSource}\n${runtimeMissionSource}\n${runtimeOptimizerSource}\n${workbenchFlowSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
+const workbenchSource = `${source}\n${capabilityDossierSource}\n${deployListsSource}\n${edgeProofSource}\n${fieldOpsSource}\n${packageHandoffSource}\n${missionStagesSource}\n${modelPlanSource}\n${readinessPanelsSource}\n${runtimeDecisionTraceSource}\n${runtimeMissionSource}\n${runtimeOptimizerSource}\n${workbenchFlowSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
 const apiSource = readFileSync(apiPath, "utf8");
 const missionSpecSource = readFileSync(missionSpecPath, "utf8");
 const proofHashSource = readFileSync(proofHashPath, "utf8");
@@ -311,6 +313,15 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "Select runtime target",
   "Target the model to the edge runtime"
 ].forEach((needle) => assertContains("Hub workbench sources", workbenchSource, needle));
+
+[
+  "Selected on-device capability dossier",
+  "On-device capability dossier",
+  "Runtime fit components",
+  "Live edge inventory",
+  "Target requirements",
+  "Admission gates"
+].forEach((needle) => assertContains("Capability dossier sources", capabilityDossierSource, needle));
 
 [
   "MissionDraft",
