@@ -35,22 +35,17 @@ import type {
 import {
   Badge,
   Button,
-  CapabilityMetric,
-  PathStep,
   PreviewPanel,
   ReadinessCard,
-  Submit,
   ToastView
 } from "./components/ui";
 import {
   EmptyState,
   EvidenceSummaryRow,
   MissionPhaseRow,
-  RolloutPlanRow,
-  RolloutRow,
   TargetRow
 } from "./components/deploy-lists";
-import { CapabilityDossier } from "./components/capability-dossier";
+import { EdgeDeployStage } from "./components/edge-deploy-stage";
 import { EdgeProofPanel } from "./components/edge-proof";
 import {
   DeadLetteredOperationRow,
@@ -71,7 +66,6 @@ import {
   EdgeExecutionContractPanel,
   EdgeOperatorCommandPanel
 } from "./components/runtime-execution-contract";
-import { EdgeRecommendationPanel } from "./components/runtime-optimizer";
 import { EdgeRuntimeWorkbench } from "./components/runtime-workbench";
 import {
   HandlingPolicyPanel,
@@ -88,7 +82,6 @@ import {
   isChecked,
   nextPromotion,
   packageId,
-  planId,
   rolloutId,
   runtimeTargetId,
   saveToken,
@@ -128,31 +121,15 @@ import {
   workflowTargetLabel
 } from "./lib/mission-workflow";
 import {
-  artifactLaneDetail,
-  benchmarkFreshness,
-  compactMetricDetail,
   edgeRuntimeCapabilityFit,
-  formatAge,
-  formatBenchmark,
-  formatBenchmarkFreshness,
-  formatBenchmarkTarget,
   formatPerformanceSlo,
-  formatResourceEnvelope,
   isSigned,
   modelsForPackage,
-  performanceSloDetail,
-  performanceSloLabel,
-  performanceSloTone,
-  providerDisplayForModel,
   resourceEnvelopeCapabilityFit,
   runtimeForModel,
   runtimeCapabilityLockForProof,
   runtimeFitDisplayFor,
-  runtimeInventoryDetail,
-  runtimeInventoryLabel,
-  runtimeInventoryTone,
   runtimeLaneFor,
-  runtimeTargetCapabilityDetail,
   runtimeValidationForModel,
   targetSupportsModel,
   withBenchmarkEvidence
@@ -191,28 +168,14 @@ import type {
   HubSnapshot,
   JsonObject,
   Preview,
-  RuntimeValidation,
-  RuntimeTarget,
   Toast
 } from "./types";
 import type {
-  EdgeMissionMetric,
   EdgeProofComponentDigestStatus,
-  EdgeProofTraceStatus,
-  EdgeProofWorkflow,
-  EdgeRuntimeFit,
-  EdgeRuntimeMission,
-  GateTone,
   HubStage,
   MissionWorkflowSignal,
-  ModelRecord,
-  ReadinessGate,
   ReadinessGateAction,
-  ReadinessVerdict,
-  RuntimeFitDisplay,
   RuntimeRemediationContext,
-  RuntimeRepairProof,
-  RuntimeWorkbenchRow,
   WorkflowTarget
 } from "./lib/workbench-types";
 
@@ -1811,335 +1774,48 @@ function executePendingReadinessAction(): void {
         ) : null}
 
         {activeHubStage === "deploy" ? (
-        <section
-          className={workflowClass("deployment", "section section-wide deployment-section")}
-          aria-labelledby="deploy-heading"
-          ref={deploymentWorkflowRef}
-          tabIndex={-1}
-        >
-          <div className="section-header">
-            <div>
-              <span className="section-kicker">Edge deploy</span>
-              <h2 id="deploy-heading">Stage the planned mission package</h2>
-            </div>
-            <Badge value={latestRollout?.state ?? "not assigned"} />
-          </div>
-
-          <div className="deploy-primary-lane" aria-label="Mission package deploy path">
-            <CapabilityMetric
-              label="Package handoff"
-              value={missionPackageStageStatus.value}
-              detail={missionPackageStageStatus.detail}
-              tone={missionPackageStageStatus.tone}
-            />
-            <CapabilityMetric
-              label="Deploy intent"
-              value={
-                hasMissionPackageDeploymentIntent
-                  ? String(missionPackageDeploymentIntent.rollout_id)
-                  : "plan package first"
-              }
-              detail={
-                hasMissionPackageDeploymentIntent
-                  ? String(missionPackageDeploymentCommand.path || "/v1/hub/rollouts")
-                  : "Deploy is bound only after the mission package is hashed."
-              }
-              tone={canStageMissionPackage ? "good" : "warn"}
-            />
-            <CapabilityMetric
-              label="Edge target"
-              value={selectedDevice ? deviceId(selectedDevice) : "select edge"}
-              detail={`${selectedRuntime ? runtimeTargetId(selectedRuntime) : "runtime pending"}; ${selectedModel?.name ?? "model pending"}`}
-              tone={selectedDevice && selectedRuntime && selectedModel ? "good" : "warn"}
-            />
-            <Button
-              icon={<Rocket size={16} />}
-              disabled={!canStageMissionPackage}
-              onClick={stageMissionPackageRollout}
-            >
-              Stage package rollout
-            </Button>
-          </div>
-
-          <EdgeRecommendationPanel
-            recommendations={edgeRecommendations}
-            selectedDeviceId={selectedDevice ? deviceId(selectedDevice) : ""}
-            selectedModelId={selectedModel?.id ?? ""}
-            selectedRuntimeId={selectedRuntime ? runtimeTargetId(selectedRuntime) : ""}
-            onSelect={applyEdgeRecommendation}
-          />
-
-          <CapabilityDossier
+          <EdgeDeployStage
+            canStageMissionPackage={canStageMissionPackage}
+            deploymentSectionClassName={workflowClass("deployment", "section section-wide deployment-section")}
+            deploymentRef={deploymentWorkflowRef}
+            devices={snapshot.devices}
+            edgeRecommendations={edgeRecommendations}
             edgeRuntimeFit={edgeRuntimeFit}
-            model={selectedModel}
+            evidenceBundleCount={snapshot.evidenceBundles.length}
+            evidenceValue={evidenceValue}
+            hasMissionPackageDeploymentIntent={hasMissionPackageDeploymentIntent}
+            latestRollout={latestRollout}
+            missionPackageDeploymentCommand={missionPackageDeploymentCommand}
+            missionPackageDeploymentIntent={missionPackageDeploymentIntent}
+            missionPackageStageStatus={missionPackageStageStatus}
+            missionRolloutPlans={missionRolloutPlans}
+            missionRollouts={missionRollouts}
+            plansSectionClassName={workflowClass("plans", "section section-wide rollout-plan-section deploy-secondary-section")}
+            plansRef={plansWorkflowRef}
+            proofEvents={proofEvents}
             readiness={scopedReadiness}
             readinessVerdict={readinessVerdict}
             resourceEnvelopeFit={resourceEnvelopeFit}
-            runtime={selectedRuntime}
-            runtimeValidation={selectedRuntimeValidation}
-            device={selectedDevice}
+            rolloutsSectionClassName={workflowClass("rollouts", "section rollout-section deploy-secondary-section")}
+            rolloutsRef={rolloutsWorkflowRef}
+            runtimeFitDisplay={runtimeFitDisplay}
+            runtimeTargets={snapshot.runtimeTargets}
+            selectedDevice={selectedDevice}
+            selectedModel={selectedModel}
+            selectedRuntime={selectedRuntime}
+            selectedRuntimeValidation={selectedRuntimeValidation}
+            onAdvanceRolloutPlan={advanceRolloutPlan}
+            onApplyEdgeRecommendation={applyEdgeRecommendation}
+            onApplyRollout={applyRollout}
+            onApproveRollout={approveRollout}
+            onPauseRolloutPlan={pauseRolloutPlan}
+            onResumeRolloutPlan={resumeRolloutPlan}
+            onRollbackRollout={rollbackRollout}
+            onSelectDevice={setSelectedDeviceId}
+            onSelectRuntime={setSelectedRuntimeId}
+            onStageMissionPackageRollout={stageMissionPackageRollout}
+            onSubmitForm={submitForm}
           />
-
-          <div className="path-line" aria-label="Deployment readiness">
-            <PathStep title="Model" value={selectedModel?.name ?? "Missing"} state={selectedModel ? "ready" : "blocked"} />
-            <PathStep title="Runtime" value={selectedRuntime ? runtimeTargetId(selectedRuntime) : "Missing"} state={selectedRuntime ? "ready" : "blocked"} />
-            <PathStep title="Edge" value={selectedDevice ? deviceId(selectedDevice) : "Missing"} state={selectedDevice ? "ready" : "blocked"} />
-            <PathStep title="Runtime fit" value={runtimeFitDisplay.label} state={runtimeFitDisplay.tone} />
-            <PathStep title="Resources" value={resourceEnvelopeFit.label} state={resourceEnvelopeFit.tone} />
-            <PathStep title="Rollout" value={latestRollout?.state ?? "Not assigned"} state={latestRollout ? latestRollout.state ?? "pending" : "pending"} />
-            <PathStep
-              title="Evidence"
-              value={proofEvents ? `${proofEvents} proof events` : `${snapshot.evidenceBundles.length} bundles`}
-              state={evidenceValue ? "ready" : "pending"}
-            />
-          </div>
-
-          <div className="readiness-grid edge-fit-grid" aria-label="On-device runtime capability fit">
-            <ReadinessCard
-              title="On-device runtime fit"
-              value={runtimeFitDisplay.label}
-              detail={runtimeFitDisplay.detail}
-              state={runtimeFitDisplay.tone}
-            />
-            <ReadinessCard
-              title="Runtime inventory"
-              value={runtimeInventoryLabel(selectedDevice)}
-              detail={runtimeInventoryDetail(selectedDevice)}
-              state={edgeRuntimeFit.failures.length ? "bad" : runtimeInventoryTone(selectedDevice)}
-            />
-            <ReadinessCard
-              title="Runtime target"
-              value={selectedRuntime ? runtimeTargetId(selectedRuntime) : "missing"}
-              detail={runtimeTargetCapabilityDetail(selectedRuntime)}
-              state={selectedRuntime ? edgeRuntimeFit.tone : "bad"}
-            />
-            <ReadinessCard
-              title="Performance SLO"
-              value={performanceSloLabel(selectedModel)}
-              detail={selectedModel ? performanceSloDetail(selectedModel) : "select a model"}
-              state={performanceSloTone(selectedModel)}
-            />
-            <ReadinessCard
-              title="Resource envelope"
-              value={resourceEnvelopeFit.label}
-              detail={resourceEnvelopeFit.detail}
-              state={resourceEnvelopeFit.tone}
-            />
-            <ReadinessCard
-              title="Field proof"
-              value={
-                selectedRuntimeValidation
-                  ? "validated"
-                  : selectedModel?.benchmarkDeviceId && benchmarkFreshness(selectedModel).state === "fresh"
-                    ? "benchmarked"
-                    : selectedModel?.benchmarkDeviceId
-                      ? "stale proof"
-                      : "pending"
-              }
-              detail={
-                selectedRuntimeValidation
-                  ? "package passed selected runtime target validation"
-                  : selectedModel
-                    ? `${formatBenchmark(selectedModel)}; ${formatBenchmarkFreshness(selectedModel)}`
-                    : "no benchmark"
-              }
-              state={
-                selectedRuntimeValidation ||
-                (selectedModel?.benchmarkDeviceId && benchmarkFreshness(selectedModel).state === "fresh")
-                  ? "good"
-                  : "warn"
-              }
-            />
-          </div>
-
-          <details className="stage-inline-drawer">
-            <summary>
-              <span>
-                <span className="section-kicker">Manual controls</span>
-                <strong>Direct rollout and compatibility tools</strong>
-              </span>
-              <Badge value="advanced" />
-            </summary>
-            <div className="stage-inline-drawer-body">
-              <form className="deploy-form" onSubmit={(event) => submitForm("assign-rollout", event)}>
-                <input name="package_id" type="hidden" value={selectedModel?.packageId ?? ""} />
-                <input name="model_id" type="hidden" value={selectedModel?.id ?? ""} />
-                <label className="field">
-                  <span>Edge node</span>
-                  <select name="device_id" value={selectedDevice ? deviceId(selectedDevice) : ""} onChange={(event) => setSelectedDeviceId(event.target.value)} required>
-                    {snapshot.devices.length ? null : <option value="">No edge nodes</option>}
-                    {snapshot.devices.map((device) => (
-                      <option key={deviceId(device)} value={deviceId(device)}>
-                        {deviceId(device)} - {device.profile ?? "unknown profile"}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field">
-                  <span>Runtime target</span>
-                  <select name="runtime_target_id" value={selectedRuntime ? runtimeTargetId(selectedRuntime) : ""} onChange={(event) => setSelectedRuntimeId(event.target.value)}>
-                    {snapshot.runtimeTargets.length ? null : <option value="">No runtime targets</option>}
-                    {snapshot.runtimeTargets.map((target) => (
-                      <option key={runtimeTargetId(target)} value={runtimeTargetId(target)}>
-                        {runtimeTargetId(target)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field">
-                  <span>Slot</span>
-                  <input name="slot" defaultValue="vision" />
-                </label>
-                <label className="field">
-                  <span>Rollout ID</span>
-                  <input name="rollout_id" placeholder="auto-generated" />
-                </label>
-                <input name="actor" type="hidden" value="operator:mission-package-workbench" />
-                <label className="check deploy-check">
-                  <input name="require_approval" type="checkbox" defaultChecked />
-                  <span>Require approval</span>
-                </label>
-                <Submit icon={<Rocket size={16} />} disabled={!selectedModel || !selectedDevice}>
-                  Create rollout
-                </Submit>
-              </form>
-
-              <form className="preview-form" onSubmit={(event) => submitForm("compatibility-preview", event)}>
-                <input name="device_id" type="hidden" value={selectedDevice ? deviceId(selectedDevice) : ""} />
-                <input name="package_id" type="hidden" value={selectedModel?.packageId ?? ""} />
-                <input name="model_id" type="hidden" value={selectedModel?.id ?? ""} />
-                <input name="runtime_target_id" type="hidden" value={selectedRuntime ? runtimeTargetId(selectedRuntime) : ""} />
-                <Submit icon={<ShieldCheck size={16} />} variant="secondary" disabled={!selectedModel || !selectedDevice}>
-                  Preview compatibility
-                </Submit>
-              </form>
-            </div>
-          </details>
-        </section>
-        ) : null}
-
-        {activeHubStage === "deploy" ? (
-        <section
-          className={workflowClass("plans", "section section-wide rollout-plan-section deploy-secondary-section")}
-          aria-labelledby="plans-heading"
-          ref={plansWorkflowRef}
-          tabIndex={-1}
-        >
-          <div className="section-header">
-            <div>
-              <span className="section-kicker">Rollout coordination</span>
-              <h2 id="plans-heading">Stage selected model across the fleet</h2>
-            </div>
-            <span className="section-count">{missionRolloutPlans.length}</span>
-          </div>
-
-          <form className="rollout-plan-form" onSubmit={(event) => submitForm("create-rollout-plan", event)}>
-            <input name="package_id" type="hidden" value={selectedModel?.packageId ?? ""} />
-            <input name="model_id" type="hidden" value={selectedModel?.id ?? ""} />
-            <input name="runtime_target_id" type="hidden" value={selectedRuntime ? runtimeTargetId(selectedRuntime) : ""} />
-            <input name="actor" type="hidden" value="operator:mission-package-workbench" />
-            <label className="field">
-              <span>Plan ID</span>
-              <input name="plan_id" placeholder="auto-generated" />
-            </label>
-            <label className="field">
-              <span>Device IDs</span>
-              <input name="device_ids" defaultValue={snapshot.devices.map(deviceId).join(",")} required />
-            </label>
-            <label className="field">
-              <span>Slot</span>
-              <input name="slot" defaultValue="vision" />
-            </label>
-            <label className="field">
-              <span>Batch size</span>
-              <input name="batch_size" type="number" min="1" defaultValue="1" />
-            </label>
-            <label className="check deploy-check">
-              <input name="require_approval" type="checkbox" defaultChecked />
-              <span>Require approval</span>
-            </label>
-            <label className="check deploy-check">
-              <input name="require_runtime_validation" type="checkbox" />
-              <span>Require validation</span>
-            </label>
-            <Submit icon={<GitBranch size={16} />} disabled={!selectedModel || !selectedDevice || !snapshot.devices.length}>
-              Create plan
-            </Submit>
-          </form>
-
-          <div className="rollout-list rollout-plan-list">
-            {missionRolloutPlans.length ? (
-              missionRolloutPlans.slice(0, 4).map((plan) => (
-                <RolloutPlanRow
-                  key={planId(plan)}
-                  plan={plan}
-                  onAdvance={advanceRolloutPlan}
-                  onPause={pauseRolloutPlan}
-                  onResume={resumeRolloutPlan}
-                />
-              ))
-            ) : (
-              <EmptyState title="No coordinated rollout plans" detail="Create a plan to stage selected models through approval and batch assignment." />
-            )}
-          </div>
-        </section>
-        ) : null}
-
-        {activeHubStage === "deploy" ? (
-        <section
-          className={workflowClass("rollouts", "section rollout-section deploy-secondary-section")}
-          aria-labelledby="rollouts-heading"
-          ref={rolloutsWorkflowRef}
-          tabIndex={-1}
-        >
-          <div className="section-header">
-            <div>
-              <span className="section-kicker">Rollouts</span>
-              <h2 id="rollouts-heading">Approval and activation</h2>
-            </div>
-            <span className="section-count">{missionRollouts.length}</span>
-          </div>
-          <div className="rollout-list">
-            {missionRollouts.length ? (
-              missionRollouts.slice(0, 6).map((rollout) => (
-                <RolloutRow
-                  key={rolloutId(rollout)}
-                  rollout={rollout}
-                  onApprove={approveRollout}
-                  onApply={applyRollout}
-                  onRollback={rollbackRollout}
-                />
-              ))
-            ) : (
-              <EmptyState title="No rollouts assigned" detail="Create a rollout from the selected model to start activation." />
-            )}
-          </div>
-        </section>
-        ) : null}
-
-        {activeHubStage === "deploy" ? (
-        <section className="section fleet-section deploy-secondary-section" aria-labelledby="fleet-heading">
-          <div className="section-header">
-            <div>
-              <span className="section-kicker">Fleet and runtimes</span>
-              <h2 id="fleet-heading">Deployment targets</h2>
-            </div>
-            <span className="section-count">{snapshot.devices.length}</span>
-          </div>
-          <div className="compact-list">
-            {snapshot.devices.map((device) => (
-              <TargetRow key={deviceId(device)} label={deviceId(device)} detail={device.profile ?? "unknown profile"} status={device.status ?? "registered"} />
-            ))}
-            {snapshot.runtimeTargets.slice(0, 4).map((target) => (
-              <TargetRow
-                key={runtimeTargetId(target)}
-                label={runtimeTargetId(target)}
-                detail={`${target.arch ?? "arch unknown"} - ${target.device_profiles?.join(", ") || "any profile"}`}
-                status="runtime"
-              />
-            ))}
-          </div>
-        </section>
         ) : null}
 
         {activeHubStage === "field" ? (
