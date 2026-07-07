@@ -2347,6 +2347,21 @@ ddil:
             "x-temms-mission-package-runtime-plan-sha256"
         ] == canonical_json_hash(mission_package_download["runtime_plan"])
 
+        def _rehash_downloaded_mission_package(
+            downloaded_package: dict[str, object],
+        ) -> None:
+            deployment_intent = downloaded_package["deployment_intent"]
+            component_digests = dict(downloaded_package["component_digests"])
+            component_digests["deployment_intent_sha256"] = canonical_json_hash(
+                deployment_intent
+            )
+            downloaded_package["component_digests"] = component_digests
+            integrity = dict(downloaded_package["integrity"])
+            unsigned_package = dict(downloaded_package)
+            unsigned_package.pop("integrity", None)
+            integrity["payload_sha256"] = canonical_json_hash(unsigned_package)
+            downloaded_package["integrity"] = integrity
+
         tampered_mission_package = json.loads(json.dumps(mission_package_download))
         tampered_deployment_intent = dict(tampered_mission_package["deployment_intent"])
         tampered_deployment_intent["rollout_id"] = "tampered-rollout"
@@ -2398,22 +2413,7 @@ ddil:
         ]
         missing_rollout_deployment_intent.pop("rollout_id", None)
         missing_rollout_deployment_intent["command"]["body"].pop("rollout_id", None)
-        missing_rollout_component_digests = dict(
-            missing_rollout_id_package["component_digests"]
-        )
-        missing_rollout_component_digests["deployment_intent_sha256"] = (
-            canonical_json_hash(missing_rollout_deployment_intent)
-        )
-        missing_rollout_id_package["component_digests"] = (
-            missing_rollout_component_digests
-        )
-        missing_rollout_integrity = dict(missing_rollout_id_package["integrity"])
-        unsigned_missing_rollout_package = dict(missing_rollout_id_package)
-        unsigned_missing_rollout_package.pop("integrity", None)
-        missing_rollout_integrity["payload_sha256"] = canonical_json_hash(
-            unsigned_missing_rollout_package
-        )
-        missing_rollout_id_package["integrity"] = missing_rollout_integrity
+        _rehash_downloaded_mission_package(missing_rollout_id_package)
         missing_rollout_stage_response = hub_ui_client.post(
             "/v1/hub/mission-package/stage",
             json={"mission_package": missing_rollout_id_package},
@@ -2424,20 +2424,7 @@ ddil:
         mismatched_command_package = json.loads(json.dumps(mission_package_download))
         mismatched_command_intent = mismatched_command_package["deployment_intent"]
         mismatched_command_intent["command"]["body"]["device_id"] = "edge-other"
-        mismatched_component_digests = dict(
-            mismatched_command_package["component_digests"]
-        )
-        mismatched_component_digests["deployment_intent_sha256"] = (
-            canonical_json_hash(mismatched_command_intent)
-        )
-        mismatched_command_package["component_digests"] = mismatched_component_digests
-        mismatched_integrity = dict(mismatched_command_package["integrity"])
-        unsigned_mismatched_package = dict(mismatched_command_package)
-        unsigned_mismatched_package.pop("integrity", None)
-        mismatched_integrity["payload_sha256"] = canonical_json_hash(
-            unsigned_mismatched_package
-        )
-        mismatched_command_package["integrity"] = mismatched_integrity
+        _rehash_downloaded_mission_package(mismatched_command_package)
         mismatched_stage_response = hub_ui_client.post(
             "/v1/hub/mission-package/stage",
             json={"mission_package": mismatched_command_package},
@@ -2447,6 +2434,21 @@ ddil:
             "device_id does not match selection"
             in mismatched_stage_response.json()["detail"]
         )
+
+        disabled_gate_package = json.loads(json.dumps(mission_package_download))
+        disabled_gate_intent = disabled_gate_package["deployment_intent"]
+        disabled_gate_intent["requires"] = {
+            **disabled_gate_intent.get("requires", {}),
+            "approval": False,
+        }
+        disabled_gate_intent["command"]["body"]["require_approval"] = False
+        _rehash_downloaded_mission_package(disabled_gate_package)
+        disabled_gate_stage_response = hub_ui_client.post(
+            "/v1/hub/mission-package/stage",
+            json={"mission_package": disabled_gate_package},
+        )
+        assert disabled_gate_stage_response.status_code == 400
+        assert "must require approval" in disabled_gate_stage_response.json()["detail"]
 
         override_rollout_stage_response = hub_ui_client.post(
             "/v1/hub/mission-package/stage",

@@ -998,7 +998,11 @@ def _ddil_readiness_gate(summary: Dict[str, Any]) -> Dict[str, Any]:
             "ddil_queue",
             "DDIL queue",
             "attention",
-            "runtime advisory" if optimization_advisories else ("offline queued" if offline else "pending replay"),
+            (
+                "runtime advisory"
+                if optimization_advisories
+                else ("offline queued" if offline else "pending replay")
+            ),
             detail,
             refs=refs,
             actions=[
@@ -1327,7 +1331,10 @@ def _finalize_readiness_response(readiness: Dict[str, Any]) -> Dict[str, Any]:
     elif warning is not None:
         status = "attention"
         headline = "Deployment is stageable with operator action"
-        detail = "The selected model has no hard blockers, but one runtime, resource, performance, or proof gate still needs review."
+        detail = (
+            "The selected model has no hard blockers, but one runtime, resource, "
+            "performance, or proof gate still needs review."
+        )
         next_action = str(warning.get("detail") or "Review the attention gate")
     else:
         status = "go"
@@ -3107,7 +3114,8 @@ async def retarget_pending_runtime(
 
     signature_required, signing_key = rollout_signature_policy(state)
     matching_entry = entries[int(preflight_entry["index"])]
-    if (signature_required or isinstance(matching_entry.get("signature"), dict)) and not signing_key:
+    entry_has_signature = isinstance(matching_entry.get("signature"), dict)
+    if (signature_required or entry_has_signature) and not signing_key:
         raise HTTPException(
             status_code=409,
             detail="Retargeting this pending operation requires a configured signing key",
@@ -3964,6 +3972,26 @@ def _mission_package_stage_request_body(
         raise ValueError("mission package deployment intent rollout_id mismatch")
     if request.rollout_id and request.rollout_id != deployment_rollout_id:
         raise ValueError("mission package stage rollout_id must match deployment intent")
+    intent_requires = (
+        deployment_intent.get("requires")
+        if isinstance(deployment_intent.get("requires"), dict)
+        else {}
+    )
+    required_gate_flags = (
+        ("approval", "require_approval"),
+        ("runtime_validation", "require_runtime_validation"),
+    )
+    for intent_key, command_key in required_gate_flags:
+        if intent_requires.get(intent_key) is not True:
+            raise ValueError(
+                f"mission package deployment intent must require {intent_key}"
+            )
+        if command_body.get(command_key) is not True:
+            raise ValueError(
+                f"mission package deployment command must require {intent_key}"
+            )
+    if intent_requires.get("edge_readiness") is not True:
+        raise ValueError("mission package deployment intent must require edge_readiness")
 
     selection = (
         package_plan.get("selection")
@@ -4494,7 +4522,10 @@ async def assign_rollout(
     if require_signature and package is not None and not package_strict_metadata_verified(package):
         raise HTTPException(
             status_code=400,
-            detail=f"Package {request.package_id} does not have strict production metadata validation",
+            detail=(
+                f"Package {request.package_id} does not have strict production "
+                "metadata validation"
+            ),
         )
     try:
         rollout = hub.assign_rollout(
@@ -4540,7 +4571,10 @@ async def create_rollout_plan(
     if require_signature and package is not None and not package_strict_metadata_verified(package):
         raise HTTPException(
             status_code=400,
-            detail=f"Package {request.package_id} does not have strict production metadata validation",
+            detail=(
+                f"Package {request.package_id} does not have strict production "
+                "metadata validation"
+            ),
         )
     try:
         return hub.create_rollout_plan(
