@@ -1,6 +1,5 @@
 import {
   Activity,
-  ArrowLeft,
   BadgeCheck,
   Box,
   CheckCircle2,
@@ -68,9 +67,9 @@ import {
   ReadinessCommandPanel,
   ReadinessVerdictPanel
 } from "./components/readiness-panels";
-import { RuntimeDecisionTrace } from "./components/runtime-decision-trace";
 import { EdgeRuntimeMissionPanel } from "./components/runtime-mission";
 import { EdgeRecommendationPanel } from "./components/runtime-optimizer";
+import { EdgeRuntimeWorkbench } from "./components/runtime-workbench";
 import {
   HandlingPolicyPanel,
   MissionDesignPanel
@@ -141,10 +140,12 @@ import {
   artifactLaneTone,
   artifactLaneValue,
   benchmarkFreshness,
+  capabilityLockDetail,
+  capabilityLockTone,
+  capabilityLockValue,
   compactMetricDetail,
   edgeRuntimeCapabilityFit,
   formatAge,
-  formatArtifactSizeMb,
   formatBenchmark,
   formatBenchmarkFreshness,
   formatBenchmarkTarget,
@@ -167,12 +168,7 @@ import {
   runtimeLaneFor,
   runtimeLaneTone,
   runtimeLaneValue,
-  runtimeProviderDetail,
-  runtimeProviderTone,
-  runtimeProviderValue,
   runtimeTargetCapabilityDetail,
-  runtimeTargetImageDetail,
-  runtimeTargetImageValue,
   runtimeTargetInventoryFailures,
   runtimeTargetSelectionDetail,
   runtimeTargetSelectionTone,
@@ -458,6 +454,72 @@ export function App(): JSX.Element {
   const runtimeDecision = asRecord(scopedReadiness?.runtime_decision);
   const edgeExecutionContract = asRecord(scopedReadiness?.edge_execution_contract);
   const runtimeFitDisplay = runtimeFitDisplayFor(scopedReadiness, edgeRuntimeFit, selectedRuntime);
+  const runtimeStageView = useMemo(() => {
+    const remediationContext: RuntimeRemediationContext = {
+      packageId: selectedModel?.packageId ?? "",
+      modelId: selectedModel?.id ?? "",
+      deviceId: selectedDevice ? deviceId(selectedDevice) : "",
+      slot: "vision"
+    };
+    if (activeHubStage !== "runtime") {
+      return {
+        artifactLane: {},
+        capabilityLock: {},
+        remediationContext,
+        rows: [],
+        selectedLane: {}
+      };
+    }
+
+    const contract = Object.keys(edgeExecutionContract).length ? edgeExecutionContract : runtimeDecision;
+    const runtimeFit = asRecord(scopedReadiness?.runtime_fit);
+    const targetSelection = Object.keys(asRecord(contract.target_selection)).length
+      ? asRecord(contract.target_selection)
+      : asRecord(runtimeFit.target_selection);
+    const selectedRuntimeTargetId = stringOf(
+      targetSelection.selected_runtime_target_id,
+      selectedRuntime ? runtimeTargetId(selectedRuntime) : ""
+    );
+    const bestRuntimeTargetId = stringOf(targetSelection.best_runtime_target_id, "");
+    const candidates = runtimeDecisionCandidates(
+      contract,
+      runtimeFit,
+      selectedRuntimeTargetId,
+      bestRuntimeTargetId || selectedRuntimeTargetId
+    );
+    const assessments = runtimeTargetAssessments(contract, runtimeFit, candidates);
+    const rows = runtimeWorkbenchRows({
+      assessments,
+      device: selectedDevice,
+      model: selectedModel,
+      runtimeFit,
+      runtimeWorkbench: asRecord(scopedReadiness?.runtime_workbench),
+      runtimeTargets: snapshot.runtimeTargets,
+      runtimeValidations: snapshot.runtimeValidations,
+      selectedRuntimeTargetId,
+      bestRuntimeTargetId
+    });
+    const selectedRow = rows.find((row) => row.selected);
+    return {
+      artifactLane: asRecord(runtimeFit.artifact_lane),
+      capabilityLock: runtimeCapabilityLockForProof(scopedReadiness),
+      remediationContext,
+      rows,
+      selectedLane: selectedRow
+        ? asRecord(selectedRow.target.runtime_lane)
+        : runtimeLaneFor(runtimeFit, selectedRuntime)
+    };
+  }, [
+    activeHubStage,
+    edgeExecutionContract,
+    runtimeDecision,
+    scopedReadiness,
+    selectedDevice,
+    selectedModel,
+    selectedRuntime,
+    snapshot.runtimeTargets,
+    snapshot.runtimeValidations
+  ]);
   const targetFitValue = selectedModel ? runtimeFitDisplay.label : compatibleTargets;
   const targetFitDetail = selectedModel
     ? `${selectedRuntime ? runtimeTargetId(selectedRuntime) : "runtime target"}; ${compatibleTargets}/${snapshot.runtimeTargets.length} eligible`
@@ -1440,16 +1502,18 @@ function executePendingReadinessAction(): void {
       {activeHubStage === "runtime" ? (
         <div className="stage-stack" data-testid="hub-stage-runtime">
           <EdgeRuntimeWorkbench
+            artifactLane={runtimeStageView.artifactLane}
+            capabilityLock={runtimeStageView.capabilityLock}
+            commandForRow={runtimeWorkbenchRowRemediationCommand}
             devices={snapshot.devices}
-            edgeExecutionContract={edgeExecutionContract}
-            models={models}
-            readiness={scopedReadiness}
+            modelCount={models.length}
+            remediationContext={runtimeStageView.remediationContext}
             resourceEnvelopeFit={resourceEnvelopeFit}
-            runtimeDecision={runtimeDecision}
             runtimeFitDisplay={runtimeFitDisplay}
+            rows={runtimeStageView.rows}
             runtimeTargets={snapshot.runtimeTargets}
-            runtimeValidations={snapshot.runtimeValidations}
             selectedDevice={selectedDevice}
+            selectedLane={runtimeStageView.selectedLane}
             selectedModel={selectedModel}
             selectedRuntime={selectedRuntime}
             onCopyCommand={(label, command) => void copyCommand(label, command)}
@@ -2155,321 +2219,6 @@ function executePendingReadinessAction(): void {
   );
 }
 
-function EdgeRuntimeWorkbench({
-  devices,
-  edgeExecutionContract,
-  models,
-  onCopyCommand,
-  onGenerateProof,
-  onGoHandling,
-  onGoModels,
-  onSelectDevice,
-  onSelectRuntime,
-  readiness,
-  resourceEnvelopeFit,
-  runtimeDecision,
-  runtimeFitDisplay,
-  runtimeTargets,
-  runtimeValidations,
-  selectedDevice,
-  selectedModel,
-  selectedRuntime
-}: {
-  devices: Device[];
-  edgeExecutionContract: JsonObject;
-  models: ModelRecord[];
-  onCopyCommand: (label: string, command: string) => void;
-  onGenerateProof: () => void;
-  onGoHandling: () => void;
-  onGoModels: () => void;
-  onSelectDevice: (id: string) => void;
-  onSelectRuntime: (id: string) => void;
-  readiness: DeploymentReadiness | undefined;
-  resourceEnvelopeFit: EdgeRuntimeFit;
-  runtimeDecision: JsonObject;
-  runtimeFitDisplay: RuntimeFitDisplay;
-  runtimeTargets: RuntimeTarget[];
-  runtimeValidations: RuntimeValidation[];
-  selectedDevice: Device | undefined;
-  selectedModel: ModelRecord | undefined;
-  selectedRuntime: RuntimeTarget | undefined;
-}): JSX.Element {
-  const contract = Object.keys(edgeExecutionContract).length ? edgeExecutionContract : runtimeDecision;
-  const runtimeFit = asRecord(readiness?.runtime_fit);
-  const targetSelection = Object.keys(asRecord(contract.target_selection)).length
-    ? asRecord(contract.target_selection)
-    : asRecord(runtimeFit.target_selection);
-  const selectedRuntimeTargetId = stringOf(
-    targetSelection.selected_runtime_target_id,
-    selectedRuntime ? runtimeTargetId(selectedRuntime) : ""
-  );
-  const explicitBestRuntimeTargetId = stringOf(targetSelection.best_runtime_target_id, "");
-  const candidates = runtimeDecisionCandidates(
-    contract,
-    runtimeFit,
-    selectedRuntimeTargetId,
-    explicitBestRuntimeTargetId || selectedRuntimeTargetId
-  );
-  const assessments = runtimeTargetAssessments(contract, runtimeFit, candidates);
-  const runtimeWorkbench = asRecord(readiness?.runtime_workbench);
-  const rows = runtimeWorkbenchRows({
-    assessments,
-    device: selectedDevice,
-    model: selectedModel,
-    runtimeFit,
-    runtimeWorkbench,
-    runtimeTargets,
-    runtimeValidations,
-    selectedRuntimeTargetId,
-    bestRuntimeTargetId: explicitBestRuntimeTargetId
-  });
-  const bestRow = rows.find((row) => row.best) ?? rows[0];
-  const selectedRow = rows.find((row) => row.selected);
-  const remediationContext: RuntimeRemediationContext = {
-    packageId: selectedModel?.packageId ?? "",
-    modelId: selectedModel?.id ?? "",
-    deviceId: selectedDevice ? deviceId(selectedDevice) : "",
-    slot: "vision"
-  };
-  const proofDisabled = !selectedModel || !selectedDevice || !selectedRuntime;
-  const modelRuntimeRequirements = [
-    selectedModel?.runtimes.length ? `runtime ${selectedModel.runtimes.join(", ")}` : "",
-    selectedModel?.providers.length ? `provider ${selectedModel.providers.join(", ")}` : "",
-    selectedModel?.profiles.length ? `profile ${selectedModel.profiles.join(", ")}` : "",
-    formatArtifactSizeMb(selectedModel?.artifactSizeMb)
-  ].filter(Boolean);
-  const selectedLane = selectedRow ? asRecord(selectedRow.target.runtime_lane) : runtimeLaneFor(runtimeFit, selectedRuntime);
-  const artifactLane = asRecord(runtimeFit.artifact_lane);
-  const capabilityLock = runtimeCapabilityLockForProof(readiness);
-
-  return (
-    <section className="runtime-workbench" aria-labelledby="runtime-workbench-heading" data-testid="runtime-workbench">
-      <div className="runtime-workbench-header">
-        <div>
-          <span className="section-kicker">Runtime workbench</span>
-          <h2 id="runtime-workbench-heading">Target the model to the edge runtime</h2>
-          <p>
-            Compare the model selected in Model Plan against live edge inventory, runtime target validation,
-            benchmark freshness, resource limits, and signed-proof gates.
-          </p>
-        </div>
-        <div className="runtime-workbench-verdict">
-          <Badge value={bestRow ? `best ${bestRow.targetId}` : "target pending"} />
-          <strong>{selectedRow?.score !== undefined ? `${selectedRow.score}/100` : runtimeFitDisplay.label}</strong>
-          <small>{selectedRow?.detail ?? runtimeFitDisplay.detail}</small>
-        </div>
-      </div>
-
-      <div className="runtime-workbench-controls" aria-label="Runtime path controls">
-        <div
-          aria-label="Selected model from Model Plan"
-          className="runtime-workbench-model-context"
-          data-testid="runtime-workbench-model"
-          id="runtime-workbench-model"
-        >
-          <div>
-            <span>Selected model</span>
-            <strong>{selectedModel?.name ?? "Model pending"}</strong>
-            <small>
-              {selectedModel
-                ? `${selectedModel.id} / ${selectedModel.packageId}`
-                : models.length
-                  ? "Open Model Plan to choose a signed model"
-                  : "No signed models registered"}
-            </small>
-          </div>
-          <Button icon={<ArrowLeft size={16} />} variant="secondary" onClick={onGoModels}>
-            Model Plan
-          </Button>
-        </div>
-        <label className="field" htmlFor="runtime-workbench-edge-node">
-          <span>Edge node</span>
-          <select
-            aria-label="Edge node"
-            data-testid="runtime-workbench-edge-node"
-            id="runtime-workbench-edge-node"
-            value={selectedDevice ? deviceId(selectedDevice) : ""}
-            onChange={(event) => onSelectDevice(event.target.value)}
-          >
-            {devices.length ? null : <option value="">No edge nodes</option>}
-            {devices.map((device) => (
-              <option key={deviceId(device)} value={deviceId(device)}>
-                {deviceId(device)} - {device.profile ?? "unknown profile"}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field" htmlFor="runtime-workbench-target-runtime">
-          <span>Target runtime</span>
-          <select
-            aria-label="Target runtime"
-            data-testid="runtime-workbench-target-runtime"
-            id="runtime-workbench-target-runtime"
-            value={selectedRuntime ? runtimeTargetId(selectedRuntime) : ""}
-            onChange={(event) => onSelectRuntime(event.target.value)}
-          >
-            {runtimeTargets.length ? null : <option value="">No runtime targets</option>}
-            {runtimeTargets.map((target) => (
-              <option key={runtimeTargetId(target)} value={runtimeTargetId(target)}>
-                {runtimeTargetId(target)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <Button
-          ariaLabel="Generate runtime proof for selected edge path"
-          icon={<FileCheck2 size={16} />}
-          testId="runtime-workbench-generate-proof"
-          disabled={proofDisabled}
-          onClick={onGenerateProof}
-        >
-          Generate proof
-        </Button>
-        <Button
-          ariaLabel="Continue to Sensor Handling"
-          icon={<Activity size={16} />}
-          testId="runtime-workbench-go-handling"
-          disabled={proofDisabled}
-          onClick={onGoHandling}
-        >
-          Continue to Sensor Handling
-        </Button>
-      </div>
-
-      <div className="runtime-capability-strip" aria-label="On-device runtime capability vector">
-        <CapabilityMetric
-          label="Runtime image"
-          value={runtimeTargetImageValue(selectedRuntime)}
-          detail={runtimeTargetImageDetail(selectedRuntime)}
-          tone={selectedRuntime ? "good" : "bad"}
-        />
-        <CapabilityMetric
-          label="Provider match"
-          value={runtimeProviderValue(selectedLane)}
-          detail={runtimeProviderDetail(selectedLane, selectedDevice)}
-          tone={runtimeProviderTone(selectedLane, selectedDevice)}
-        />
-        <CapabilityMetric
-          label="Artifact lane"
-          value={artifactLaneValue(artifactLane)}
-          detail={artifactLaneDetail(artifactLane)}
-          tone={artifactLaneTone(artifactLane)}
-        />
-        <CapabilityMetric
-          label="Capability lock"
-          value={capabilityLockValue(capabilityLock)}
-          detail={capabilityLockDetail(capabilityLock)}
-          tone={capabilityLockTone(capabilityLock)}
-        />
-      </div>
-
-      <div className="runtime-workbench-summary" aria-label="Selected edge runtime summary">
-        <CapabilityMetric
-          label="Selected fit"
-          value={selectedRow?.score !== undefined ? `${selectedRow.score}/100` : runtimeFitDisplay.label}
-          detail={selectedRow?.detail ?? runtimeFitDisplay.detail}
-          tone={selectedRow?.tone ?? runtimeFitDisplay.tone}
-        />
-        <CapabilityMetric
-          label="Best target"
-          value={bestRow?.targetId ?? "pending"}
-          detail={bestRow ? `${bestRow.status}; ${bestRow.detail}` : "runtime alternatives pending"}
-          tone={bestRow?.tone ?? "neutral"}
-        />
-        <CapabilityMetric
-          label="Model constraints"
-          value={selectedModel?.format ?? "missing"}
-          detail={modelRuntimeRequirements.join(" / ") || "model runtime constraints not declared"}
-          tone={selectedModel ? "good" : "bad"}
-        />
-        <CapabilityMetric
-          label="Edge inventory"
-          value={runtimeInventoryLabel(selectedDevice)}
-          detail={runtimeInventoryDetail(selectedDevice)}
-          tone={runtimeInventoryTone(selectedDevice)}
-        />
-        <CapabilityMetric
-          label="Resources"
-          value={resourceEnvelopeFit.label}
-          detail={resourceEnvelopeFit.detail}
-          tone={resourceEnvelopeFit.tone}
-        />
-      </div>
-
-      <div className="runtime-workbench-table" aria-label="Ranked target runtimes">
-        <div className="runtime-workbench-table-head">
-          <span>Target</span>
-          <span>Fit</span>
-          <span>Lane</span>
-          <span>Proof</span>
-          <span>Action</span>
-        </div>
-        {rows.length ? (
-          rows.map((row) => (
-            <div
-              aria-label={`${row.targetId} runtime target ${row.status}`}
-              aria-selected={row.selected}
-              className={`runtime-workbench-row runtime-workbench-row-${row.tone}${
-                row.selected ? " runtime-workbench-row-selected" : ""
-              }`}
-              data-runtime-target-id={row.targetId}
-              data-testid={`runtime-workbench-row-${row.targetId}`}
-              key={row.targetId}
-            >
-              <div>
-                <strong>{row.targetId}</strong>
-                <small>
-                  {row.selected ? "selected" : row.best ? "best alternate" : row.status}
-                  {row.best && row.selected ? " best" : ""}
-                </small>
-              </div>
-              <div>
-                <strong>{row.score !== undefined ? `${row.score}/100` : row.status}</strong>
-                <small>{row.detail}</small>
-              </div>
-              <div>
-                <strong>{row.lane}</strong>
-                <small>{runtimeTargetCapabilityDetail(row.target)}</small>
-              </div>
-              <div>
-                <strong>{row.validated ? "validated" : row.compatible ? "needs proof" : "blocked"}</strong>
-                <small>{row.benchmark} / {row.inventory}</small>
-              </div>
-              <div className="runtime-workbench-row-action">
-                <button
-                  aria-label={
-                    row.selected
-                      ? `${row.targetId} is the selected runtime target`
-                      : `Select runtime target ${row.targetId}`
-                  }
-                  className="button-mini"
-                  data-testid={`runtime-workbench-select-${row.targetId}`}
-                  disabled={row.selected}
-                  type="button"
-                  onClick={() => onSelectRuntime(row.targetId)}
-                >
-                  {row.selected ? "Selected" : "Select"}
-                </button>
-              </div>
-            </div>
-          ))
-        ) : (
-          <EmptyState title="No runtime targets" detail="Register target runtimes to compare deployment paths." />
-        )}
-      </div>
-
-      {rows.length ? (
-        <RuntimeDecisionTrace
-          commandForRow={runtimeWorkbenchRowRemediationCommand}
-          context={remediationContext}
-          onCopyCommand={onCopyCommand}
-          rows={rows}
-        />
-      ) : null}
-    </section>
-  );
-}
-
 function EdgeOperatorCommandPanel({
   device,
   edgeExecutionContract,
@@ -3032,47 +2781,6 @@ function TargetRuntimeAssessmentRow({
       </div>
     </div>
   );
-}
-
-function capabilityLockValue(lock: JsonObject): string {
-  const status = stringOf(lock.status, "");
-  if (status) return status.replace(/_/g, " ");
-  return stringOf(lock.capability_sha256, "") ? "hash locked" : "not locked";
-}
-
-function capabilityLockDetail(lock: JsonObject): string {
-  const failures = stringsOf(lock.failures);
-  if (failures.length) return compactMetricDetail(failures[0]);
-  const runtimeTarget = asRecord(lock.runtime_target);
-  const edgeInventory = asRecord(lock.edge_inventory);
-  const runtimeTargetId = stringOf(lock.runtime_target_id, stringOf(runtimeTarget.runtime_target_id, "runtime target"));
-  const edgeProfile = stringOf(edgeInventory.device_profile, "edge profile");
-  const freshness = capabilityLockFreshnessDetail(lock);
-  const digest = stringOf(lock.capability_sha256, "");
-  const digestLabel = digest ? `capability ${digest.slice(0, 12)}` : "";
-  return [runtimeTargetId, edgeProfile, freshness, digestLabel].filter(Boolean).join(" / ") || "capability basis pending";
-}
-
-function capabilityLockTone(lock: JsonObject): GateTone {
-  const status = stringOf(lock.status, "");
-  if (status === "locked") return "good";
-  if (status === "blocked") return "bad";
-  if (status === "attention") return "warn";
-  return stringOf(lock.capability_sha256, "") ? "good" : "neutral";
-}
-
-function capabilityLockFreshnessDetail(lock: JsonObject): string {
-  const freshness = asRecord(asRecord(lock.edge_inventory).telemetry_freshness);
-  const state = stringOf(freshness.state, stringOf(freshness.status, "")).replace(/_/g, " ");
-  const ageSeconds = numberOf(freshness.heartbeat_age_seconds);
-  const budgetSeconds = numberOf(freshness.heartbeat_stale_after_seconds);
-  if (ageSeconds !== undefined && budgetSeconds !== undefined) {
-    const label = state || "telemetry";
-    return `${label}: heartbeat ${formatAge(ageSeconds)} old / ${formatAge(budgetSeconds)} budget`;
-  }
-  const detail = stringOf(freshness.detail, "");
-  if (detail) return compactMetricDetail(detail);
-  return "";
 }
 
 function runtimeFitDisplayFor(

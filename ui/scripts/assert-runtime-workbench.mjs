@@ -21,6 +21,7 @@ const readinessPanelsPath = join(uiRoot, "src", "components", "readiness-panels.
 const runtimeDecisionTracePath = join(uiRoot, "src", "components", "runtime-decision-trace.tsx");
 const runtimeMissionPath = join(uiRoot, "src", "components", "runtime-mission.tsx");
 const runtimeOptimizerPath = join(uiRoot, "src", "components", "runtime-optimizer.tsx");
+const runtimeWorkbenchPath = join(uiRoot, "src", "components", "runtime-workbench.tsx");
 const workbenchFlowPath = join(uiRoot, "src", "components", "workbench-flow.tsx");
 const apiPath = join(uiRoot, "src", "api.ts");
 const missionPackagePath = join(uiRoot, "src", "lib", "mission-package.ts");
@@ -97,10 +98,11 @@ const readinessPanelsSource = readFileSync(readinessPanelsPath, "utf8");
 const runtimeDecisionTraceSource = readFileSync(runtimeDecisionTracePath, "utf8");
 const runtimeMissionSource = readFileSync(runtimeMissionPath, "utf8");
 const runtimeOptimizerSource = readFileSync(runtimeOptimizerPath, "utf8");
+const runtimeWorkbenchSource = readFileSync(runtimeWorkbenchPath, "utf8");
 const workbenchFlowSource = readFileSync(workbenchFlowPath, "utf8");
 const missionPackageSource = readFileSync(missionPackagePath, "utf8");
 const missionWorkflowSource = readFileSync(missionWorkflowPath, "utf8");
-const workbenchSource = `${source}\n${capabilityDossierSource}\n${deployListsSource}\n${edgeProofSource}\n${fieldOpsSource}\n${packageHandoffSource}\n${missionStagesSource}\n${modelPlanSource}\n${readinessPanelsSource}\n${runtimeDecisionTraceSource}\n${runtimeMissionSource}\n${runtimeOptimizerSource}\n${workbenchFlowSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
+const workbenchSource = `${source}\n${capabilityDossierSource}\n${deployListsSource}\n${edgeProofSource}\n${fieldOpsSource}\n${packageHandoffSource}\n${missionStagesSource}\n${modelPlanSource}\n${readinessPanelsSource}\n${runtimeDecisionTraceSource}\n${runtimeMissionSource}\n${runtimeOptimizerSource}\n${runtimeWorkbenchSource}\n${workbenchFlowSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
 const apiSource = readFileSync(apiPath, "utf8");
 const missionSpecSource = readFileSync(missionSpecPath, "utf8");
 const proofHashSource = readFileSync(proofHashPath, "utf8");
@@ -313,6 +315,18 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "Select runtime target",
   "Target the model to the edge runtime"
 ].forEach((needle) => assertContains("Hub workbench sources", workbenchSource, needle));
+
+[
+  "Runtime workbench",
+  "Target the model to the edge runtime",
+  "Selected model from Model Plan",
+  "Runtime path controls",
+  "On-device runtime capability vector",
+  "Selected edge runtime summary",
+  "Ranked target runtimes",
+  "Generate runtime proof",
+  "Continue to Sensor Handling"
+].forEach((needle) => assertContains("Runtime workbench sources", runtimeWorkbenchSource, needle));
 
 [
   "Selected on-device capability dossier",

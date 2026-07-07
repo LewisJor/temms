@@ -410,6 +410,50 @@ export function productionAdmissionTone(admission: JsonObject): GateTone {
   return "neutral";
 }
 
+export function capabilityLockValue(lock: JsonObject): string {
+  const status = stringOf(lock.status, "");
+  if (status) return status.replace(/_/g, " ");
+  return stringOf(lock.capability_sha256, "") ? "hash locked" : "not locked";
+}
+
+export function capabilityLockDetail(lock: JsonObject): string {
+  const failures = stringsOf(lock.failures);
+  if (failures.length) return compactMetricDetail(failures[0]);
+  const runtimeTarget = asRecord(lock.runtime_target);
+  const edgeInventory = asRecord(lock.edge_inventory);
+  const runtimeTargetValue = stringOf(
+    lock.runtime_target_id,
+    stringOf(runtimeTarget.runtime_target_id, "runtime target")
+  );
+  const edgeProfile = stringOf(edgeInventory.device_profile, "edge profile");
+  const freshness = capabilityLockFreshnessDetail(lock);
+  const digest = stringOf(lock.capability_sha256, "");
+  const digestLabel = digest ? `capability ${digest.slice(0, 12)}` : "";
+  return [runtimeTargetValue, edgeProfile, freshness, digestLabel].filter(Boolean).join(" / ") || "capability basis pending";
+}
+
+export function capabilityLockTone(lock: JsonObject): GateTone {
+  const status = stringOf(lock.status, "");
+  if (status === "locked") return "good";
+  if (status === "blocked") return "bad";
+  if (status === "attention") return "warn";
+  return stringOf(lock.capability_sha256, "") ? "good" : "neutral";
+}
+
+function capabilityLockFreshnessDetail(lock: JsonObject): string {
+  const freshness = asRecord(asRecord(lock.edge_inventory).telemetry_freshness);
+  const state = stringOf(freshness.state, stringOf(freshness.status, "")).replace(/_/g, " ");
+  const ageSeconds = numberOf(freshness.heartbeat_age_seconds);
+  const budgetSeconds = numberOf(freshness.heartbeat_stale_after_seconds);
+  if (ageSeconds !== undefined && budgetSeconds !== undefined) {
+    const label = state || "telemetry";
+    return `${label}: heartbeat ${formatAge(ageSeconds)} old / ${formatAge(budgetSeconds)} budget`;
+  }
+  const detail = stringOf(freshness.detail, "");
+  if (detail) return compactMetricDetail(detail);
+  return "";
+}
+
 export function runtimeFitComponentRows(runtimeFit: Record<string, unknown>): [string, string][] {
   const components = asRecord(runtimeFit.components);
   const rows = [
