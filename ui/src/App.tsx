@@ -1447,6 +1447,7 @@ function executePendingReadinessAction(): void {
             selectedModel={selectedModel}
             selectedRuntime={selectedRuntime}
             onChange={setMissionDraft}
+            onGoPackage={() => navigateHubStage("package")}
             onPlanPackage={planMissionPackageArtifact}
           />
         </div>

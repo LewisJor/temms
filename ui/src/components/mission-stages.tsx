@@ -1,4 +1,4 @@
-import { Clipboard, PackageCheck, UploadCloud } from "lucide-react";
+import { ArrowRight, Clipboard, PackageCheck, UploadCloud } from "lucide-react";
 import { useRef } from "react";
 import { deviceId, runtimeTargetId } from "../lib/hub-format";
 import { asRecord, stringOf } from "../lib/json";
@@ -153,6 +153,7 @@ export function HandlingPolicyPanel({
   selectedModel,
   selectedRuntime,
   onChange,
+  onGoPackage,
   onPlanPackage
 }: {
   draft: MissionDraft;
@@ -162,6 +163,7 @@ export function HandlingPolicyPanel({
   selectedModel: ModelRecord | undefined;
   selectedRuntime: RuntimeTarget | undefined;
   onChange: (draft: MissionDraft) => void;
+  onGoPackage: () => void;
   onPlanPackage: () => void;
 }): JSX.Element {
   const update = (key: keyof MissionDraft, value: string): void => {
@@ -172,6 +174,7 @@ export function HandlingPolicyPanel({
   const manifestHandling = asRecord(manifest.model_handling);
   const manifestSlo = asRecord(manifest.slo);
   const manifestDdil = asRecord(manifest.ddil);
+  const packageReady = Boolean(selectedModel && selectedRuntime && selectedDevice && draft.sensor && draft.slot);
 
   return (
     <section className="mission-builder handling-policy" aria-labelledby="handling-policy-heading">
@@ -185,6 +188,16 @@ export function HandlingPolicyPanel({
           <button className="button" type="button" onClick={onPlanPackage}>
             <PackageCheck size={16} />
             <span>Plan package</span>
+          </button>
+          <button
+            className="button button-secondary"
+            data-testid="handling-go-package"
+            disabled={!packageReady}
+            type="button"
+            onClick={onGoPackage}
+          >
+            <span>Continue to Package Handoff</span>
+            <ArrowRight size={16} />
           </button>
         </div>
       </div>
