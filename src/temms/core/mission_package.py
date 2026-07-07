@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime
+from functools import lru_cache
 from typing import Any
 
 EDGE_MISSION_PACKAGE_SCHEMA_VERSION = "temms-edge-mission-package/v1"
@@ -45,6 +46,101 @@ EDGE_MISSION_PACKAGE_IDENTITY_TRANSIENT_KEYS = {
 ProofGateFailures = Callable[..., list[str]]
 CapabilityLockProvider = Callable[[dict[str, Any]], dict[str, Any]]
 CapabilityLockSummary = Callable[[dict[str, Any]], dict[str, Any]]
+
+MISSION_PACKAGE_YAML_FIELD_PATHS: dict[str, tuple[str, ...]] = {
+    "confidence_threshold": (
+        "model_handling.confidence_threshold",
+        "switching.confidence_threshold",
+        "switch_confidence_threshold",
+        "confidence_threshold",
+    ),
+    "ddil_mode": (
+        "ddil.mode",
+        "ddil_mode",
+        "ddil.behavior",
+        "ddil_behavior",
+        "offline_behavior",
+    ),
+    "device_id": (
+        "selection.device_id",
+        "edge.device_id",
+        "edge_device_id",
+        "target_device_id",
+        "device_id",
+    ),
+    "fallback_model_id": (
+        "model_handling.fallback_model_id",
+        "fallback_model_id",
+        "fallback_model",
+        "fallback",
+    ),
+    "goal": (
+        "mission.goal",
+        "mission_goal",
+        "goal",
+        "objective",
+        "description",
+    ),
+    "latency_budget_ms": (
+        "slo.latency_budget_ms",
+        "latency_budget_ms",
+        "max_latency_ms_p95",
+        "latency_ms_p95",
+        "latency_ms",
+    ),
+    "min_throughput_ips": (
+        "slo.min_throughput_ips",
+        "min_throughput_ips",
+        "throughput_ips",
+        "min_inferences_per_second",
+    ),
+    "model_id": (
+        "selection.model_id",
+        "model.id",
+        "selected_model_id",
+        "primary_model_id",
+        "model_id",
+    ),
+    "package_id": (
+        "selection.package_id",
+        "model.package_id",
+        "artifact.package_id",
+        "package.id",
+        "package_id",
+    ),
+    "runtime_target_id": (
+        "selection.runtime_target_id",
+        "runtime.runtime_target_id",
+        "target_runtime_id",
+        "runtime.id",
+        "runtime_target_id",
+    ),
+    "sensor": (
+        "mission.sensor",
+        "input.sensor",
+        "sensor_input",
+        "sensor_id",
+        "sensor",
+    ),
+    "slot": (
+        "mission.slot",
+        "selection.slot",
+        "capability_slot",
+        "slot",
+    ),
+    "switch_policy": (
+        "model_handling.switch_policy",
+        "switching.policy",
+        "model_switch_policy",
+        "switch_policy",
+    ),
+}
+
+MISSION_PACKAGE_YAML_FLOAT_FIELDS = {
+    "confidence_threshold",
+    "latency_budget_ms",
+    "min_throughput_ips",
+}
 
 
 def canonical_json_hash(payload: dict[str, Any]) -> str:
@@ -101,6 +197,35 @@ def edge_mission_package_component_digests(plan: dict[str, Any]) -> dict[str, An
     return digests
 
 
+def hydrate_mission_spec_from_yaml(
+    mission_spec: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Return mission spec fields, deriving missing package-planning values from YAML."""
+    hydrated = dict(mission_spec or {})
+    yaml_source = _mission_yaml_source(hydrated)
+    if not yaml_source:
+        return hydrated
+
+    yaml_payload = _load_mission_yaml_payload(yaml_source)
+    if not yaml_payload:
+        return hydrated
+
+    for field_name, yaml_paths in MISSION_PACKAGE_YAML_FIELD_PATHS.items():
+        if hydrated.get(field_name) not in (None, ""):
+            continue
+        yaml_value = _mission_yaml_value(yaml_payload, *yaml_paths)
+        if yaml_value in (None, "", [], {}):
+            continue
+        if field_name in MISSION_PACKAGE_YAML_FLOAT_FIELDS:
+            numeric_value = _coerce_mission_yaml_float(yaml_value)
+            if numeric_value is not None:
+                hydrated[field_name] = numeric_value
+            continue
+        hydrated[field_name] = str(yaml_value)
+
+    return hydrated
+
+
 def build_edge_mission_package_plan(
     readiness: dict[str, Any],
     mission_spec: dict[str, Any] | None = None,
@@ -115,8 +240,8 @@ def build_edge_mission_package_plan(
     require_proof_signature: bool = True,
 ) -> dict[str, Any]:
     """Build the mission-to-edge package plan from the readiness engine."""
-    mission_spec = mission_spec or {}
-    selection = (
+    mission_spec = hydrate_mission_spec_from_yaml(mission_spec)
+    readiness_selection = (
         readiness.get("selection")
         if isinstance(readiness.get("selection"), dict)
         else {}
@@ -165,12 +290,17 @@ def build_edge_mission_package_plan(
             "require_proof_signature": require_proof_signature,
         }
     )
-    yaml_source = str(
-        mission_spec.get("mission_yaml")
-        or mission_spec.get("yaml")
-        or mission_spec.get("source_yaml")
-        or ""
+    selection = _refs(
+        {
+            "package_id": mission_spec.get("package_id"),
+            "model_id": mission_spec.get("model_id"),
+            "device_id": mission_spec.get("device_id"),
+            "runtime_target_id": mission_spec.get("runtime_target_id"),
+            "slot": mission_spec.get("slot"),
+            **readiness_selection,
+        }
     )
+    yaml_source = _mission_yaml_source(mission_spec)
     mission = _refs(
         {
             "goal": mission_spec.get("goal"),
@@ -530,6 +660,70 @@ def _command_id(kind: str, refs: dict[str, Any], keys: list[str]) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     digest = hashlib.sha256(encoded).hexdigest()[:12]
     return f"{READINESS_REMEDIATION_ID_PREFIX}-{kind}-{digest}"
+
+
+def _mission_yaml_source(mission_spec: dict[str, Any]) -> str:
+    return str(
+        mission_spec.get("mission_yaml")
+        or mission_spec.get("yaml")
+        or mission_spec.get("source_yaml")
+        or ""
+    )
+
+
+@lru_cache(maxsize=128)
+def _load_mission_yaml_payload(mission_yaml: str) -> dict[str, Any]:
+    try:
+        import yaml
+
+        payload = yaml.safe_load(mission_yaml)
+    except Exception as exc:
+        raise ValueError(f"Mission YAML could not be parsed: {exc}") from exc
+    if payload is None:
+        return {}
+    if not isinstance(payload, dict):
+        raise ValueError("Mission YAML must be a mapping object")
+    return payload
+
+
+def _mission_yaml_value(payload: dict[str, Any], *paths: str) -> Any:
+    for path in paths:
+        current: Any = payload
+        for part in path.split("."):
+            if not isinstance(current, dict):
+                current = None
+                break
+            current = _mission_yaml_child(current, part)
+            if current is None:
+                break
+        if current not in (None, "", [], {}):
+            return current
+    return None
+
+
+def _mission_yaml_child(payload: dict[str, Any], key: str) -> Any:
+    if key in payload:
+        return payload[key]
+    normalized_key = _normalize_mission_yaml_key(key)
+    for candidate_key, candidate_value in payload.items():
+        if _normalize_mission_yaml_key(str(candidate_key)) == normalized_key:
+            return candidate_value
+    return None
+
+
+def _normalize_mission_yaml_key(key: str) -> str:
+    return "".join(char for char in key.lower() if char.isalnum())
+
+
+def _coerce_mission_yaml_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def _refs(refs: dict[str, Any]) -> dict[str, Any]:

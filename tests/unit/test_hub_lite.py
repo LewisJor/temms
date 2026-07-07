@@ -369,6 +369,108 @@ def test_edge_mission_package_plan_binds_mission_runtime_and_policy():
     assert hub_lite_module.canonical_json_hash(unsigned) == recorded_hash
 
 
+def test_edge_mission_package_plan_hydrates_yaml_in_core_planner():
+    readiness = {
+        "schema_version": "temms-deployment-readiness/v1",
+        "status": "go",
+        "runtime_fit": {
+            "score": 98,
+            "tier": "optimal",
+            "runtime_capability_lock": {
+                "schema_version": "temms-runtime-capability-lock/v1",
+                "status": "locked",
+                "capability_sha256": "b" * 64,
+            },
+            "target_selection": {
+                "status": "best",
+                "selected_runtime_target_id": "temms-rpi5-tflite",
+                "best_runtime_target_id": "temms-rpi5-tflite",
+                "score_delta": 0,
+            },
+        },
+        "edge_runtime_mission": {
+            "schema_version": "temms-edge-runtime-mission/v1",
+            "status": "go",
+            "metrics": {
+                "runtime_fit": {
+                    "status": "go",
+                    "score": 98,
+                    "tier": "optimal",
+                }
+            },
+        },
+    }
+
+    plan = hub_lite_module.build_edge_mission_package_plan(
+        readiness,
+        {
+            "mission_yaml": """
+schema_version: temms-edge-mission/v1
+mission:
+  goal: Detect vehicles locally while disconnected.
+  sensor: camera.lowlight
+  slot: vision
+selection:
+  package_id: pkg-yaml-core
+  model_id: model-yaml-core
+  device_id: edge-rpi5
+  runtime_target_id: temms-rpi5-tflite
+slo:
+  latency_budget_ms: 42
+  min_throughput_ips: 19
+model_handling:
+  switch_policy: confidence_and_condition
+  confidence_threshold: 0.81
+  fallback_model_id: model-yaml-fallback
+ddil:
+  mode: queue_signed_intents
+""",
+            "sensor": "camera.override",
+        },
+        require_go=True,
+        min_runtime_fit=95,
+        require_best_runtime=True,
+        require_capability_lock=True,
+    )
+
+    assert plan["mission"]["goal"] == "Detect vehicles locally while disconnected."
+    assert plan["mission"]["sensor"] == "camera.override"
+    assert plan["mission"]["slot"] == "vision"
+    assert plan["selection"] == {
+        "package_id": "pkg-yaml-core",
+        "model_id": "model-yaml-core",
+        "device_id": "edge-rpi5",
+        "runtime_target_id": "temms-rpi5-tflite",
+        "slot": "vision",
+    }
+    assert plan["slo"] == {
+        "latency_budget_ms": 42.0,
+        "min_throughput_ips": 19.0,
+    }
+    assert plan["model_handling"] == {
+        "switch_policy": "confidence_and_condition",
+        "confidence_threshold": 0.81,
+        "fallback_model_id": "model-yaml-fallback",
+    }
+    assert plan["ddil"]["mode"] == "queue_signed_intents"
+    assert plan["proof_gate"]["status"] == "passed"
+    assert plan["deployment_intent"]["command"]["body"] == {
+        "rollout_id": plan["deployment_intent"]["rollout_id"],
+        "package_id": "pkg-yaml-core",
+        "model_id": "model-yaml-core",
+        "device_id": "edge-rpi5",
+        "runtime_target_id": "temms-rpi5-tflite",
+        "slot": "vision",
+        "require_approval": True,
+        "require_runtime_validation": True,
+        "actor": "operator:readiness-remediation",
+        "reason": (
+            "mission package deployment handoff "
+            f"{plan['package_identity']['package_identity_sha256'][:12]}"
+        ),
+    }
+
+
 def test_runtime_target_catalog_includes_defaults_and_byo_targets(temp_dir):
     store = HubLiteStore(temp_dir / "hub.json")
 
