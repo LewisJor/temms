@@ -10,6 +10,7 @@ const uiRoot = resolve(scriptDir, "..");
 const repoRoot = resolve(uiRoot, "..");
 const indexPath = join(uiRoot, "index.html");
 const sourcePath = join(uiRoot, "src", "App.tsx");
+const workbenchFlowPath = join(uiRoot, "src", "components", "workbench-flow.tsx");
 const apiPath = join(uiRoot, "src", "api.ts");
 const missionSpecPath = join(uiRoot, "src", "lib", "mission-spec.ts");
 const proofHashPath = join(uiRoot, "src", "lib", "proof-hash.ts");
@@ -72,6 +73,8 @@ function assertAssetBudget(label, content, { rawBytes, gzipBytes }) {
 
 const indexHtml = readFileSync(indexPath, "utf8");
 const source = readFileSync(sourcePath, "utf8");
+const workbenchFlowSource = readFileSync(workbenchFlowPath, "utf8");
+const workbenchSource = `${source}\n${workbenchFlowSource}`;
 const apiSource = readFileSync(apiPath, "utf8");
 const missionSpecSource = readFileSync(missionSpecPath, "utf8");
 const proofHashSource = readFileSync(proofHashPath, "utf8");
@@ -266,7 +269,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "runtime_retarget_workbench_previous_selected_runtime_target_id",
   "Select runtime target",
   "Target the model to the edge runtime"
-].forEach((needle) => assertContains("ui/src/App.tsx", source, needle));
+].forEach((needle) => assertContains("ui/src/App.tsx + ui/src/components/workbench-flow.tsx", workbenchSource, needle));
 
 [
   "MissionDraft",
