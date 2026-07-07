@@ -95,6 +95,25 @@ export function actionLabel(action: string): string {
     .join(" ");
 }
 
+export function displayGateState(value: string): string {
+  const normalized = value.replace(/_/g, " ").trim();
+  if (!normalized) return value;
+  const acronyms: Record<string, string> = {
+    cpu: "CPU",
+    ddil: "DDIL",
+    gpu: "GPU",
+    onnx: "ONNX",
+    slo: "SLO"
+  };
+  return normalized
+    .split(/\s+/)
+    .map((word, index) =>
+      acronyms[word.toLowerCase()] ??
+      (index === 0 ? `${word.charAt(0).toUpperCase()}${word.slice(1)}` : word)
+    )
+    .join(" ");
+}
+
 export function errorToast(title: string, error: unknown): Toast {
   if (error instanceof ApiError) {
     return { tone: "error", title, detail: `${error.status}: ${error.message}` };
