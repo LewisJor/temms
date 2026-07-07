@@ -8,7 +8,12 @@ import numpy as np
 from pathlib import Path
 from types import SimpleNamespace
 
-from temms.inference.runtime import InferenceRuntime, LoadedModel, SlotRuntime
+from temms.inference.runtime import (
+    InferenceRuntime,
+    LoadedModel,
+    SimulatedModelRuntime,
+    SlotRuntime,
+)
 from temms.core.cache import CachedModel, ModelFormat
 from temms.core.loader import ModelLoader, RuntimeType
 from temms.core.runtime_profiles import (
@@ -626,6 +631,51 @@ class TestInferenceRuntimeAsync:
         result = await runtime.unload_model("test-slot")
 
         assert result is False
+
+    async def test_simulated_runtime_load_accepts_explicit_missing_tflite(
+        self,
+        model_cache,
+        model_storage,
+        monkeypatch,
+        temp_dir,
+    ):
+        """Test acceptance simulations can load a target runtime not installed locally."""
+        monkeypatch.setenv("TEMMS_INFERENCE_SIMULATE_RUNTIME", "1")
+        monkeypatch.setattr(
+            "temms.inference.runtime.detect_runtime_capabilities",
+            lambda: SimpleNamespace(
+                device_profile="x86_64-cpu",
+                runtimes={"onnxruntime": {"available": True}},
+                accelerators={},
+            ),
+        )
+        model_file = temp_dir / "model.tflite"
+        model_file.write_bytes(b"simulated-tflite")
+        dest_path, sha256, size = model_storage.store_model(model_file, "model-rpi")
+        model_cache.add_cached_model(
+            model_id="model-rpi",
+            name="model-rpi",
+            version="1",
+            format=ModelFormat.TFLITE,
+            path=dest_path,
+            sha256=sha256,
+            size_bytes=size,
+            package_id="pkg-rpi",
+            metadata={
+                "runtime_constraints": {
+                    "device_profiles": ["rpi5-tflite"],
+                    "runtimes": ["tflite_runtime"],
+                }
+            },
+        )
+        runtime = InferenceRuntime(model_cache, model_storage)
+
+        assert await runtime.load_model("vision", "model-rpi") is True
+
+        loaded = runtime._get_slot_runtime("vision").loaded_model
+        assert loaded is not None
+        assert loaded.runtime_type == RuntimeType.TFLITE
+        assert isinstance(loaded.runtime, SimulatedModelRuntime)
 
     async def test_try_fallback_chain_empty(self, model_cache, model_storage):
         """Test fallback chain with empty list."""

@@ -123,7 +123,7 @@ class TestDeployArtifacts:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
 
         assert 'FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"' in workflow
-        assert workflow.count("actions/checkout@v6") == 3
+        assert workflow.count("actions/checkout@v6") == 4
         assert workflow.count("actions/setup-python@v6") == 3
         assert workflow.count("astral-sh/setup-uv@v7") == 3
         assert "actions/upload-artifact@v6" in workflow

@@ -2074,8 +2074,6 @@ def _offline_operation_phase(
         record
         for record in _as_list(runtime.get("pending_operation_dead_letters"))
         if isinstance(record, dict)
-        and not record.get("acknowledged")
-        and not record.get("requeued")
     ]
     retargeted_decisions = [
         decision

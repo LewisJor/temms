@@ -11,6 +11,7 @@ Manages model loading and inference across multiple slots with:
 
 import asyncio
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -29,6 +30,38 @@ from temms.core.runtime_profiles import (
 from temms.core.storage import ModelStorage
 
 logger = logging.getLogger(__name__)
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Parse a boolean environment variable."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _simulate_runtime_loads() -> bool:
+    """Return whether model loads should use the simulation runtime."""
+    return _env_bool("TEMMS_INFERENCE_SIMULATE_RUNTIME")
+
+
+class SimulatedModelRuntime:
+    """No-op runtime for explicit Docker/VM acceptance simulations."""
+
+    def __init__(self, runtime_type: RuntimeType):
+        self.runtime_type = runtime_type
+        self.model_path: Optional[Path] = None
+
+    def load(self, model_path: Path) -> "SimulatedModelRuntime":
+        self.model_path = model_path
+        logger.info("Simulated %s model load from %s", self.runtime_type.value, model_path)
+        return self
+
+    def infer(self, input_data: Any) -> list[Any]:
+        return []
+
+    def unload(self) -> None:
+        self.model_path = None
 
 
 @dataclass
@@ -155,10 +188,13 @@ class InferenceRuntime:
                     )
                 else:
                     # Create loader and load model OUTSIDE the lock
-                    loader = ModelLoader()
                     runtime_type = self._format_to_runtime_type(model_info.format)
                     runtime_options = self._runtime_options_for_model(model_info)
-                    runtime = loader.load_model(model_path, runtime_type, runtime_options)
+                    if _simulate_runtime_loads():
+                        runtime = SimulatedModelRuntime(runtime_type).load(model_path)
+                    else:
+                        loader = ModelLoader()
+                        runtime = loader.load_model(model_path, runtime_type, runtime_options)
 
                     new_loaded = LoadedModel(
                         model_id=model_id,
@@ -228,6 +264,11 @@ class InferenceRuntime:
         options: Dict[str, Any] = {}
         capabilities = detect_runtime_capabilities()
         capability_dict = self._capabilities_to_dict(capabilities)
+        if _simulate_runtime_loads():
+            capability_dict = self._simulated_capabilities_for_model(
+                capability_dict,
+                constraints,
+            )
         defaults = runtime_defaults_for_profile(
             capability_dict.get("device_profile"),
             capability_dict,
@@ -282,6 +323,32 @@ class InferenceRuntime:
                 )
 
         return options
+
+    def _simulated_capabilities_for_model(
+        self,
+        capabilities: Dict[str, Any],
+        constraints: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Overlay required model runtimes for explicit simulation-only loads."""
+        simulated = dict(capabilities)
+        runtimes = dict(simulated.get("runtimes") or {})
+        required_runtimes = constraints.get("runtimes") or []
+        for runtime_name in required_runtimes:
+            runtime_key = str(runtime_name)
+            current = dict(runtimes.get(runtime_key) or {})
+            current["available"] = True
+            if runtime_key in {"onnx", "onnxruntime"}:
+                current.setdefault("providers", ["CPUExecutionProvider"])
+                runtimes.setdefault("onnxruntime", current)
+                runtimes.setdefault("onnx", current)
+            else:
+                runtimes[runtime_key] = current
+        simulated["runtimes"] = runtimes
+
+        profiles = constraints.get("device_profiles") or []
+        if profiles:
+            simulated["device_profile"] = str(profiles[0])
+        return simulated
 
     def _capabilities_to_dict(
         self,

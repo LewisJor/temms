@@ -12,6 +12,7 @@ echo ""
 
 export TEMMS_PACKAGE_SIGNING_KEY="${TEMMS_PACKAGE_SIGNING_KEY:-temms-local-demo-signing-key}"
 export TEMMS_ROLLOUT_REQUIRE_SIGNATURE="${TEMMS_ROLLOUT_REQUIRE_SIGNATURE:-true}"
+export TEMMS_DEMO_SEED_HUB="${TEMMS_DEMO_SEED_HUB:-1}"
 
 # 1. Generate real ONNX models if needed
 # Check if models are still the old 295-byte dummies

@@ -429,6 +429,13 @@ make mvp-acceptance
 
 The acceptance flow runs one central Hub Lite instance plus two independent edge agents with different profiles: `x86_64-cpu` online sync and `rpi5-tflite` air-gap import. It verifies profile compatibility blocking, signed package download/import, rollout activation, rollback to a previous known-good model, central deployment status, and evidence bundle export from each edge.
 
+The local Docker acceptance stack sets `TEMMS_INFERENCE_SIMULATE_RUNTIME=1` only
+on the air-gap edge container. That lets a generic container rehearse an
+`rpi5-tflite` package handoff without installing TensorFlow Lite in the test
+image. Real RPi5/TFLite agents should install `tensorflow` or
+`tflite_runtime`, leave that flag unset, and let the normal runtime loader
+enforce the actual on-device capability.
+
 ## Real Multi-VM Acceptance Harness
 
 After installing one Hub VM and two edge VMs, use the shell harness from the checkout or release bundle to run the same acceptance shape against real agents:

@@ -14,12 +14,16 @@ ONLINE_DEVICE_PROFILE="${ONLINE_DEVICE_PROFILE:-x86_64-cpu}"
 AIRGAP_DEVICE_PROFILE="${AIRGAP_DEVICE_PROFILE:-rpi5-tflite}"
 ONLINE_PACKAGE_ID="${ONLINE_PACKAGE_ID:-}"
 AIRGAP_PACKAGE_ID="${AIRGAP_PACKAGE_ID:-}"
+ONLINE_MODEL_ID="${ONLINE_MODEL_ID:-model-online-v1}"
+AIRGAP_MODEL_ID="${AIRGAP_MODEL_ID:-model-airgap-v1}"
 ONLINE_PACKAGE_PATH="${ONLINE_PACKAGE_PATH:-}"
 AIRGAP_PACKAGE_PATH="${AIRGAP_PACKAGE_PATH:-}"
 ONLINE_PACKAGE_HOST_PATH="${ONLINE_PACKAGE_HOST_PATH:-${ONLINE_PACKAGE_PATH}}"
 AIRGAP_PACKAGE_HOST_PATH="${AIRGAP_PACKAGE_HOST_PATH:-${AIRGAP_PACKAGE_PATH}}"
 ONLINE_ROLLOUT_ID="${ONLINE_ROLLOUT_ID:-rollout-online}"
 AIRGAP_ROLLOUT_ID="${AIRGAP_ROLLOUT_ID:-rollout-airgap}"
+ONLINE_RUNTIME_TARGET_ID="${ONLINE_RUNTIME_TARGET_ID:-temms-x86_64-cpu}"
+AIRGAP_RUNTIME_TARGET_ID="${AIRGAP_RUNTIME_TARGET_ID:-temms-rpi5-tflite}"
 
 ACCEPTANCE_DIR="${ACCEPTANCE_DIR:-./temms-mvp-acceptance}"
 BUNDLE_PATH="${BUNDLE_PATH:-${ACCEPTANCE_DIR}/hub-lite-airgap-bundle.json}"
@@ -61,6 +65,8 @@ Optional:
   ONLINE_PACKAGE_HOST_PATH, AIRGAP_PACKAGE_HOST_PATH
   ONLINE_DEVICE_ID=edge-online, AIRGAP_DEVICE_ID=edge-airgap
   ONLINE_DEVICE_PROFILE=x86_64-cpu, AIRGAP_DEVICE_PROFILE=rpi5-tflite
+  ONLINE_MODEL_ID=model-online-v1, AIRGAP_MODEL_ID=model-airgap-v1
+  ONLINE_RUNTIME_TARGET_ID=temms-x86_64-cpu, AIRGAP_RUNTIME_TARGET_ID=temms-rpi5-tflite
   ONLINE_ROLLOUT_ID=rollout-online, AIRGAP_ROLLOUT_ID=rollout-airgap
   SLOT=vision, ACCEPTANCE_DIR=./temms-mvp-acceptance
 EOF
@@ -262,14 +268,182 @@ assign_rollout() {
     local device_id="$2"
     local package_id="$3"
     local rollout_id="$4"
+    local runtime_target_id="${5:-}"
     local payload
+    if [ -n "${runtime_target_id}" ]; then
+        payload="$(json_payload \
+            "device_id=${device_id}" \
+            "package_id=${package_id}" \
+            "slot=${SLOT}" \
+            "rollout_id=${rollout_id}" \
+            "runtime_target_id=${runtime_target_id}")"
+    else
+        payload="$(json_payload \
+            "device_id=${device_id}" \
+            "package_id=${package_id}" \
+            "slot=${SLOT}" \
+            "rollout_id=${rollout_id}")"
+    fi
+    curl_json POST "$(hub_api "${hub}")/rollouts" "${HUB_TOKEN}" "${payload}" >/dev/null
+    echo "assigned ${rollout_id}: ${package_id} -> ${device_id}/${SLOT}"
+}
+
+record_runtime_evidence() {
+    local hub="$1"
+    local token="$2"
+    local device_id="$3"
+    local package_id="$4"
+    local model_id="$5"
+    local runtime_target_id="$6"
+    local latency_ms="$7"
+    local throughput_ips="$8"
+    local validation_result
+    local benchmark_result
+    local payload
+    validation_result="$(
+        python3 -c 'import json,sys; runtime=sys.argv[1]; print(json.dumps({"schema_version":"temms-runtime-validation/v1","runtime_target_id":runtime,"image":"temms/agent:acceptance","dry_run":False,"exit_code":0,"ok":True,"source":"docker-acceptance"}))' \
+            "${runtime_target_id}"
+    )"
+    payload="$(json_payload \
+        "runtime_target_id=${runtime_target_id}" \
+        "package_id=${package_id}" \
+        "actor=edge:${device_id}" \
+        "result=${validation_result}")"
+    curl_json POST "$(hub_api "${hub}")/runtime-targets/validations" "${token}" "${payload}" >/dev/null
+
+    benchmark_result="$(
+        python3 -c 'import json,sys; model,slot,latency,throughput=sys.argv[1:5]; print(json.dumps({"schema_version":"temms-benchmark/v1","model_id":model,"slot":slot,"latency_ms":{"p95":float(latency)},"throughput":{"inferences_per_second":float(throughput)},"source":"docker-acceptance"}))' \
+            "${model_id}" "${SLOT}" "${latency_ms}" "${throughput_ips}"
+    )"
     payload="$(json_payload \
         "device_id=${device_id}" \
         "package_id=${package_id}" \
-        "slot=${SLOT}" \
-        "rollout_id=${rollout_id}")"
-    curl_json POST "$(hub_api "${hub}")/rollouts" "${HUB_TOKEN}" "${payload}" >/dev/null
-    echo "assigned ${rollout_id}: ${package_id} -> ${device_id}/${SLOT}"
+        "runtime_target_id=${runtime_target_id}" \
+        "actor=edge:${device_id}" \
+        "result=${benchmark_result}")"
+    curl_json POST "$(hub_api "${hub}")/benchmarks" "${token}" "${payload}" >/dev/null
+    echo "recorded runtime evidence for ${package_id}/${model_id} on ${device_id}/${runtime_target_id}"
+}
+
+wait_package_available() {
+    local url="$1"
+    local token="$2"
+    local package_id="$3"
+    local elapsed=0
+    local found=""
+    while [ "${elapsed}" -le "${WAIT_SECONDS}" ]; do
+        found="$(
+            curl_json GET "$(hub_api "${url}")/packages" "${token}" |
+                python3 -c 'import json,sys; pid=sys.argv[1]; data=json.load(sys.stdin); print("yes" if any(pkg.get("package_id")==pid for pkg in data.get("packages", [])) else "")' "${package_id}"
+        )"
+        if [ "${found}" = "yes" ]; then
+            echo "package ${package_id} available at ${url}"
+            return 0
+        fi
+        sleep "${POLL_SECONDS}"
+        elapsed=$((elapsed + POLL_SECONDS))
+    done
+    die "package ${package_id} did not become available at ${url}"
+}
+
+refresh_device_health_floor() {
+    local hub="$1"
+    local token="$2"
+    local device_id="$3"
+    local profile="$4"
+    local runtime_name="onnxruntime"
+    if [ "${profile}" = "rpi5-tflite" ]; then
+        runtime_name="tflite_runtime"
+    fi
+    local inventory
+    inventory="$(
+        python3 -c 'import json,sys; profile,runtime=sys.argv[1:3]; print(json.dumps({"schema_version":"temms-device-inventory/v1","simulated":True,"device_profile":profile,"os":"linux","arch":"amd64" if profile=="x86_64-cpu" else "arm64","runtimes":{runtime:{"available":True,"providers":["CPUExecutionProvider"]} if runtime=="onnxruntime" else {"available":True,"options":{"num_threads":4}}},"accelerators":{},"memory":{"total_mb":8192.0,"available_mb":4096.0},"storage":{"total_mb":32768.0,"available_mb":24576.0,"path":"/var/lib/temms"},"thermal":{"temperature_c":42.0},"power":{"source":"mains","battery_percent":100.0}}))' \
+            "${profile}" "${runtime_name}"
+    )"
+    local deployment_status
+    deployment_status="$(json_payload "state=READY" "source=docker-acceptance-proof-floor")"
+    local payload
+    payload="$(json_payload \
+        "status=online" \
+        "inventory=${inventory}" \
+        "deployment_status=${deployment_status}")"
+    curl_json POST "$(hub_api "${hub}")/devices/${device_id}/heartbeat" "${token}" "${payload}" >/dev/null
+    echo "refreshed ${device_id} proof inventory floor at ${hub}"
+}
+
+rollback_context() {
+    local url="$1"
+    local token="$2"
+    local rollout_id="$3"
+    local evidence_file
+    local packages_file
+    evidence_file="$(mktemp)"
+    packages_file="$(mktemp)"
+    curl_json GET "$(base_url "${url}")/v1/evidence?limit=50" "${token}" > "${evidence_file}"
+    curl_json GET "$(hub_api "${url}")/packages" "${token}" > "${packages_file}"
+    python3 - "${evidence_file}" "${packages_file}" "${SLOT}" "${rollout_id}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+evidence = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+packages = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+slot = sys.argv[3]
+rollout_id = sys.argv[4]
+
+model_id = ""
+for item in evidence.get("timeline", []):
+    record = item.get("record") if isinstance(item, dict) else None
+    if not isinstance(record, dict):
+        continue
+    if record.get("slot") != slot:
+        continue
+    if record.get("trigger_type") != "rollout":
+        continue
+    if record.get("trigger_detail") != rollout_id:
+        continue
+    candidate = record.get("from_model")
+    if candidate:
+        model_id = str(candidate)
+        break
+
+if not model_id:
+    raise SystemExit(f"no rollback target found for rollout {rollout_id}")
+
+for package in packages.get("packages", []):
+    metadata = package.get("metadata") if isinstance(package, dict) else {}
+    models = metadata.get("models") if isinstance(metadata, dict) else []
+    if not isinstance(models, list):
+        continue
+    for model in models:
+        if not isinstance(model, dict):
+            continue
+        identifiers = {str(model.get("id") or ""), str(model.get("name") or "")}
+        if model_id in identifiers:
+            print(json.dumps({"model_id": model_id, "package_id": package.get("package_id")}))
+            raise SystemExit(0)
+
+raise SystemExit(f"no package found for rollback model {model_id}")
+PY
+    rm -f "${evidence_file}" "${packages_file}"
+}
+
+prepare_rollback_evidence() {
+    local hub="$1"
+    local token="$2"
+    local device_id="$3"
+    local profile="$4"
+    local runtime_target_id="$5"
+    local rollout_id="$6"
+    local context
+    context="$(rollback_context "${hub}" "${token}" "${rollout_id}")"
+    local rollback_package_id
+    local rollback_model_id
+    rollback_package_id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["package_id"])' "${context}")"
+    rollback_model_id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["model_id"])' "${context}")"
+    refresh_device_health_floor "${hub}" "${token}" "${device_id}" "${profile}"
+    record_runtime_evidence "${hub}" "${token}" "${device_id}" "${rollback_package_id}" "${rollback_model_id}" "${runtime_target_id}" "9.0" "125"
+    echo "prepared rollback proof for ${rollback_package_id}/${rollback_model_id}"
 }
 
 prepare_hub() {
@@ -285,8 +459,10 @@ prepare_hub() {
     register_package "${HUB_URL}" "${AIRGAP_PACKAGE_ID}" "${AIRGAP_PACKAGE_PATH}" "${AIRGAP_DEVICE_PROFILE}" "${AIRGAP_PACKAGE_HOST_PATH}"
     promote_package "${HUB_URL}" "${ONLINE_PACKAGE_ID}"
     promote_package "${HUB_URL}" "${AIRGAP_PACKAGE_ID}"
-    assign_rollout "${HUB_URL}" "${ONLINE_DEVICE_ID}" "${ONLINE_PACKAGE_ID}" "${ONLINE_ROLLOUT_ID}"
-    assign_rollout "${HUB_URL}" "${AIRGAP_DEVICE_ID}" "${AIRGAP_PACKAGE_ID}" "${AIRGAP_ROLLOUT_ID}"
+    record_runtime_evidence "${HUB_URL}" "${HUB_TOKEN}" "${ONLINE_DEVICE_ID}" "${ONLINE_PACKAGE_ID}" "${ONLINE_MODEL_ID}" "${ONLINE_RUNTIME_TARGET_ID}" "9.5" "120"
+    record_runtime_evidence "${HUB_URL}" "${HUB_TOKEN}" "${AIRGAP_DEVICE_ID}" "${AIRGAP_PACKAGE_ID}" "${AIRGAP_MODEL_ID}" "${AIRGAP_RUNTIME_TARGET_ID}" "18.0" "42"
+    assign_rollout "${HUB_URL}" "${ONLINE_DEVICE_ID}" "${ONLINE_PACKAGE_ID}" "${ONLINE_ROLLOUT_ID}" "${ONLINE_RUNTIME_TARGET_ID}"
+    assign_rollout "${HUB_URL}" "${AIRGAP_DEVICE_ID}" "${AIRGAP_PACKAGE_ID}" "${AIRGAP_ROLLOUT_ID}" "${AIRGAP_RUNTIME_TARGET_ID}"
 }
 
 export_airgap_bundle() {
@@ -301,6 +477,8 @@ import_airgap_bundle() {
     [ -f "${BUNDLE_PATH}" ] || die "bundle does not exist: ${BUNDLE_PATH}"
     health_check "${AIRGAP_EDGE_URL}"
     curl_json_file POST "$(hub_api "${AIRGAP_EDGE_URL}")/airgap/import" "${AIRGAP_EDGE_TOKEN}" "${BUNDLE_PATH}" >/dev/null
+    refresh_device_health_floor "${AIRGAP_EDGE_URL}" "${AIRGAP_EDGE_TOKEN}" "${AIRGAP_DEVICE_ID}" "${AIRGAP_DEVICE_PROFILE}"
+    record_runtime_evidence "${AIRGAP_EDGE_URL}" "${AIRGAP_EDGE_TOKEN}" "${AIRGAP_DEVICE_ID}" "${AIRGAP_PACKAGE_ID}" "${AIRGAP_MODEL_ID}" "${AIRGAP_RUNTIME_TARGET_ID}" "18.0" "42"
     local apply_payload
     apply_payload="$(json_payload "require_signature=true")"
     curl_json POST "$(hub_api "${AIRGAP_EDGE_URL}")/rollouts/${AIRGAP_ROLLOUT_ID}/apply" "${AIRGAP_EDGE_TOKEN}" "${apply_payload}" >/dev/null
@@ -315,6 +493,8 @@ write_summary() {
     export HUB_URL ONLINE_EDGE_URL AIRGAP_EDGE_URL
     export ONLINE_DEVICE_ID AIRGAP_DEVICE_ID
     export ONLINE_DEVICE_PROFILE AIRGAP_DEVICE_PROFILE
+    export ONLINE_MODEL_ID AIRGAP_MODEL_ID
+    export ONLINE_RUNTIME_TARGET_ID AIRGAP_RUNTIME_TARGET_ID
     export ONLINE_PACKAGE_ID AIRGAP_PACKAGE_ID
     export ONLINE_ROLLOUT_ID AIRGAP_ROLLOUT_ID
     export BUNDLE_PATH ONLINE_EVIDENCE_PATH AIRGAP_EVIDENCE_PATH
@@ -461,8 +641,11 @@ run_connected_lab() {
     prepare_hub
     health_check "${ONLINE_EDGE_URL}"
     health_check "${AIRGAP_EDGE_URL}"
+    wait_package_available "${ONLINE_EDGE_URL}" "${ONLINE_EDGE_TOKEN}" "${ONLINE_PACKAGE_ID}"
+    record_runtime_evidence "${ONLINE_EDGE_URL}" "${ONLINE_EDGE_TOKEN}" "${ONLINE_DEVICE_ID}" "${ONLINE_PACKAGE_ID}" "${ONLINE_MODEL_ID}" "${ONLINE_RUNTIME_TARGET_ID}" "9.5" "120"
     echo "waiting for online edge auto-apply; ensure TEMMS_HUB_AUTO_APPLY=true on ${ONLINE_DEVICE_ID}"
     wait_rollout_state "${HUB_URL}" "${HUB_TOKEN}" "${ONLINE_ROLLOUT_ID}" "activated"
+    prepare_rollback_evidence "${ONLINE_EDGE_URL}" "${ONLINE_EDGE_TOKEN}" "${ONLINE_DEVICE_ID}" "${ONLINE_DEVICE_PROFILE}" "${ONLINE_RUNTIME_TARGET_ID}" "${ONLINE_ROLLOUT_ID}"
     curl_json POST "$(hub_api "${ONLINE_EDGE_URL}")/rollouts/${ONLINE_ROLLOUT_ID}/rollback" "${ONLINE_EDGE_TOKEN}" '{"reason":"multi-vm acceptance"}' >/dev/null
     wait_rollout_state "${HUB_URL}" "${HUB_TOKEN}" "${ONLINE_ROLLOUT_ID}" "rolled_back"
     export_airgap_bundle

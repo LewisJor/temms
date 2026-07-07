@@ -6,7 +6,10 @@ from types import SimpleNamespace
 import pytest
 
 from temms.daemon.deployment_state import DeploymentStateStore, DeploymentState
-from temms.daemon.pending_preflight import pending_sync_preflight
+from temms.daemon.pending_preflight import (
+    pending_sync_preflight,
+    runtime_target_assessment_sha256,
+)
 from temms.daemon.pending_ops import (
     PendingOperationsStore,
     pending_operation_signature_status,
@@ -623,7 +626,12 @@ def test_pending_sync_preflight_surfaces_runtime_optimizer_advisory(tmp_path):
         "edge-1",
         profile="x86_64-cpu",
         inventory={
-            "runtimes": {"onnxruntime": {"available": True}},
+            "runtimes": {
+                "onnxruntime": {
+                    "available": True,
+                    "providers": ["CPUExecutionProvider"],
+                }
+            },
             "memory": {"available_mb": 2048.0},
             "storage": {"available_mb": 4096.0},
         },
@@ -666,8 +674,16 @@ def test_pending_sync_preflight_surfaces_runtime_optimizer_advisory(tmp_path):
                 "runtime_target_id": runtime_target_id,
                 "image": f"registry.example.com/{runtime_target_id}:latest",
                 "device_profiles": ["x86_64-cpu"],
-                "runtimes": {"onnxruntime": {"available": True}},
-                "runtime_constraints": {"runtimes": ["onnxruntime"]},
+                "runtimes": {
+                    "onnxruntime": {
+                        "available": True,
+                        "providers": ["CPUExecutionProvider"],
+                    }
+                },
+                "runtime_constraints": {
+                    "runtimes": ["onnxruntime"],
+                    "providers": ["CPUExecutionProvider"],
+                },
             }
         )
         hub.record_runtime_validation(
@@ -835,6 +851,7 @@ def test_pending_sync_preflight_surfaces_runtime_optimizer_advisory(tmp_path):
         "runtime_capability_lock": gpu_lock,
         "runtime_validation_id": gpu_validation_id,
         "benchmark_id": gpu_assessment["benchmark_id"],
+        "target_assessment_sha256": runtime_target_assessment_sha256(gpu_assessment),
     }
     retargeted_payload = {
         "slot": "vision",
