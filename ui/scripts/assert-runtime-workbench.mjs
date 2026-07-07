@@ -3,7 +3,7 @@ import { webcrypto } from "node:crypto";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
-import { transform } from "esbuild";
+import { build, transform } from "esbuild";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const uiRoot = resolve(scriptDir, "..");
@@ -340,6 +340,125 @@ const expectedDigest = "4cc7d0dd44ca8f915530d9d1b0312f1a01ce16361075d3b405f666f7
 const digest = await proofHashModule.sha256Hex(canonicalString);
 if (digest !== expectedDigest) {
   throw new Error(`proof-hash SHA256 mismatch: ${digest}`);
+}
+
+const bundledMissionWorkflow = await build({
+  bundle: true,
+  entryPoints: [missionWorkflowPath],
+  format: "esm",
+  platform: "node",
+  target: "es2020",
+  write: false
+});
+const missionWorkflowModule = await import(
+  `data:text/javascript;base64,${Buffer.from(bundledMissionWorkflow.outputFiles[0].text).toString("base64")}`
+);
+const missionDraftFixture = {
+  confidenceThreshold: "0.7",
+  ddilMode: "queue_signed_intents",
+  fallbackModelId: "model-fallback",
+  goal: "Detect vehicles locally while disconnected.",
+  latencyBudgetMs: "95",
+  sensor: "camera.rgb",
+  slot: "vision",
+  switchPolicy: "confidence_and_condition",
+  throughputMinIps: "20",
+  yaml: ""
+};
+const modelFixture = {
+  format: "onnx",
+  id: "model-yolov8-lowlight-001",
+  maxLatencyP95Ms: 95,
+  minThroughputIps: 20,
+  name: "YOLOv8 lowlight",
+  packageId: "pkg-vision-models-20240115"
+};
+const readyStageOptions = {
+  ddilDetail: "ready for replay",
+  deadLetteredOperations: 0,
+  evidenceBundleCount: 0,
+  evidenceDetail: "2 proof events",
+  evidenceValue: 2,
+  latestRollout: { state: "activated" },
+  missionDraft: missionDraftFixture,
+  missionPackageStageStatus: {
+    detail: "passed proof gate",
+    downloaded: true,
+    gateStatus: "passed",
+    planned: true,
+    stageable: true,
+    tone: "good",
+    value: "downloaded"
+  },
+  missionProofComplete: true,
+  missionReady: true,
+  missionRolloutCount: 1,
+  offlineMode: false,
+  proofEvents: 2,
+  replayBlockedOperations: 0,
+  rolloutDetail: "activated model-yolov8-lowlight-001",
+  runtimeFitDisplay: {
+    detail: "score 98 optimal",
+    failures: [],
+    label: "98 optimal",
+    tileDetail: "on-device runtime fit",
+    tone: "good"
+  },
+  selectedModel: modelFixture,
+  selectedRuntime: { runtime_target_id: "temms-rpi5-tflite" }
+};
+const stageFixture = missionWorkflowModule.buildHubStages(readyStageOptions);
+const expectedStageOrder = "mission>model>runtime>handling>package>deploy>field";
+const stageOrder = stageFixture.map((stage) => stage.id).join(">");
+if (stageOrder !== expectedStageOrder) {
+  throw new Error(`mission workflow stage order mismatch: ${stageOrder}`);
+}
+if (stageFixture.find((stage) => stage.id === "package")?.decision !== "Hash the mission, model, runtime plan, and handling policy into one deployable handoff.") {
+  throw new Error("mission workflow package stage no longer binds mission/model/runtime/handling into the package handoff");
+}
+if (stageFixture.find((stage) => stage.id === "deploy")?.tone !== "good") {
+  throw new Error("mission workflow deploy stage should be good after an activated rollout");
+}
+const blockedStageFixture = missionWorkflowModule.buildHubStages({
+  ...readyStageOptions,
+  ddilDetail: "blocked replay",
+  deadLetteredOperations: 1,
+  evidenceBundleCount: 0,
+  evidenceDetail: "no evidence",
+  evidenceValue: 0,
+  latestRollout: { state: "failed" },
+  missionDraft: missionDraftFixture,
+  missionPackageStageStatus: {
+    detail: "proof gate failed",
+    downloaded: false,
+    gateStatus: "failed",
+    planned: true,
+    stageable: false,
+    tone: "bad",
+    value: "proof gate failed"
+  },
+  missionProofComplete: false,
+  missionReady: true,
+  missionRolloutCount: 1,
+  offlineMode: true,
+  proofEvents: 0,
+  replayBlockedOperations: 2,
+  rolloutDetail: "failed",
+  runtimeFitDisplay: {
+    detail: "runtime proof blocked",
+    failures: ["runtime proof blocked"],
+    label: "blocked",
+    tileDetail: "runtime proof blocked",
+    tone: "bad"
+  },
+  selectedModel: modelFixture,
+  selectedRuntime: { runtime_target_id: "temms-rpi5-tflite" }
+});
+if (blockedStageFixture.find((stage) => stage.id === "deploy")?.tone !== "bad") {
+  throw new Error("mission workflow deploy stage should be bad when DDIL replay or rollout state blocks deploy");
+}
+if (blockedStageFixture.find((stage) => stage.id === "field")?.detail !== "DDIL offline; blocked replay") {
+  throw new Error("mission workflow field stage should surface offline DDIL detail");
 }
 
 if (!existsSync(manifestPath)) {
