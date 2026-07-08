@@ -501,6 +501,121 @@ if (digest !== expectedDigest) {
   throw new Error(`proof-hash SHA256 mismatch: ${digest}`);
 }
 
+const bundledReadiness = await build({
+  bundle: true,
+  entryPoints: [readinessPath],
+  format: "esm",
+  platform: "node",
+  target: "es2020",
+  write: false
+});
+const readinessModule = await import(
+  `data:text/javascript;base64,${Buffer.from(bundledReadiness.outputFiles[0].text).toString("base64")}`
+);
+const readinessContextFixture = readinessModule.buildReadinessContext({
+  device: { device_id: "edge-thermal-01" },
+  model: {
+    id: "model-thermal-detector-001",
+    packageId: "pkg-thermal-models-20260708"
+  },
+  runtime: { runtime_target_id: "temms-jetson-ort-trt" },
+  slot: "thermal"
+});
+const readinessContextKeyFixture = readinessModule.readinessContextKey(readinessContextFixture);
+if (
+  readinessContextKeyFixture !==
+  "pkg-thermal-models-20260708|model-thermal-detector-001|edge-thermal-01|temms-jetson-ort-trt|thermal"
+) {
+  throw new Error(`readiness context key should bind package/model/device/runtime/slot: ${readinessContextKeyFixture}`);
+}
+if (!readinessModule.hasReadinessContextSelection(readinessContextFixture)) {
+  throw new Error("readiness context should be fetchable when package, device, or runtime is selected");
+}
+if (readinessModule.hasReadinessContextSelection({ slot: "thermal" })) {
+  throw new Error("readiness context should not fetch when only a sensor slot is selected");
+}
+const matchingContextReadiness = {
+  gates: [{ gate_id: "runtime-fit", status: "go" }],
+  selection: readinessContextFixture,
+  status: "go"
+};
+const matchingSnapshotReadiness = {
+  gates: [{ gate_id: "snapshot", status: "attention" }],
+  selection: readinessContextFixture,
+  status: "attention"
+};
+if (
+  readinessModule.scopedReadinessFor({
+    context: readinessContextFixture,
+    contextReadiness: matchingContextReadiness,
+    snapshotReadiness: matchingSnapshotReadiness
+  }) !== matchingContextReadiness
+) {
+  throw new Error("scoped readiness should prefer the freshly fetched context readiness");
+}
+const mismatchedSlotReadiness = {
+  gates: [{ gate_id: "slot", status: "attention" }],
+  selection: { ...readinessContextFixture, slot: "vision" },
+  status: "attention"
+};
+if (
+  readinessModule.scopedReadinessFor({
+    context: readinessContextFixture,
+    contextReadiness: mismatchedSlotReadiness,
+    snapshotReadiness: undefined
+  }) !== undefined
+) {
+  throw new Error("scoped readiness should reject readiness captured for a different sensor slot");
+}
+
+const bundledRuntimeStageView = await build({
+  bundle: true,
+  entryPoints: [runtimeStageViewPath],
+  format: "esm",
+  platform: "node",
+  target: "es2020",
+  write: false
+});
+const runtimeStageViewModule = await import(
+  `data:text/javascript;base64,${Buffer.from(bundledRuntimeStageView.outputFiles[0].text).toString("base64")}`
+);
+const inactiveRuntimeStageView = runtimeStageViewModule.buildRuntimeStageView({
+  activeHubStage: "mission",
+  edgeExecutionContract: {},
+  readiness: undefined,
+  runtimeDecision: {},
+  runtimeTargets: [],
+  runtimeValidations: [],
+  selectedDevice: { device_id: "edge-thermal-01" },
+  selectedModel: {
+    id: "model-thermal-detector-001",
+    packageId: "pkg-thermal-models-20260708"
+  },
+  selectedRuntime: { runtime_target_id: "temms-jetson-ort-trt" },
+  slot: "thermal"
+});
+if (
+  inactiveRuntimeStageView.remediationContext.slot !== "thermal" ||
+  inactiveRuntimeStageView.remediationContext.deviceId !== "edge-thermal-01"
+) {
+  throw new Error("runtime stage remediation context should retain the selected mission slot and edge");
+}
+const defaultSlotRuntimeStageView = runtimeStageViewModule.buildRuntimeStageView({
+  activeHubStage: "mission",
+  edgeExecutionContract: {},
+  readiness: undefined,
+  runtimeDecision: {},
+  runtimeTargets: [],
+  runtimeValidations: [],
+  selectedDevice: undefined,
+  selectedModel: undefined,
+  selectedRuntime: undefined,
+  slot: ""
+});
+if (defaultSlotRuntimeStageView.remediationContext.slot !== "vision") {
+  throw new Error("runtime stage remediation context should default blank mission slots to vision");
+}
+
 const bundledMissionWorkflow = await build({
   bundle: true,
   entryPoints: [missionWorkflowPath],
