@@ -64,6 +64,7 @@ export interface EdgeDeployStageProps {
   evidenceValue: number;
   hasMissionPackageDeploymentIntent: boolean;
   latestRollout: Rollout | undefined;
+  missionSlot: string;
   missionPackageDeploymentCommand: JsonObject;
   missionPackageDeploymentIntent: JsonObject;
   missionPackageStageStatus: MissionPackageStageStatus;
@@ -107,6 +108,7 @@ export function EdgeDeployStage({
   evidenceValue,
   hasMissionPackageDeploymentIntent,
   latestRollout,
+  missionSlot,
   missionPackageDeploymentCommand,
   missionPackageDeploymentIntent,
   missionPackageStageStatus,
@@ -141,6 +143,7 @@ export function EdgeDeployStage({
   const selectedDeviceId = selectedDevice ? deviceId(selectedDevice) : "";
   const selectedRuntimeId = selectedRuntime ? runtimeTargetId(selectedRuntime) : "";
   const selectedModelId = selectedModel?.id ?? "";
+  const missionSlotValue = missionSlot || "vision";
   const runtimeEvidenceState: GateTone =
     selectedRuntimeValidation ||
     (selectedModel?.benchmarkDeviceId && benchmarkFreshness(selectedModel).state === "fresh")
@@ -320,8 +323,8 @@ export function EdgeDeployStage({
                 </select>
               </label>
               <label className="field">
-                <span>Slot</span>
-                <input name="slot" defaultValue="vision" />
+                <span>Mission slot</span>
+                <input name="slot" value={missionSlotValue} readOnly />
               </label>
               <label className="field">
                 <span>Rollout ID</span>
@@ -378,8 +381,8 @@ export function EdgeDeployStage({
             <input name="device_ids" defaultValue={devices.map(deviceId).join(",")} required />
           </label>
           <label className="field">
-            <span>Slot</span>
-            <input name="slot" defaultValue="vision" />
+            <span>Mission slot</span>
+            <input name="slot" value={missionSlotValue} readOnly />
           </label>
           <label className="field">
             <span>Batch size</span>

@@ -1562,6 +1562,7 @@ function executePendingReadinessAction(): void {
             evidenceValue={evidenceValue}
             hasMissionPackageDeploymentIntent={hasMissionPackageDeploymentIntent}
             latestRollout={latestRollout}
+            missionSlot={missionDraft.slot}
             missionPackageDeploymentCommand={missionPackageDeploymentCommand}
             missionPackageDeploymentIntent={missionPackageDeploymentIntent}
             missionPackageStageStatus={missionPackageStageStatus}

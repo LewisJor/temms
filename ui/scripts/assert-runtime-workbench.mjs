@@ -280,6 +280,9 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "proof gate must pass before staging",
   "deploy intent missing",
   "Stage rollout unlocks only after the mission package proof gate passes.",
+  "missionSlotValue",
+  "Mission slot",
+  "value={missionSlotValue}",
   "stageable",
   "plan package to hash mission handoff",
   "Mission spec",
@@ -422,6 +425,10 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "compatibility-matrix",
   "edge-runtime-mission"
 ].forEach((needle) => assertContains("Runtime remediation sources", runtimeRemediationSource, needle));
+
+[
+  "defaultValue=\"vision\""
+].forEach((needle) => assertNotContains("Edge deploy stage sources", edgeDeployStageSource, needle));
 
 [
   "formatProofCommand",
