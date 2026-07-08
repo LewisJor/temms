@@ -228,6 +228,8 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "scrollIntoView",
   "showProductStage",
   "activeSlotForMission(snapshot.evidenceSummary?.active_slots, missionDraft.slot)",
+  "missionRolloutsForSelection",
+  "missionRolloutPlansForSelection",
   "MissionWorkflowCockpit",
   "buildHubStages",
   "mission-workflow-cockpit",
@@ -789,6 +791,46 @@ const modelFixture = {
   name: "YOLOv8 lowlight",
   packageId: "pkg-vision-models-20240115"
 };
+const scopedRollouts = deploymentIntentModule.missionRolloutsForSelection({
+  missionSlot: "thermal",
+  model: modelFixture,
+  rollouts: [
+    { model_id: modelFixture.id, package_id: modelFixture.packageId, rollout_id: "rollout-thermal", slot: "thermal" },
+    { model_id: modelFixture.id, package_id: modelFixture.packageId, rollout_id: "rollout-vision", slot: "vision" },
+    { model_id: modelFixture.id, package_id: modelFixture.packageId, rollout_id: "rollout-legacy" },
+    { model_id: "other-model", package_id: modelFixture.packageId, rollout_id: "rollout-other", slot: "thermal" }
+  ]
+});
+const scopedRolloutIds = scopedRollouts.map((rollout) => rollout.rollout_id).join(",");
+if (scopedRolloutIds !== "rollout-thermal,rollout-legacy") {
+  throw new Error(`mission rollouts should be scoped to selected model and mission slot: ${scopedRolloutIds}`);
+}
+const scopedPlans = deploymentIntentModule.missionRolloutPlansForSelection({
+  missionSlot: "thermal",
+  model: modelFixture,
+  plans: [
+    { model_id: modelFixture.id, package_id: modelFixture.packageId, plan_id: "plan-thermal", slot: "thermal" },
+    { model_id: modelFixture.id, package_id: modelFixture.packageId, plan_id: "plan-vision", slot: "vision" },
+    { package_id: modelFixture.packageId, plan_id: "plan-package-wide", slot: "thermal" },
+    { model_id: "other-model", package_id: modelFixture.packageId, plan_id: "plan-other", slot: "thermal" }
+  ]
+});
+const scopedPlanIds = scopedPlans.map((plan) => plan.plan_id).join(",");
+if (scopedPlanIds !== "plan-thermal,plan-package-wide") {
+  throw new Error(`mission rollout plans should be scoped to selected model/package and mission slot: ${scopedPlanIds}`);
+}
+const defaultSlotRollouts = deploymentIntentModule.missionRolloutsForSelection({
+  missionSlot: "",
+  model: undefined,
+  rollouts: [
+    { rollout_id: "rollout-vision", slot: "vision" },
+    { rollout_id: "rollout-thermal", slot: "thermal" },
+    { rollout_id: "rollout-legacy" }
+  ]
+});
+if (defaultSlotRollouts.map((rollout) => rollout.rollout_id).join(",") !== "rollout-vision,rollout-legacy") {
+  throw new Error("mission rollouts should default blank mission slots to vision while retaining legacy records");
+}
 const thermalDeploymentIntent = deploymentIntentModule.buildDeploymentIntentRequest({
   device: { device_id: "edge-thermal-1" },
   draft: { ...missionDraftFixture, sensor: "camera.thermal", slot: "thermal" },

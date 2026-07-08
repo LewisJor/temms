@@ -115,7 +115,11 @@ import {
   edgeProofTraceStatus,
   verifyEdgeProofComponentDigestStatus
 } from "./lib/edge-proof-workflow";
-import { buildDeploymentIntentRequest } from "./lib/deployment-intent";
+import {
+  buildDeploymentIntentRequest,
+  missionRolloutPlansForSelection,
+  missionRolloutsForSelection
+} from "./lib/deployment-intent";
 import { buildEdgeRuntimeMission } from "./lib/edge-runtime-mission";
 import {
   activeSlotForMission,
@@ -226,19 +230,16 @@ export function App(): JSX.Element {
     snapshot.runtimeTargets.find((target) => runtimeTargetId(target) === selectedRuntimeId) ??
     runtimeForModel(snapshot.runtimeTargets, selectedModel);
   const activeSlot = activeSlotForMission(snapshot.evidenceSummary?.active_slots, missionDraft.slot);
-  const missionRollouts = selectedModel
-    ? snapshot.rollouts.filter(
-        (rollout) =>
-          rollout.package_id === selectedModel.packageId && rollout.model_id === selectedModel.id
-      )
-    : snapshot.rollouts;
-  const missionRolloutPlans = selectedModel
-    ? snapshot.rolloutPlans.filter(
-        (plan) =>
-          plan.package_id === selectedModel.packageId &&
-          (!plan.model_id || plan.model_id === selectedModel.id)
-      )
-    : snapshot.rolloutPlans;
+  const missionRollouts = missionRolloutsForSelection({
+    missionSlot: missionDraft.slot,
+    model: selectedModel,
+    rollouts: snapshot.rollouts
+  });
+  const missionRolloutPlans = missionRolloutPlansForSelection({
+    missionSlot: missionDraft.slot,
+    model: selectedModel,
+    plans: snapshot.rolloutPlans
+  });
   const latestRollout = latestByTime(missionRollouts);
   const pendingApprovals = missionRollouts.filter(
     (rollout) => rollout.approval_required && !rollout.approval?.approved
