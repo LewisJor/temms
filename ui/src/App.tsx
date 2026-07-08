@@ -85,6 +85,7 @@ import {
 import {
   buildPackagePromotionRequest,
   buildDeploymentIntentRequest,
+  edgeRecommendationSelection,
   buildRolloutApplyRequest,
   buildRolloutApprovalRequest,
   buildRolloutPlanAdvanceRequest,
@@ -561,10 +562,11 @@ export function App(): JSX.Element {
   }
 
   function applyEdgeRecommendation(recommendation: EdgeRecommendation): void {
-    if (recommendation.model_id) setSelectedModelId(String(recommendation.model_id));
-    if (recommendation.device_id) setSelectedDeviceId(String(recommendation.device_id));
-    if (recommendation.runtime_target_id) setSelectedRuntimeId(String(recommendation.runtime_target_id));
-    setFocusedWorkflow("deployment");
+    const selection = edgeRecommendationSelection(recommendation);
+    if (selection.modelId) setSelectedModelId(selection.modelId);
+    if (selection.deviceId) setSelectedDeviceId(selection.deviceId);
+    if (selection.runtimeTargetId) setSelectedRuntimeId(selection.runtimeTargetId);
+    setFocusedWorkflow(selection.workflowTarget);
   }
 
   function approveRollout(id: string): void {

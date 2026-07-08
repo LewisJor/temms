@@ -501,6 +501,13 @@ collectTextFiles(docsBuildPath).forEach((path) => {
 ].forEach((needle) => assertNotContains("Edge deploy stage sources", edgeDeployStageSource, needle));
 
 [
+  "edgeRecommendationSelection",
+  "workflowTarget: \"deployment\"",
+  "modelId: recommendation.model_id ? String(recommendation.model_id) : undefined",
+  "runtimeTargetId: recommendation.runtime_target_id ? String(recommendation.runtime_target_id) : undefined"
+].forEach((needle) => assertContains("Deployment intent sources", deploymentIntentSource, needle));
+
+[
   "activeSlotForMission",
   "missionOperationLedgerForSlot",
   "prioritizedEvidenceEvents",
@@ -1596,6 +1603,32 @@ if (flowStateFixture.hubStages.map((stage) => stage.id).join(">") !== "mission>m
 }
 if (flowStateFixture.showProductStage !== false) {
   throw new Error("hub flow state should keep runtime stage outside the product-grid advanced surface");
+}
+const edgeRecommendationSelectionFixture = deploymentIntentModule.edgeRecommendationSelection({
+  device_id: "edge-thermal-01",
+  model_id: "model-thermal-detector-001",
+  runtime_target_id: "temms-jetson-ort-trt"
+});
+if (
+  edgeRecommendationSelectionFixture.deviceId !== "edge-thermal-01" ||
+  edgeRecommendationSelectionFixture.modelId !== "model-thermal-detector-001" ||
+  edgeRecommendationSelectionFixture.runtimeTargetId !== "temms-jetson-ort-trt" ||
+  edgeRecommendationSelectionFixture.workflowTarget !== "deployment"
+) {
+  throw new Error("edge recommendation selection should bind model, edge, runtime, and deploy focus");
+}
+const partialEdgeRecommendationSelectionFixture = deploymentIntentModule.edgeRecommendationSelection({
+  device_id: "edge-rpi5",
+  model_id: null,
+  runtime_target_id: null
+});
+if (
+  partialEdgeRecommendationSelectionFixture.deviceId !== "edge-rpi5" ||
+  partialEdgeRecommendationSelectionFixture.modelId !== undefined ||
+  partialEdgeRecommendationSelectionFixture.runtimeTargetId !== undefined ||
+  partialEdgeRecommendationSelectionFixture.workflowTarget !== "deployment"
+) {
+  throw new Error("edge recommendation selection should preserve partial recommendation paths");
 }
 const promotionRequestFixture = deploymentIntentModule.buildPackagePromotionRequest("released");
 if (

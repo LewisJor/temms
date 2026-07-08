@@ -1,9 +1,27 @@
-import type { Device, JsonObject, Rollout, RolloutPlan, RuntimeTarget } from "../types";
+import type { Device, EdgeRecommendation, JsonObject, Rollout, RolloutPlan, RuntimeTarget } from "../types";
 import { deviceId, runtimeTargetId } from "./hub-format";
 import type { MissionDraft } from "./mission-spec";
-import type { ModelRecord } from "./workbench-types";
+import type { ModelRecord, WorkflowTarget } from "./workbench-types";
 
 const WORKBENCH_ACTOR = "operator:mission-package-workbench";
+
+export interface EdgeRecommendationSelection {
+  deviceId?: string;
+  modelId?: string;
+  runtimeTargetId?: string;
+  workflowTarget: WorkflowTarget;
+}
+
+export function edgeRecommendationSelection(
+  recommendation: EdgeRecommendation
+): EdgeRecommendationSelection {
+  return {
+    deviceId: recommendation.device_id ? String(recommendation.device_id) : undefined,
+    modelId: recommendation.model_id ? String(recommendation.model_id) : undefined,
+    runtimeTargetId: recommendation.runtime_target_id ? String(recommendation.runtime_target_id) : undefined,
+    workflowTarget: "deployment"
+  };
+}
 
 export function missionRolloutsForSelection({
   missionSlot,
