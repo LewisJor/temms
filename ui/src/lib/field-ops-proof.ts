@@ -28,16 +28,20 @@ export function missionOperationLedgerForSlot(
 
 export function prioritizedEvidenceEvents(
   timeline: unknown,
-  activeModelId: string
+  activeModelId: string,
+  missionSlot = ""
 ): Record<string, unknown>[] {
   if (!Array.isArray(timeline)) return [];
-  const events = timeline.map(asRecord);
-  let activeRuntimeFitIndex = events.findIndex((event) => event.active_runtime_proof === true);
+  const events = timeline
+    .map(asRecord)
+    .filter((event) => eventMatchesMissionSlot(event, missionSlot));
+  let activeRuntimeFitIndex = events.findIndex(
+    (event) => event.active_runtime_proof === true && eventMatchesActiveModel(event, activeModelId)
+  );
   if (activeRuntimeFitIndex < 0 && activeModelId) {
     activeRuntimeFitIndex = events.findIndex((event) => {
       const kind = stringOf(event.kind, "");
-      const summary = stringOf(event.summary, "");
-      return kind === "runtime_fit" && summary.includes(activeModelId);
+      return kind === "runtime_fit" && eventMatchesActiveModel(event, activeModelId);
     });
   }
 
@@ -49,6 +53,18 @@ export function prioritizedEvidenceEvents(
   };
   const remaining = events.filter((_, index) => index !== activeRuntimeFitIndex);
   return [activeRuntimeFit, ...remaining].slice(0, 4);
+}
+
+function eventMatchesMissionSlot(event: Record<string, unknown>, missionSlot: string): boolean {
+  const slot = evidenceEventSlot(event);
+  return !slot || slot === (missionSlot || "vision");
+}
+
+function eventMatchesActiveModel(event: Record<string, unknown>, activeModelId: string): boolean {
+  if (!activeModelId) return true;
+  const modelId = evidenceEventModel(event);
+  if (modelId) return modelId === activeModelId;
+  return stringOf(event.summary, "").includes(activeModelId);
 }
 
 export function latestRuntimeRepairProofFor({
@@ -93,6 +109,24 @@ function operationSlot(operation: Record<string, unknown>): string {
     stringOf(request.slot_name, "") ||
     stringOf(preflight.slot, "") ||
     stringOf(preflight.slot_name, "");
+}
+
+function evidenceEventSlot(event: Record<string, unknown>): string {
+  const record = asRecord(event.record);
+  const selection = asRecord(record.selection);
+  const runtimeFit = asRecord(record.runtime_fit);
+  return stringOf(event.slot, "") ||
+    stringOf(selection.slot, "") ||
+    stringOf(runtimeFit.slot, "");
+}
+
+function evidenceEventModel(event: Record<string, unknown>): string {
+  const record = asRecord(event.record);
+  const selection = asRecord(record.selection);
+  const runtimeFit = asRecord(record.runtime_fit);
+  return stringOf(event.model_id, "") ||
+    stringOf(selection.model_id, "") ||
+    stringOf(runtimeFit.model_id, "");
 }
 
 function firstRuntimeRepairProof(

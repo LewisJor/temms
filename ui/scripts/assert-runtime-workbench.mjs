@@ -229,6 +229,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "showProductStage",
   "activeSlotForMission(snapshot.evidenceSummary?.active_slots, missionDraft.slot)",
   "missionOperationLedgerForSlot",
+  "prioritizedEvidenceEvents(",
   "missionRolloutsForSelection",
   "missionRolloutPlansForSelection",
   "MissionWorkflowCockpit",
@@ -577,6 +578,48 @@ const defaultPendingOperations = fieldOpsProofModule.missionOperationLedgerForSl
 const defaultPendingIds = defaultPendingOperations.map((operation) => operation.payload_sha256).join(",");
 if (defaultPendingIds !== "vision,legacy") {
   throw new Error("field ops pending operations should default blank mission slots to vision");
+}
+const timelineFixture = [
+  {
+    active_runtime_proof: true,
+    kind: "runtime_fit",
+    record: { selection: { model_id: "model-rgb", slot: "vision" } },
+    slot: "vision",
+    summary: "model-rgb runtime fit 95/100"
+  },
+  { kind: "deployment", summary: "legacy unscoped event" },
+  {
+    active_runtime_proof: true,
+    kind: "runtime_fit",
+    record: { selection: { model_id: "model-thermal", slot: "thermal" } },
+    slot: "thermal",
+    summary: "model-thermal runtime fit 98/100"
+  },
+  {
+    kind: "runtime_fit",
+    record: { selection: { model_id: "model-thermal-fallback", slot: "thermal" } },
+    slot: "thermal",
+    summary: "model-thermal-fallback runtime fit 82/100"
+  }
+];
+const thermalEvents = fieldOpsProofModule.prioritizedEvidenceEvents(
+  timelineFixture,
+  "model-thermal",
+  "thermal"
+);
+if (thermalEvents[0]?.summary !== "model-thermal runtime fit 98/100") {
+  throw new Error("field ops events should prioritize active runtime proof for the selected mission slot/model");
+}
+if (thermalEvents.some((event) => event.slot === "vision")) {
+  throw new Error("field ops events should exclude explicit evidence from other mission slots");
+}
+const defaultSlotEvents = fieldOpsProofModule.prioritizedEvidenceEvents(
+  timelineFixture,
+  "model-rgb",
+  ""
+);
+if (defaultSlotEvents[0]?.summary !== "model-rgb runtime fit 95/100") {
+  throw new Error("field ops events should default blank mission slots to vision evidence");
 }
 
 const bundledReadiness = await build({

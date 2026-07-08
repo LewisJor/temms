@@ -332,7 +332,8 @@ export function App(): JSX.Element {
   const connectivityState = offlineMode ? "offline" : "online";
   const latestEvents = prioritizedEvidenceEvents(
     snapshot.evidenceSummary?.timeline,
-    activeModelId || selectedModel?.id || ""
+    activeModelId || selectedModel?.id || "",
+    missionDraft.slot
   );
   const evidenceValue = snapshot.evidenceBundles.length || proofEvents;
   const evidenceDetail = missionPhaseTotal
