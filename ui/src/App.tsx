@@ -57,7 +57,7 @@ import { buildMissionYamlImportResult } from "./lib/mission-yaml-import";
 import {
   buildMissionPackageStageRequest,
   buildMissionPackagePlanRequest,
-  missionPackageStageBlocker
+  missionPackageStagePlan
 } from "./lib/mission-package";
 import { buildHubFormAction } from "./lib/hub-form-actions";
 import { useHubStageNavigation } from "./lib/hub-stage-navigation";
@@ -476,23 +476,23 @@ export function App(): JSX.Element {
   }
 
   function stageMissionPackageRollout(): void {
-    const blocker = missionPackageStageBlocker({
+    const stagePlan = missionPackageStagePlan({
       manifest: missionPackageManifest,
       stageStatus: missionPackageStageStatus
     });
-    if (blocker) {
-      setToast({ tone: "info", ...blocker });
-      navigateHubStage("package");
+    if (stagePlan.blocker) {
+      setToast({ tone: "info", ...stagePlan.blocker });
+      navigateHubStage(stagePlan.blockedStage);
       return;
     }
     void run(
-      "Stage package rollout",
+      stagePlan.runTitle,
       async () => {
         const stage = await stageMissionPackage(
           token,
           buildMissionPackageStageRequest(missionPackageManifest)
         );
-        navigateHubStage("deploy", { workflowTarget: "rollouts" });
+        navigateHubStage(stagePlan.successStage, { workflowTarget: stagePlan.successWorkflowTarget });
         return stage;
       },
       true

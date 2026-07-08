@@ -8,13 +8,21 @@ import { deviceId, runtimeTargetId } from "./hub-format";
 import { asRecord, stringOf } from "./json";
 import type { MissionDraft } from "./mission-spec";
 import { shortProofDigest } from "./proof-hash";
-import type { MissionPackageStageStatus, ModelRecord } from "./workbench-types";
+import type { HubStage, MissionPackageStageStatus, ModelRecord, WorkflowTarget } from "./workbench-types";
 
 export interface MissionPackageStageRequest {
   actor?: string;
   mission_package: JsonObject;
   reason?: string;
   rollout_id?: string;
+}
+
+export interface MissionPackageStagePlan {
+  blockedStage: HubStage;
+  blocker: { detail: string; title: string } | undefined;
+  runTitle: string;
+  successStage: HubStage;
+  successWorkflowTarget: WorkflowTarget;
 }
 
 export function buildMissionPackagePlanRequest({
@@ -351,6 +359,22 @@ export function missionPackageStageBlocker({
     };
   }
   return undefined;
+}
+
+export function missionPackageStagePlan({
+  manifest,
+  stageStatus
+}: {
+  manifest: JsonObject;
+  stageStatus: MissionPackageStageStatus;
+}): MissionPackageStagePlan {
+  return {
+    blockedStage: "package",
+    blocker: missionPackageStageBlocker({ manifest, stageStatus }),
+    runTitle: "Stage package rollout",
+    successStage: "deploy",
+    successWorkflowTarget: "rollouts"
+  };
 }
 
 export function buildMissionPackageStageRequest(manifest: JsonObject): MissionPackageStageRequest {

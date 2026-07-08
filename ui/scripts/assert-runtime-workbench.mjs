@@ -287,6 +287,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "buildMissionPackagePlanRequest",
   "buildMissionPackageStageStatus",
   "missionPackageStageBlocker",
+  "missionPackageStagePlan",
   "buildMissionPackageStageRequest",
   "missionPackageStageStatus",
   "hasPlannedDeploymentIntent",
@@ -299,6 +300,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "Plan package first",
   "Stage rollout uses the mission package deployment intent.",
   "Proof gate blocks staging",
+  "successWorkflowTarget: \"rollouts\"",
   "proof gate failed",
   "proof gate pending",
   "proof gate must pass before staging",
@@ -2080,6 +2082,38 @@ if (
   }) !== undefined
 ) {
   throw new Error("mission package stage blocker should be empty when package staging is allowed");
+}
+const missingIntentStagePlan = missionPackageModule.missionPackageStagePlan({
+  manifest: manifestFixture,
+  stageStatus: {
+    detail: "deploy intent missing",
+    downloaded: false,
+    gateStatus: "",
+    planned: false,
+    stageable: false,
+    tone: "warn",
+    value: "deploy intent missing"
+  }
+});
+if (
+  missingIntentStagePlan.blocker?.title !== "Plan package first" ||
+  missingIntentStagePlan.blockedStage !== "package" ||
+  missingIntentStagePlan.successStage !== "deploy" ||
+  missingIntentStagePlan.successWorkflowTarget !== "rollouts"
+) {
+  throw new Error("mission package stage plan should route blocked staging back to Package Handoff");
+}
+const stageablePackagePlan = missionPackageModule.missionPackageStagePlan({
+  manifest: stageablePackageStatusFixture,
+  stageStatus: stageablePackageStatus
+});
+if (
+  stageablePackagePlan.blocker !== undefined ||
+  stageablePackagePlan.runTitle !== "Stage package rollout" ||
+  stageablePackagePlan.successStage !== "deploy" ||
+  stageablePackagePlan.successWorkflowTarget !== "rollouts"
+) {
+  throw new Error("mission package stage plan should route successful staging to Edge Deploy rollouts");
 }
 const stageRequestFixture = missionPackageModule.buildMissionPackageStageRequest(stageablePackageStatusFixture);
 if (
