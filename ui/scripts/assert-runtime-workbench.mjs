@@ -14,6 +14,7 @@ const capabilityDossierPath = join(uiRoot, "src", "components", "capability-doss
 const edgeDeployStagePath = join(uiRoot, "src", "components", "edge-deploy-stage.tsx");
 const deployListsPath = join(uiRoot, "src", "components", "deploy-lists.tsx");
 const edgeProofPath = join(uiRoot, "src", "components", "edge-proof.tsx");
+const deploymentIntentPath = join(uiRoot, "src", "lib", "deployment-intent.ts");
 const fieldOpsPath = join(uiRoot, "src", "components", "field-ops.tsx");
 const fieldOpsStagePath = join(uiRoot, "src", "components", "field-ops-stage.tsx");
 const packageHandoffPath = join(uiRoot, "src", "components", "package-handoff.tsx");
@@ -122,6 +123,7 @@ const runtimeOptimizerSource = readFileSync(runtimeOptimizerPath, "utf8");
 const runtimeWorkbenchSource = readFileSync(runtimeWorkbenchPath, "utf8");
 const workbenchFlowSource = readFileSync(workbenchFlowPath, "utf8");
 const edgeProofWorkflowSource = readFileSync(edgeProofWorkflowPath, "utf8");
+const deploymentIntentSource = readFileSync(deploymentIntentPath, "utf8");
 const edgeRuntimeMissionSource = readFileSync(edgeRuntimeMissionPath, "utf8");
 const fieldOpsProofSource = readFileSync(fieldOpsProofPath, "utf8");
 const hubActionsSource = readFileSync(hubActionsPath, "utf8");
@@ -132,7 +134,7 @@ const runtimeRemediationSource = readFileSync(runtimeRemediationPath, "utf8");
 const runtimeStageViewSource = readFileSync(runtimeStageViewPath, "utf8");
 const missionPackageSource = readFileSync(missionPackagePath, "utf8");
 const missionWorkflowSource = readFileSync(missionWorkflowPath, "utf8");
-const workbenchSource = `${source}\n${capabilityDossierSource}\n${edgeDeployStageSource}\n${deployListsSource}\n${edgeProofSource}\n${fieldOpsSource}\n${fieldOpsStageSource}\n${packageHandoffSource}\n${packageStageSource}\n${missionStagesSource}\n${modelPlanSource}\n${readinessPanelsSource}\n${runtimeDecisionTraceSource}\n${runtimeExecutionContractSource}\n${runtimeContractRowsSource}\n${runtimeMissionSource}\n${runtimeOperatorProofSource}\n${runtimeOptimizerSource}\n${runtimeWorkbenchSource}\n${workbenchFlowSource}\n${edgeProofWorkflowSource}\n${edgeRuntimeMissionSource}\n${fieldOpsProofSource}\n${hubActionsSource}\n${readinessSource}\n${runtimeDecisionSource}\n${proofCommandSource}\n${runtimeRemediationSource}\n${runtimeStageViewSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
+const workbenchSource = `${source}\n${capabilityDossierSource}\n${edgeDeployStageSource}\n${deployListsSource}\n${edgeProofSource}\n${fieldOpsSource}\n${fieldOpsStageSource}\n${packageHandoffSource}\n${packageStageSource}\n${missionStagesSource}\n${modelPlanSource}\n${readinessPanelsSource}\n${runtimeDecisionTraceSource}\n${runtimeExecutionContractSource}\n${runtimeContractRowsSource}\n${runtimeMissionSource}\n${runtimeOperatorProofSource}\n${runtimeOptimizerSource}\n${runtimeWorkbenchSource}\n${workbenchFlowSource}\n${edgeProofWorkflowSource}\n${deploymentIntentSource}\n${edgeRuntimeMissionSource}\n${fieldOpsProofSource}\n${hubActionsSource}\n${readinessSource}\n${runtimeDecisionSource}\n${proofCommandSource}\n${runtimeRemediationSource}\n${runtimeStageViewSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
 const apiSource = readFileSync(apiPath, "utf8");
 const missionSpecSource = readFileSync(missionSpecPath, "utf8");
 const proofHashSource = readFileSync(proofHashPath, "utf8");
@@ -709,6 +711,17 @@ const missionDraftFixture = {
   throughputMinIps: "20",
   yaml: ""
 };
+const bundledDeploymentIntent = await build({
+  bundle: true,
+  entryPoints: [deploymentIntentPath],
+  format: "esm",
+  platform: "node",
+  target: "es2020",
+  write: false
+});
+const deploymentIntentModule = await import(
+  `data:text/javascript;base64,${Buffer.from(bundledDeploymentIntent.outputFiles[0].text).toString("base64")}`
+);
 const bundledMissionPackage = await build({
   bundle: true,
   entryPoints: [missionPackagePath],
@@ -728,6 +741,38 @@ const modelFixture = {
   name: "YOLOv8 lowlight",
   packageId: "pkg-vision-models-20240115"
 };
+const thermalDeploymentIntent = deploymentIntentModule.buildDeploymentIntentRequest({
+  device: { device_id: "edge-thermal-1" },
+  draft: { ...missionDraftFixture, sensor: "camera.thermal", slot: "thermal" },
+  model: modelFixture,
+  requestedAt: "2026-07-08T00:00:00.000Z",
+  runtime: { runtime_target_id: "temms-rpi5-tflite" }
+});
+const expectedThermalDeploymentIntent = {
+  actor: "operator:mission-package-workbench",
+  device_id: "edge-thermal-1",
+  model_id: "model-yolov8-lowlight-001",
+  package_id: "pkg-vision-models-20240115",
+  requested_at: "2026-07-08T00:00:00.000Z",
+  runtime_target_id: "temms-rpi5-tflite",
+  slot: "thermal",
+  source: "hub-ddil-drill"
+};
+Object.entries(expectedThermalDeploymentIntent).forEach(([key, value]) => {
+  if (thermalDeploymentIntent[key] !== value) {
+    throw new Error(`deployment intent ${key} mismatch: ${thermalDeploymentIntent[key]}`);
+  }
+});
+const defaultSlotDeploymentIntent = deploymentIntentModule.buildDeploymentIntentRequest({
+  device: undefined,
+  draft: { ...missionDraftFixture, slot: "" },
+  model: undefined,
+  requestedAt: "2026-07-08T00:00:00.000Z",
+  runtime: undefined
+});
+if (defaultSlotDeploymentIntent.slot !== "vision") {
+  throw new Error("deployment intent should default blank mission slots to vision");
+}
 const planRequestFixture = missionPackageModule.buildMissionPackagePlanRequest({
   draft: {
     ...missionDraftFixture,

@@ -115,6 +115,7 @@ import {
   edgeProofTraceStatus,
   verifyEdgeProofComponentDigestStatus
 } from "./lib/edge-proof-workflow";
+import { buildDeploymentIntentRequest } from "./lib/deployment-intent";
 import { buildEdgeRuntimeMission } from "./lib/edge-runtime-mission";
 import {
   latestRuntimeRepairProofFor,
@@ -1120,16 +1121,12 @@ export function App(): JSX.Element {
   function queueDeploymentIntent(): void {
     void run("Queue DDIL deployment intent", () =>
       controlApi.requestDeploy(
-        {
-          actor: "operator:mission-package-workbench",
-          source: "hub-ddil-drill",
-          package_id: selectedModel?.packageId,
-          model_id: selectedModel?.id,
-          device_id: selectedDevice ? deviceId(selectedDevice) : undefined,
-          runtime_target_id: selectedRuntime ? runtimeTargetId(selectedRuntime) : undefined,
-          slot: "vision",
-          requested_at: new Date().toISOString()
-        },
+        buildDeploymentIntentRequest({
+          device: selectedDevice,
+          draft: missionDraft,
+          model: selectedModel,
+          runtime: selectedRuntime
+        }),
         token
       )
     );
