@@ -12,6 +12,11 @@ export interface EdgeRecommendationSelection {
   workflowTarget: WorkflowTarget;
 }
 
+export interface DeploymentIntentQueueAction {
+  request: JsonObject;
+  title: string;
+}
+
 export function edgeRecommendationSelection(
   recommendation: EdgeRecommendation
 ): EdgeRecommendationSelection {
@@ -81,6 +86,23 @@ export function buildDeploymentIntentRequest({
     runtime_target_id: runtime ? runtimeTargetId(runtime) : undefined,
     slot: draft.slot || "vision",
     requested_at: requestedAt
+  };
+}
+
+export function deploymentIntentQueueAction({
+  device,
+  draft,
+  model,
+  runtime
+}: {
+  device: Device | undefined;
+  draft: MissionDraft;
+  model: ModelRecord | undefined;
+  runtime: RuntimeTarget | undefined;
+}): DeploymentIntentQueueAction {
+  return {
+    request: buildDeploymentIntentRequest({ device, draft, model, runtime }),
+    title: "Queue DDIL deployment intent"
   };
 }
 

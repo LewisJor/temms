@@ -510,6 +510,8 @@ collectTextFiles(docsBuildPath).forEach((path) => {
 
 [
   "edgeRecommendationSelection",
+  "deploymentIntentQueueAction",
+  "title: \"Queue DDIL deployment intent\"",
   "workflowTarget: \"deployment\"",
   "modelId: recommendation.model_id ? String(recommendation.model_id) : undefined",
   "runtimeTargetId: recommendation.runtime_target_id ? String(recommendation.runtime_target_id) : undefined"
@@ -1999,6 +2001,22 @@ const defaultSlotDeploymentIntent = deploymentIntentModule.buildDeploymentIntent
 });
 if (defaultSlotDeploymentIntent.slot !== "vision") {
   throw new Error("deployment intent should default blank mission slots to vision");
+}
+const deploymentIntentQueueActionFixture = deploymentIntentModule.deploymentIntentQueueAction({
+  device: { device_id: "edge-thermal-1" },
+  draft: { ...missionDraftFixture, sensor: "camera.thermal", slot: "thermal" },
+  model: modelFixture,
+  runtime: { runtime_target_id: "temms-rpi5-tflite" }
+});
+if (
+  deploymentIntentQueueActionFixture.title !== "Queue DDIL deployment intent" ||
+  deploymentIntentQueueActionFixture.request.actor !== "operator:mission-package-workbench" ||
+  deploymentIntentQueueActionFixture.request.model_id !== "model-yolov8-lowlight-001" ||
+  deploymentIntentQueueActionFixture.request.device_id !== "edge-thermal-1" ||
+  deploymentIntentQueueActionFixture.request.runtime_target_id !== "temms-rpi5-tflite" ||
+  deploymentIntentQueueActionFixture.request.slot !== "thermal"
+) {
+  throw new Error("deployment intent queue action should bind the selected mission edge path");
 }
 const planRequestFixture = missionPackageModule.buildMissionPackagePlanRequest({
   draft: {

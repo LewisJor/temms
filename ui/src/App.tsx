@@ -98,7 +98,7 @@ import {
 } from "./lib/edge-proof-workflow";
 import {
   buildPackagePromotionRequest,
-  buildDeploymentIntentRequest,
+  deploymentIntentQueueAction,
   edgeRecommendationSelection,
   buildRolloutApplyRequest,
   buildRolloutApprovalRequest,
@@ -690,17 +690,13 @@ export function App(): JSX.Element {
   }
 
   function queueDeploymentIntent(): void {
-    void run("Queue DDIL deployment intent", () =>
-      controlApi.requestDeploy(
-        buildDeploymentIntentRequest({
-          device: selectedDevice,
-          draft: missionDraft,
-          model: selectedModel,
-          runtime: selectedRuntime
-        }),
-        token
-      )
-    );
+    const action = deploymentIntentQueueAction({
+      device: selectedDevice,
+      draft: missionDraft,
+      model: selectedModel,
+      runtime: selectedRuntime
+    });
+    void run(action.title, () => controlApi.requestDeploy(action.request, token));
   }
 
   function handleReadinessAction(action: ReadinessGateAction): void {
