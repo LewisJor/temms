@@ -79,6 +79,14 @@ export interface ReadinessActionSelection {
   runtimeTargetId: string;
 }
 
+export interface ReadinessActionFocus {
+  context: string;
+  detail: string;
+  stage: HubStage;
+  title: string;
+  workflowTarget: WorkflowTarget;
+}
+
 export function buildMissionWorkflowSignals({
   missionDraft,
   missionPackageStageStatus,
@@ -586,6 +594,18 @@ export function readinessActionSelection(action: ReadinessGateAction): Readiness
     deviceId: stringOf(refs.device_id, ""),
     modelId: stringOf(refs.model_id, ""),
     runtimeTargetId: stringOf(refs.runtime_target_id, "")
+  };
+}
+
+export function readinessActionFocus(action: ReadinessGateAction): ReadinessActionFocus {
+  const workflowTarget = workflowTargetForReadinessAction(action);
+  const context = readinessActionContext(action);
+  return {
+    context,
+    detail: `${workflowTargetLabel(workflowTarget)} is focused${context ? ` for ${context}` : ""}.`,
+    stage: hubStageForWorkflowTarget(workflowTarget),
+    title: action.label,
+    workflowTarget
   };
 }
 

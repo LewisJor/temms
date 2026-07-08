@@ -267,6 +267,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "StageRunbookFact",
   "hubStageRunbookFor",
   "buildMissionWorkflowSignals",
+  "readinessActionFocus",
   "readinessActionSelection",
   "Ready when",
   "Risk",
@@ -2025,6 +2026,36 @@ if (
   ignoredSelectionFixture.runtimeTargetId
 ) {
   throw new Error("mission workflow readiness action selection should ignore non-selection readiness actions");
+}
+const deploymentFocusFixture = missionWorkflowModule.readinessActionFocus({
+  kind: "select_context",
+  label: "Select measured runtime path",
+  refs: {
+    device_id: "edge-rpi5",
+    model_id: "model-yolov8-lowlight-001",
+    runtime_target_id: "temms-rpi5-tflite"
+  }
+});
+if (
+  deploymentFocusFixture.stage !== "deploy" ||
+  deploymentFocusFixture.workflowTarget !== "deployment" ||
+  deploymentFocusFixture.title !== "Select measured runtime path" ||
+  deploymentFocusFixture.detail !==
+    "Deployment path is focused for model-yolov8-lowlight-001 on edge-rpi5 via temms-rpi5-tflite."
+) {
+  throw new Error("mission workflow readiness action focus should route selected context actions to deployment");
+}
+const evidenceFocusFixture = missionWorkflowModule.readinessActionFocus({
+  kind: "export_replay",
+  label: "Export replay evidence",
+  refs: { slot: "thermal" }
+});
+if (
+  evidenceFocusFixture.stage !== "field" ||
+  evidenceFocusFixture.workflowTarget !== "evidence" ||
+  evidenceFocusFixture.detail !== "Mission proof is focused for slot thermal."
+) {
+  throw new Error("mission workflow readiness action focus should route evidence actions to Field Ops evidence");
 }
 const blockedStageFixture = missionWorkflowModule.buildHubStages({
   ...readyStageOptions,

@@ -66,13 +66,10 @@ import { useHubStageNavigation } from "./lib/hub-stage-navigation";
 import {
   buildMissionWorkflowSignals,
   edgeReadinessCommandReason,
-  hubStageForWorkflowTarget,
   hubStageRunbookFor,
+  readinessActionFocus,
   readinessActionSelection,
-  readinessActionContext,
-  readinessCommand,
-  workflowTargetForReadinessAction,
-  workflowTargetLabel
+  readinessCommand
 } from "./lib/mission-workflow";
 import { runtimeWorkbenchRowRemediationCommand } from "./lib/runtime-remediation";
 import { loadSnapshotAfterReconciliation } from "./lib/hub-actions";
@@ -117,8 +114,7 @@ import type {
 } from "./types";
 import type {
   EdgeProofComponentDigestStatus,
-  ReadinessGateAction,
-  WorkflowTarget
+  ReadinessGateAction
 } from "./lib/workbench-types";
 
 const emptySnapshot: HubSnapshot = {
@@ -716,25 +712,12 @@ export function App(): JSX.Element {
     );
   }
 
-  function focusWorkflow(target: WorkflowTarget, actionLabel: string, contextLabel = ""): void {
-    navigateHubStage(hubStageForWorkflowTarget(target), { workflowTarget: target });
-    setToast({
-      tone: "success",
-      title: actionLabel,
-      detail: `${workflowTargetLabel(target)} is focused${
-        contextLabel ? ` for ${contextLabel}` : ""
-      }.`
-    });
-  }
-
   function handleReadinessAction(action: ReadinessGateAction): void {
     const command = readinessCommand(action);
+    const focus = readinessActionFocus(action);
     applyReadinessActionSelection(action);
-    focusWorkflow(
-      workflowTargetForReadinessAction(action),
-      action.label,
-      readinessActionContext(action)
-    );
+    navigateHubStage(focus.stage, { workflowTarget: focus.workflowTarget });
+    setToast({ tone: "success", title: focus.title, detail: focus.detail });
     if (command) setPendingReadinessAction(action);
   }
 
