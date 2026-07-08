@@ -81,6 +81,7 @@ import {
 } from "./lib/mission-package";
 import {
   buildHubStages,
+  buildMissionWorkflowSignals,
   buildReadinessVerdict,
   ddilStatusDetail,
   edgeReadinessCommandReason,
@@ -150,7 +151,6 @@ import type {
 import type {
   EdgeProofComponentDigestStatus,
   HubStage,
-  MissionWorkflowSignal,
   ReadinessGateAction,
   WorkflowTarget
 } from "./lib/workbench-types";
@@ -1262,38 +1262,14 @@ function executePendingReadinessAction(): void {
     onStageDeploy: stageMissionPackageRollout,
     onSync: () => void refresh()
   });
-  const workflowSignals: MissionWorkflowSignal[] = [
-    {
-      label: "Mission",
-      value: missionDraft.yaml ? "YAML loaded" : missionDraft.goal ? "goal defined" : "mission pending",
-      detail: missionDraft.sensor ? `${missionDraft.sensor} / ${missionDraft.slot || "vision"}` : "sensor pending",
-      tone: missionReady ? "good" : "warn"
-    },
-    {
-      label: "Model",
-      value: selectedModel?.name ?? "select model",
-      detail: selectedModel?.packageId ?? "signed package pending",
-      tone: selectedModel ? "good" : "warn"
-    },
-    {
-      label: "Runtime",
-      value: selectedRuntime ? runtimeTargetId(selectedRuntime) : "select runtime",
-      detail: selectedDevice ? `${deviceId(selectedDevice)} / ${runtimeFitDisplay.label}` : runtimeFitDisplay.detail,
-      tone: selectedRuntime && selectedDevice ? runtimeFitDisplay.tone : "warn"
-    },
-    {
-      label: "Handling",
-      value: missionDraft.switchPolicy.replace(/_/g, " "),
-      detail: `fallback ${missionDraft.fallbackModelId || "auto"} / ${missionDraft.ddilMode.replace(/_/g, " ")}`,
-      tone: missionDraft.sensor && missionDraft.slot ? "good" : "warn"
-    },
-    {
-      label: "Package",
-      value: missionPackageStageStatus.value,
-      detail: missionPackageStageStatus.detail,
-      tone: missionPackageStageStatus.tone
-    }
-  ];
+  const workflowSignals = buildMissionWorkflowSignals({
+    missionDraft,
+    missionPackageStageStatus,
+    runtimeFitDisplay,
+    selectedDevice,
+    selectedModel,
+    selectedRuntime
+  });
 
   return (
     <div className="app-shell">

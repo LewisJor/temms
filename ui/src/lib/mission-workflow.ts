@@ -20,6 +20,7 @@ import type {
   HubStage,
   HubStageItem,
   HubStageRunbook,
+  MissionWorkflowSignal,
   MissionPackageStageStatus,
   ModelRecord,
   ReadinessGate,
@@ -61,6 +62,58 @@ export interface BuildHubStagesOptions {
   runtimeFitDisplay: RuntimeFitDisplay;
   selectedModel: ModelRecord | undefined;
   selectedRuntime: RuntimeTarget | undefined;
+}
+
+export interface BuildMissionWorkflowSignalsOptions {
+  missionDraft: MissionDraft;
+  missionPackageStageStatus: MissionPackageStageStatus;
+  runtimeFitDisplay: RuntimeFitDisplay;
+  selectedDevice: Device | undefined;
+  selectedModel: ModelRecord | undefined;
+  selectedRuntime: RuntimeTarget | undefined;
+}
+
+export function buildMissionWorkflowSignals({
+  missionDraft,
+  missionPackageStageStatus,
+  runtimeFitDisplay,
+  selectedDevice,
+  selectedModel,
+  selectedRuntime
+}: BuildMissionWorkflowSignalsOptions): MissionWorkflowSignal[] {
+  const missionReady = Boolean((missionDraft.goal || missionDraft.yaml).trim());
+  return [
+    {
+      label: "Mission",
+      value: missionDraft.yaml ? "YAML loaded" : missionDraft.goal ? "goal defined" : "mission pending",
+      detail: missionDraft.sensor ? `${missionDraft.sensor} / ${missionDraft.slot || "vision"}` : "sensor pending",
+      tone: missionReady ? "good" : "warn"
+    },
+    {
+      label: "Model",
+      value: selectedModel?.name ?? "select model",
+      detail: selectedModel?.packageId ?? "signed package pending",
+      tone: selectedModel ? "good" : "warn"
+    },
+    {
+      label: "Runtime",
+      value: selectedRuntime ? runtimeTargetId(selectedRuntime) : "select runtime",
+      detail: selectedDevice ? `${deviceId(selectedDevice)} / ${runtimeFitDisplay.label}` : runtimeFitDisplay.detail,
+      tone: selectedRuntime && selectedDevice ? runtimeFitDisplay.tone : "warn"
+    },
+    {
+      label: "Handling",
+      value: missionDraft.switchPolicy.replace(/_/g, " "),
+      detail: `fallback ${missionDraft.fallbackModelId || "auto"} / ${missionDraft.ddilMode.replace(/_/g, " ")}`,
+      tone: missionDraft.sensor && missionDraft.slot ? "good" : "warn"
+    },
+    {
+      label: "Package",
+      value: missionPackageStageStatus.value,
+      detail: missionPackageStageStatus.detail,
+      tone: missionPackageStageStatus.tone
+    }
+  ];
 }
 
 export function buildHubStages({

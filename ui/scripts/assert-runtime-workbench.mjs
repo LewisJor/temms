@@ -255,6 +255,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "Field Ops",
   "StageRunbookFact",
   "hubStageRunbookFor",
+  "buildMissionWorkflowSignals",
   "Ready when",
   "Risk",
   "Staging before package planning leaves rollout intent detached from the hashed mission handoff.",
@@ -1204,6 +1205,25 @@ if (stageFixture.find((stage) => stage.id === "package")?.decision !== "Hash the
 }
 if (stageFixture.find((stage) => stage.id === "deploy")?.tone !== "good") {
   throw new Error("mission workflow deploy stage should be good after an activated rollout");
+}
+const signalFixture = missionWorkflowModule.buildMissionWorkflowSignals({
+  missionDraft: missionDraftFixture,
+  missionPackageStageStatus: readyStageOptions.missionPackageStageStatus,
+  runtimeFitDisplay: readyStageOptions.runtimeFitDisplay,
+  selectedDevice: { device_id: "edge-rpi5" },
+  selectedModel: modelFixture,
+  selectedRuntime: readyStageOptions.selectedRuntime
+});
+const expectedSignalOrder = "Mission>Model>Runtime>Handling>Package";
+const signalOrder = signalFixture.map((signal) => signal.label).join(">");
+if (signalOrder !== expectedSignalOrder) {
+  throw new Error(`mission workflow signal order mismatch: ${signalOrder}`);
+}
+if (signalFixture.find((signal) => signal.label === "Runtime")?.detail !== "edge-rpi5 / 98 optimal") {
+  throw new Error("mission workflow runtime signal should bind selected device and runtime fit");
+}
+if (signalFixture.find((signal) => signal.label === "Handling")?.detail !== "fallback model-fallback / queue signed intents") {
+  throw new Error("mission workflow handling signal should bind fallback model and DDIL policy");
 }
 const blockedStageFixture = missionWorkflowModule.buildHubStages({
   ...readyStageOptions,
