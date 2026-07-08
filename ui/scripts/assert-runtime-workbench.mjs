@@ -270,6 +270,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "buildRuntimeFitTileSummary",
   "readinessActionPlan",
   "readinessActionFocus",
+  "readinessActionFocusNotice",
   "readinessActionSelection",
   "readinessCommandExecutionPlan",
   "readinessCommandEdgeExecutionNotice",
@@ -2432,6 +2433,16 @@ if (
     "Deployment path is focused for model-yolov8-lowlight-001 on edge-rpi5 via temms-rpi5-tflite."
 ) {
   throw new Error("mission workflow readiness action focus should route selected context actions to deployment");
+}
+const deploymentFocusNoticeFixture = missionWorkflowModule.readinessActionFocusNotice(
+  deploymentFocusFixture
+);
+if (
+  deploymentFocusNoticeFixture.tone !== "success" ||
+  deploymentFocusNoticeFixture.title !== "Select measured runtime path" ||
+  deploymentFocusNoticeFixture.detail !== deploymentFocusFixture.detail
+) {
+  throw new Error("mission workflow readiness action focus notice should explain the focused mission path");
 }
 const evidenceFocusFixture = missionWorkflowModule.readinessActionFocus({
   kind: "export_replay",

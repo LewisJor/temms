@@ -71,6 +71,7 @@ import {
   buildMissionWorkflowSignals,
   buildRuntimeFitTileSummary,
   hubStageRunbookFor,
+  readinessActionFocusNotice,
   readinessActionPlan,
   readinessCommand,
   readinessCommandEdgeExecutionNotice,
@@ -715,7 +716,7 @@ export function App(): JSX.Element {
     applyReadinessActionSelection(plan.selection);
     const { command, focus } = plan;
     navigateHubStage(focus.stage, { workflowTarget: focus.workflowTarget });
-    setToast({ tone: "success", title: focus.title, detail: focus.detail });
+    setToast(readinessActionFocusNotice(focus));
     if (command) setPendingReadinessAction(action);
   }
 

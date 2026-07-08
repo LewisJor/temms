@@ -682,6 +682,14 @@ export function readinessActionFocus(action: ReadinessGateAction): ReadinessActi
   };
 }
 
+export function readinessActionFocusNotice(focus: ReadinessActionFocus): Toast {
+  return {
+    tone: "success",
+    title: focus.title,
+    detail: focus.detail
+  };
+}
+
 export function readinessActionPlan(action: ReadinessGateAction): ReadinessActionPlan {
   return {
     command: readinessCommand(action),
