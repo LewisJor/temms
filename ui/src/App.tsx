@@ -43,11 +43,9 @@ import {
 import { ModelPlanStage } from "./components/model-plan";
 import { MissionWorkflowCockpit, StatusTile } from "./components/workbench-flow";
 import {
-  deviceId,
   errorToast,
   packageId,
   rolloutId,
-  runtimeTargetId,
   saveToken,
   storedToken
 } from "./lib/hub-format";
@@ -102,7 +100,12 @@ import {
   buildPendingRuntimeRetargetRequest
 } from "./lib/field-ops-proof";
 import { buildHubFlowState } from "./lib/hub-flow-state";
-import { buildHubMissionContext } from "./lib/hub-mission-context";
+import {
+  buildHubMissionContext,
+  defaultDeviceSelectionId,
+  defaultModelSelectionId,
+  defaultRuntimeSelectionId
+} from "./lib/hub-mission-context";
 import { hasReadinessContextSelection } from "./lib/readiness";
 import type {
   DeploymentReadiness,
@@ -334,21 +337,18 @@ export function App(): JSX.Element {
   }, [baseEdgeProofComponentDigests, lastEdgeProof]);
 
   useEffect(() => {
-    if (selectedModelId) return;
-    const activeModel = activeModelId ? models.find((model) => model.id === activeModelId) : undefined;
-    if (activeModel) {
-      setSelectedModelId(activeModel.id);
-      return;
-    }
-    if (models[0]) setSelectedModelId(models[0].id);
+    const nextModelId = defaultModelSelectionId({ activeModelId, models, selectedModelId });
+    if (nextModelId) setSelectedModelId(nextModelId);
   }, [activeModelId, models, selectedModelId]);
 
   useEffect(() => {
-    if (!selectedDeviceId && snapshot.devices[0]) setSelectedDeviceId(deviceId(snapshot.devices[0]));
+    const nextDeviceId = defaultDeviceSelectionId({ devices: snapshot.devices, selectedDeviceId });
+    if (nextDeviceId) setSelectedDeviceId(nextDeviceId);
   }, [snapshot.devices, selectedDeviceId]);
 
   useEffect(() => {
-    if (!selectedRuntimeId && selectedRuntime) setSelectedRuntimeId(runtimeTargetId(selectedRuntime));
+    const nextRuntimeId = defaultRuntimeSelectionId({ selectedRuntime, selectedRuntimeId });
+    if (nextRuntimeId) setSelectedRuntimeId(nextRuntimeId);
   }, [selectedRuntime, selectedRuntimeId]);
 
   useEffect(() => {

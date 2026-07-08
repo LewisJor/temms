@@ -410,6 +410,9 @@ collectTextFiles(docsBuildPath).forEach((path) => {
 
 [
   "buildHubMissionContext",
+  "defaultModelSelectionId",
+  "defaultDeviceSelectionId",
+  "defaultRuntimeSelectionId",
   "missionRolloutsForSelection",
   "missionRolloutPlansForSelection",
   "missionOperationLedgerForSlot",
@@ -1096,6 +1099,65 @@ const bundledHubMissionContext = await build({
 const hubMissionContextModule = await import(
   `data:text/javascript;base64,${Buffer.from(bundledHubMissionContext.outputFiles[0].text).toString("base64")}`
 );
+if (
+  hubMissionContextModule.defaultModelSelectionId({
+    activeModelId: "model-active",
+    models: [{ id: "model-fallback" }, { id: "model-active" }],
+    selectedModelId: ""
+  }) !== "model-active"
+) {
+  throw new Error("default model selection should prefer active mission evidence");
+}
+if (
+  hubMissionContextModule.defaultModelSelectionId({
+    activeModelId: "model-missing",
+    models: [{ id: "model-first" }],
+    selectedModelId: ""
+  }) !== "model-first"
+) {
+  throw new Error("default model selection should fall back to first available model");
+}
+if (
+  hubMissionContextModule.defaultModelSelectionId({
+    activeModelId: "model-active",
+    models: [{ id: "model-active" }],
+    selectedModelId: "operator-model"
+  }) !== undefined
+) {
+  throw new Error("default model selection should preserve explicit operator choices");
+}
+if (
+  hubMissionContextModule.defaultDeviceSelectionId({
+    devices: [{ device_id: "edge-rpi5" }],
+    selectedDeviceId: ""
+  }) !== "edge-rpi5"
+) {
+  throw new Error("default device selection should choose the first edge when none is selected");
+}
+if (
+  hubMissionContextModule.defaultDeviceSelectionId({
+    devices: [{ device_id: "edge-rpi5" }],
+    selectedDeviceId: "operator-edge"
+  }) !== undefined
+) {
+  throw new Error("default device selection should preserve explicit operator choices");
+}
+if (
+  hubMissionContextModule.defaultRuntimeSelectionId({
+    selectedRuntime: { runtime_target_id: "temms-rpi5-tflite" },
+    selectedRuntimeId: ""
+  }) !== "temms-rpi5-tflite"
+) {
+  throw new Error("default runtime selection should adopt the derived runtime");
+}
+if (
+  hubMissionContextModule.defaultRuntimeSelectionId({
+    selectedRuntime: { runtime_target_id: "temms-rpi5-tflite" },
+    selectedRuntimeId: "operator-runtime"
+  }) !== undefined
+) {
+  throw new Error("default runtime selection should preserve explicit operator choices");
+}
 const bundledHubFlowState = await build({
   bundle: true,
   entryPoints: [hubFlowStatePath],

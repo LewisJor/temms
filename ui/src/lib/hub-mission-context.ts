@@ -1,7 +1,8 @@
-import type { HubSnapshot } from "../types";
+import type { Device, HubSnapshot, RuntimeTarget } from "../types";
 import { deviceId, nextPromotion, packageId, runtimeTargetId } from "./hub-format";
 import { asRecord, latestByTime, numberOf, stringOf, stringsOf } from "./json";
 import type { MissionDraft } from "./mission-spec";
+import type { ModelRecord } from "./workbench-types";
 import { missionRolloutPlansForSelection, missionRolloutsForSelection } from "./deployment-intent";
 import {
   activeSlotForMission,
@@ -20,6 +21,42 @@ import {
   targetSupportsModel,
   withBenchmarkEvidence
 } from "./runtime-fit";
+
+export function defaultModelSelectionId({
+  activeModelId,
+  models,
+  selectedModelId
+}: {
+  activeModelId: string;
+  models: Pick<ModelRecord, "id">[];
+  selectedModelId: string;
+}): string | undefined {
+  if (selectedModelId) return undefined;
+  const activeModel = activeModelId ? models.find((model) => model.id === activeModelId) : undefined;
+  return activeModel?.id ?? models[0]?.id;
+}
+
+export function defaultDeviceSelectionId({
+  devices,
+  selectedDeviceId
+}: {
+  devices: Device[];
+  selectedDeviceId: string;
+}): string | undefined {
+  if (selectedDeviceId) return undefined;
+  return devices[0] ? deviceId(devices[0]) : undefined;
+}
+
+export function defaultRuntimeSelectionId({
+  selectedRuntime,
+  selectedRuntimeId
+}: {
+  selectedRuntime: RuntimeTarget | undefined;
+  selectedRuntimeId: string;
+}): string | undefined {
+  if (selectedRuntimeId || !selectedRuntime) return undefined;
+  return runtimeTargetId(selectedRuntime);
+}
 
 export function buildHubMissionContext({
   missionDraft,
