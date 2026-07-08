@@ -57,6 +57,8 @@ import { buildMissionYamlImportResult } from "./lib/mission-yaml-import";
 import {
   buildMissionPackageStageRequest,
   buildMissionPackagePlanRequest,
+  missionPackageDownloadAdoption,
+  missionPackagePlanAdoption,
   missionPackageStagePlan
 } from "./lib/mission-package";
 import { buildHubFormAction } from "./lib/hub-form-actions";
@@ -449,9 +451,10 @@ export function App(): JSX.Element {
       "Plan mission package",
       async () => {
         const plan = await planMissionPackage(token, missionPackagePlanPayload());
-        setMissionPackagePlan(plan);
-        setLastMissionPackageHandoff(undefined);
-        return plan;
+        const adoption = missionPackagePlanAdoption(plan);
+        setMissionPackagePlan(adoption.plan);
+        setLastMissionPackageHandoff(adoption.handoff);
+        return adoption.preview;
       },
       false
     );
@@ -462,14 +465,11 @@ export function App(): JSX.Element {
       "Download mission package",
       async () => {
         const artifact = await downloadMissionPackage(token, missionPackagePlanPayload());
-        setMissionPackagePlan(artifact.payload);
-        setLastMissionPackageHandoff(artifact.handoff);
-        downloadJson(artifact.fileName, artifact.payload);
-        return {
-          fileName: artifact.fileName,
-          handoff: artifact.handoff,
-          package: artifact.payload
-        };
+        const adoption = missionPackageDownloadAdoption(artifact);
+        setMissionPackagePlan(adoption.plan);
+        setLastMissionPackageHandoff(adoption.handoff);
+        if (adoption.fileName) downloadJson(adoption.fileName, adoption.plan);
+        return adoption.preview;
       },
       false
     );

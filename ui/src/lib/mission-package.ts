@@ -1,4 +1,5 @@
 import type {
+  MissionPackageArtifact,
   MissionPackageDownloadHandoff,
   MissionPackagePlanRequest,
   ReadinessQuery
@@ -23,6 +24,36 @@ export interface MissionPackageStagePlan {
   runTitle: string;
   successStage: HubStage;
   successWorkflowTarget: WorkflowTarget;
+}
+
+export interface MissionPackageAdoption {
+  fileName?: string;
+  handoff: MissionPackageDownloadHandoff | undefined;
+  plan: JsonObject;
+  preview: unknown;
+}
+
+export function missionPackagePlanAdoption(plan: JsonObject): MissionPackageAdoption {
+  return {
+    handoff: undefined,
+    plan,
+    preview: plan
+  };
+}
+
+export function missionPackageDownloadAdoption(
+  artifact: MissionPackageArtifact
+): MissionPackageAdoption {
+  return {
+    fileName: artifact.fileName,
+    handoff: artifact.handoff,
+    plan: artifact.payload,
+    preview: {
+      fileName: artifact.fileName,
+      handoff: artifact.handoff,
+      package: artifact.payload
+    }
+  };
 }
 
 export function buildMissionPackagePlanRequest({

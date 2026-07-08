@@ -285,6 +285,8 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "operator:mission-package-workbench",
   "buildMissionPackageManifest",
   "buildMissionPackagePlanRequest",
+  "missionPackagePlanAdoption",
+  "missionPackageDownloadAdoption",
   "buildMissionPackageStageStatus",
   "missionPackageStageBlocker",
   "missionPackageStagePlan",
@@ -1851,6 +1853,46 @@ Object.entries(expectedPlanRequestFields).forEach(([key, value]) => {
 });
 if (!String(planRequestFixture.mission_yaml || "").includes("temms-edge-mission/v1")) {
   throw new Error("mission package plan request should preserve source mission YAML");
+}
+const missionPackagePlanResponseFixture = {
+  package_identity: { package_identity_sha256: "a".repeat(64) },
+  schema_version: "temms-edge-mission-package/v1"
+};
+const missionPackagePlanAdoptionFixture = missionPackageModule.missionPackagePlanAdoption(
+  missionPackagePlanResponseFixture
+);
+if (
+  missionPackagePlanAdoptionFixture.plan !== missionPackagePlanResponseFixture ||
+  missionPackagePlanAdoptionFixture.preview !== missionPackagePlanResponseFixture ||
+  missionPackagePlanAdoptionFixture.handoff !== undefined ||
+  missionPackagePlanAdoptionFixture.fileName !== undefined
+) {
+  throw new Error("mission package plan adoption should retain plan payload and clear download handoff");
+}
+const missionPackageDownloadHandoffFixture = {
+  deploymentIntentSha256: "b".repeat(64),
+  edgeHandoffSha256: "c".repeat(64),
+  fileName: "temms-mission-package.json",
+  missionContractSha256: "d".repeat(64),
+  missionSha256: "e".repeat(64),
+  packageIdentitySha256: "f".repeat(64),
+  payloadSha256: "1".repeat(64),
+  runtimeCapabilityLockSha256: "2".repeat(64),
+  runtimePlanSha256: "3".repeat(64)
+};
+const missionPackageDownloadAdoptionFixture = missionPackageModule.missionPackageDownloadAdoption({
+  fileName: "temms-mission-package.json",
+  handoff: missionPackageDownloadHandoffFixture,
+  payload: missionPackagePlanResponseFixture
+});
+if (
+  missionPackageDownloadAdoptionFixture.fileName !== "temms-mission-package.json" ||
+  missionPackageDownloadAdoptionFixture.plan !== missionPackagePlanResponseFixture ||
+  missionPackageDownloadAdoptionFixture.handoff !== missionPackageDownloadHandoffFixture ||
+  missionPackageDownloadAdoptionFixture.preview.package !== missionPackagePlanResponseFixture ||
+  missionPackageDownloadAdoptionFixture.preview.handoff !== missionPackageDownloadHandoffFixture
+) {
+  throw new Error("mission package download adoption should retain file, handoff, plan, and preview payload");
 }
 const manifestFixture = missionPackageModule.buildMissionPackageManifest({
   device: { device_id: "edge-rpi5" },
