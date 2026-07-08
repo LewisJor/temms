@@ -364,6 +364,33 @@ export function edgeProofComponentDigestStatus(
   };
 }
 
+export function edgeProofComponentDigestVerificationPendingStatus(
+  baseStatus: EdgeProofComponentDigestStatus
+): EdgeProofComponentDigestStatus {
+  return {
+    ...baseStatus,
+    detail: "Browser is recomputing runtime workbench, trace, and manifest hashes.",
+    status: "verifying",
+    tone: "neutral",
+    value: "verifying digests"
+  };
+}
+
+export function edgeProofComponentDigestVerificationFailureStatus(
+  baseStatus: EdgeProofComponentDigestStatus,
+  error: unknown
+): EdgeProofComponentDigestStatus {
+  const detail = error instanceof Error ? error.message : String(error);
+  return {
+    ...baseStatus,
+    detail,
+    errors: [detail],
+    status: "mismatch",
+    tone: "bad",
+    value: "digest verification failed"
+  };
+}
+
 export async function verifyEdgeProofComponentDigestStatus(
   proof: JsonObject,
   baseStatus: EdgeProofComponentDigestStatus

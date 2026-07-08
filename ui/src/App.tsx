@@ -76,6 +76,8 @@ import {
   buildEdgeProofQuery,
   downloadJson,
   edgeProofComponentDigestStatus,
+  edgeProofComponentDigestVerificationFailureStatus,
+  edgeProofComponentDigestVerificationPendingStatus,
   edgeProofReadinessForContext,
   edgeProofTraceStatus,
   verifyEdgeProofComponentDigestStatus
@@ -307,28 +309,18 @@ export function App(): JSX.Element {
     if (!lastEdgeProof || baseEdgeProofComponentDigests.status !== "retained") return () => {
       cancelled = true;
     };
-    setVerifiedEdgeProofComponentDigests({
-      ...baseEdgeProofComponentDigests,
-      detail: "Browser is recomputing runtime workbench, trace, and manifest hashes.",
-      status: "verifying",
-      tone: "neutral",
-      value: "verifying digests"
-    });
+    setVerifiedEdgeProofComponentDigests(
+      edgeProofComponentDigestVerificationPendingStatus(baseEdgeProofComponentDigests)
+    );
     void verifyEdgeProofComponentDigestStatus(lastEdgeProof, baseEdgeProofComponentDigests)
       .then((status) => {
         if (!cancelled) setVerifiedEdgeProofComponentDigests(status);
       })
       .catch((error) => {
         if (!cancelled) {
-          const detail = error instanceof Error ? error.message : String(error);
-          setVerifiedEdgeProofComponentDigests({
-            ...baseEdgeProofComponentDigests,
-            detail,
-            errors: [detail],
-            status: "mismatch",
-            tone: "bad",
-            value: "digest verification failed"
-          });
+          setVerifiedEdgeProofComponentDigests(
+            edgeProofComponentDigestVerificationFailureStatus(baseEdgeProofComponentDigests, error)
+          );
         }
       });
     return () => {

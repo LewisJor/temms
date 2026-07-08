@@ -584,6 +584,8 @@ collectTextFiles(docsBuildPath).forEach((path) => {
 
 [
   "edgeProofReadinessForContext",
+  "edgeProofComponentDigestVerificationPendingStatus",
+  "edgeProofComponentDigestVerificationFailureStatus",
   "readinessMatchesContext",
   "selectionMatchesContext",
   "schema_version !== \"temms-edge-runtime-proof/v1\"",
@@ -983,6 +985,40 @@ if (
   ) !== undefined
 ) {
   throw new Error("edge proof readiness adoption should reject non-proof payloads");
+}
+const digestStatusFixture = {
+  detail: "Runtime workbench, trace, and execution manifest hashes are retained.",
+  digestCount: 3,
+  digests: [
+    { key: "runtime_workbench_sha256", label: "Runtime workbench", value: "a".repeat(64) }
+  ],
+  errors: [],
+  schema: "temms-edge-runtime-proof-component-digests/v1",
+  status: "retained",
+  tone: "good",
+  value: "digests retained"
+};
+const verifyingDigestStatus = edgeProofWorkflowModule.edgeProofComponentDigestVerificationPendingStatus(
+  digestStatusFixture
+);
+if (
+  verifyingDigestStatus.status !== "verifying" ||
+  verifyingDigestStatus.tone !== "neutral" ||
+  verifyingDigestStatus.value !== "verifying digests"
+) {
+  throw new Error("edge proof digest verification should expose deterministic verifying state");
+}
+const failedDigestStatus = edgeProofWorkflowModule.edgeProofComponentDigestVerificationFailureStatus(
+  digestStatusFixture,
+  new Error("manifest digest mismatch")
+);
+if (
+  failedDigestStatus.status !== "mismatch" ||
+  failedDigestStatus.tone !== "bad" ||
+  failedDigestStatus.errors[0] !== "manifest digest mismatch" ||
+  failedDigestStatus.value !== "digest verification failed"
+) {
+  throw new Error("edge proof digest verification should expose deterministic failure state");
 }
 const thermalEdgeProofWorkflow = edgeProofWorkflowModule.buildEdgeProofWorkflow({
   device: { device_id: "edge-thermal-01", status: "online" },
