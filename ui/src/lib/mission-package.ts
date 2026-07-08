@@ -33,6 +33,18 @@ export interface MissionPackageAdoption {
   preview: unknown;
 }
 
+export interface MissionPackageContextInvalidation {
+  handoff: undefined;
+  plan: undefined;
+}
+
+export function missionPackageContextInvalidation(): MissionPackageContextInvalidation {
+  return {
+    handoff: undefined,
+    plan: undefined
+  };
+}
+
 export function missionPackagePlanAdoption(plan: JsonObject): MissionPackageAdoption {
   return {
     handoff: undefined,

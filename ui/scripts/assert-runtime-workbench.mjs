@@ -285,6 +285,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "operator:mission-package-workbench",
   "buildMissionPackageManifest",
   "buildMissionPackagePlanRequest",
+  "missionPackageContextInvalidation",
   "missionPackagePlanAdoption",
   "missionPackageDownloadAdoption",
   "buildMissionPackageStageStatus",
@@ -1951,6 +1952,13 @@ const missionPackagePlanResponseFixture = {
   package_identity: { package_identity_sha256: "a".repeat(64) },
   schema_version: "temms-edge-mission-package/v1"
 };
+const missionPackageContextInvalidationFixture = missionPackageModule.missionPackageContextInvalidation();
+if (
+  missionPackageContextInvalidationFixture.plan !== undefined ||
+  missionPackageContextInvalidationFixture.handoff !== undefined
+) {
+  throw new Error("mission package context invalidation should clear stale plan and download handoff");
+}
 const missionPackagePlanAdoptionFixture = missionPackageModule.missionPackagePlanAdoption(
   missionPackagePlanResponseFixture
 );

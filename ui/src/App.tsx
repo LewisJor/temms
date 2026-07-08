@@ -60,6 +60,7 @@ import {
 import {
   buildMissionPackageStageRequest,
   buildMissionPackagePlanRequest,
+  missionPackageContextInvalidation,
   missionPackageDownloadAdoption,
   missionPackagePlanAdoption,
   missionPackageStagePlan
@@ -372,8 +373,9 @@ export function App(): JSX.Element {
   }, [readinessKey, readinessRefreshVersion, token]);
 
   useEffect(() => {
-    setMissionPackagePlan(undefined);
-    setLastMissionPackageHandoff(undefined);
+    const invalidation = missionPackageContextInvalidation();
+    setMissionPackagePlan(invalidation.plan);
+    setLastMissionPackageHandoff(invalidation.handoff);
   }, [missionDraft, readinessKey]);
 
   async function run(title: string, action: () => Promise<unknown>, shouldRefresh = true): Promise<void> {
