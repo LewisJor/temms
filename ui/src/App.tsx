@@ -53,7 +53,10 @@ import {
   defaultMissionDraft,
   type MissionDraft
 } from "./lib/mission-spec";
-import { buildMissionYamlImportResult } from "./lib/mission-yaml-import";
+import {
+  buildMissionYamlImportResult,
+  missionYamlImportAdoption
+} from "./lib/mission-yaml-import";
 import {
   buildMissionPackageStageRequest,
   buildMissionPackagePlanRequest,
@@ -403,18 +406,15 @@ export function App(): JSX.Element {
       runtimeTargets: snapshot.runtimeTargets,
       yaml
     });
-    if (result.selectedModelId) setSelectedModelId(result.selectedModelId);
-    if (result.selectedDeviceId) setSelectedDeviceId(result.selectedDeviceId);
-    if (result.selectedRuntimeId) setSelectedRuntimeId(result.selectedRuntimeId);
-    setMissionDraft(result.draft);
-    setMissionPackagePlan(undefined);
-    setLastMissionPackageHandoff(undefined);
-    setToast({
-      tone: "success",
-      title: "Mission YAML imported",
-      detail: result.toastDetail
-    });
-    navigateHubStage("mission");
+    const adoption = missionYamlImportAdoption(result);
+    if (adoption.selectedModelId) setSelectedModelId(adoption.selectedModelId);
+    if (adoption.selectedDeviceId) setSelectedDeviceId(adoption.selectedDeviceId);
+    if (adoption.selectedRuntimeId) setSelectedRuntimeId(adoption.selectedRuntimeId);
+    setMissionDraft(adoption.draft);
+    setMissionPackagePlan(adoption.packagePlan);
+    setLastMissionPackageHandoff(adoption.packageHandoff);
+    setToast(adoption.toast);
+    navigateHubStage(adoption.stage);
   }
 
   function reportMissionYamlImportError(fileName: string): void {

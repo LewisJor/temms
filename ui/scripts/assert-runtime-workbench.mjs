@@ -550,6 +550,11 @@ collectTextFiles(docsBuildPath).forEach((path) => {
 
 [
   "buildMissionYamlImportResult",
+  "missionYamlImportAdoption",
+  "packagePlan: undefined",
+  "packageHandoff: undefined",
+  "stage: \"mission\"",
+  "title: \"Mission YAML imported\"",
   "missionDraftFromYaml(currentDraft, yaml)",
   "missionSelectionFromYaml(yaml)",
   "selectedModelId: selectedYamlModel?.id",
@@ -1724,6 +1729,36 @@ if (
   !missionYamlImportFixture.toastDetail.includes("Selected model model-yolov8-lowlight-001, edge edge-thermal-01, runtime temms-jetson-tensorrt from the spec.")
 ) {
   throw new Error("mission YAML import should populate mission fields and selected-context toast detail");
+}
+const missionYamlAdoptionFixture = missionYamlImportModule.missionYamlImportAdoption(
+  missionYamlImportFixture
+);
+if (
+  missionYamlAdoptionFixture.stage !== "mission" ||
+  missionYamlAdoptionFixture.packagePlan !== undefined ||
+  missionYamlAdoptionFixture.packageHandoff !== undefined
+) {
+  throw new Error("mission YAML adoption should return to Mission and clear package planning state");
+}
+if (
+  missionYamlAdoptionFixture.selectedModelId !== modelFixture.id ||
+  missionYamlAdoptionFixture.selectedDeviceId !== "edge-thermal-01" ||
+  missionYamlAdoptionFixture.selectedRuntimeId !== "temms-jetson-tensorrt"
+) {
+  throw new Error("mission YAML adoption should preserve selected model, edge, and runtime hints");
+}
+if (
+  missionYamlAdoptionFixture.draft.slot !== "thermal" ||
+  missionYamlAdoptionFixture.draft.sensor !== "camera.thermal" ||
+  missionYamlAdoptionFixture.draft.switchPolicy !== "condition_and_confidence"
+) {
+  throw new Error("mission YAML adoption should preserve mission sensor and model handling fields");
+}
+if (
+  missionYamlAdoptionFixture.toast.title !== "Mission YAML imported" ||
+  missionYamlAdoptionFixture.toast.detail !== missionYamlImportFixture.toastDetail
+) {
+  throw new Error("mission YAML adoption should expose an operator-facing import toast");
 }
 const missingMissionYamlImportFixture = missionYamlImportModule.buildMissionYamlImportResult({
   currentDraft: missionDraftFixture,

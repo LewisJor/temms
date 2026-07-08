@@ -1,11 +1,11 @@
-import type { Device, RuntimeTarget } from "../types";
+import type { Device, RuntimeTarget, Toast } from "../types";
 import { deviceId, runtimeTargetId } from "./hub-format";
 import {
   missionDraftFromYaml,
   missionSelectionFromYaml,
   type MissionDraft
 } from "./mission-spec";
-import type { ModelRecord } from "./workbench-types";
+import type { HubStage, ModelRecord } from "./workbench-types";
 
 export interface MissionYamlImportResult {
   draft: MissionDraft;
@@ -13,6 +13,36 @@ export interface MissionYamlImportResult {
   selectedModelId?: string;
   selectedRuntimeId?: string;
   toastDetail: string;
+}
+
+export interface MissionYamlImportAdoption {
+  draft: MissionDraft;
+  packageHandoff: undefined;
+  packagePlan: undefined;
+  selectedDeviceId?: string;
+  selectedModelId?: string;
+  selectedRuntimeId?: string;
+  stage: HubStage;
+  toast: Toast;
+}
+
+export function missionYamlImportAdoption(
+  result: MissionYamlImportResult
+): MissionYamlImportAdoption {
+  return {
+    draft: result.draft,
+    packageHandoff: undefined,
+    packagePlan: undefined,
+    selectedDeviceId: result.selectedDeviceId,
+    selectedModelId: result.selectedModelId,
+    selectedRuntimeId: result.selectedRuntimeId,
+    stage: "mission",
+    toast: {
+      tone: "success",
+      title: "Mission YAML imported",
+      detail: result.toastDetail
+    }
+  };
 }
 
 export function buildMissionYamlImportResult({
