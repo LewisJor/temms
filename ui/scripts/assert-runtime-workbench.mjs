@@ -281,6 +281,8 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "buildMissionPackageManifest",
   "buildMissionPackagePlanRequest",
   "buildMissionPackageStageStatus",
+  "missionPackageStageBlocker",
+  "buildMissionPackageStageRequest",
   "missionPackageStageStatus",
   "hasPlannedDeploymentIntent",
   "hasMissionPackageDeploymentIntent",
@@ -1624,26 +1626,27 @@ if (
 ) {
   throw new Error("mission package manifest should omit blank or non-finite numeric controls");
 }
+const stageablePackageStatusFixture = {
+  ...manifestFixture,
+  component_digests: { edge_handoff_sha256: "d".repeat(64) },
+  deployment_intent: {
+    command: { method: "POST", path: "/v1/hub/rollouts/assign" },
+    mission_contract_sha256: "b".repeat(64),
+    requires: {
+      mission_contract_digest: true,
+      runtime_capability_lock_digest: true,
+      runtime_plan_digest: true
+    },
+    runtime_capability_lock_sha256: "c".repeat(64),
+    runtime_plan_sha256: "a".repeat(64),
+    rollout_id: "rollout-model-yolov8-lowlight-001-temms-rpi5-tflite-edge-rpi5"
+  },
+  edge_handoff: { schema_version: "temms-edge-mission-package-handoff/v1" },
+  proof_gate: { status: "passed" }
+};
 const stageablePackageStatus = missionPackageModule.buildMissionPackageStageStatus({
   handoff: undefined,
-  manifest: {
-    ...manifestFixture,
-    component_digests: { edge_handoff_sha256: "d".repeat(64) },
-    deployment_intent: {
-      command: { method: "POST", path: "/v1/hub/rollouts/assign" },
-      mission_contract_sha256: "b".repeat(64),
-      requires: {
-        mission_contract_digest: true,
-        runtime_capability_lock_digest: true,
-        runtime_plan_digest: true
-      },
-      runtime_capability_lock_sha256: "c".repeat(64),
-      runtime_plan_sha256: "a".repeat(64),
-      rollout_id: "rollout-model-yolov8-lowlight-001-temms-rpi5-tflite-edge-rpi5"
-    },
-    edge_handoff: { schema_version: "temms-edge-mission-package-handoff/v1" },
-    proof_gate: { status: "passed" }
-  },
+  manifest: stageablePackageStatusFixture,
   missionReady: true,
   plan: { schema_version: "temms-edge-mission-package/v1" }
 });
@@ -1762,6 +1765,59 @@ if (
   missingCapabilityLockDigestPackageStatus.value !== "capability lock missing"
 ) {
   throw new Error("mission package stage status should block deploy intents without capability lock binding");
+}
+const missingIntentStageBlocker = missionPackageModule.missionPackageStageBlocker({
+  manifest: manifestFixture,
+  stageStatus: {
+    detail: "deploy intent missing",
+    downloaded: false,
+    gateStatus: "",
+    planned: false,
+    stageable: false,
+    tone: "warn",
+    value: "deploy intent missing"
+  }
+});
+if (
+  missingIntentStageBlocker?.title !== "Plan package first" ||
+  missingIntentStageBlocker?.detail !== "Stage rollout uses the mission package deployment intent."
+) {
+  throw new Error("mission package stage blocker should require deployment intent before staging");
+}
+const failedProofStageBlocker = missionPackageModule.missionPackageStageBlocker({
+  manifest: stageablePackageStatusFixture,
+  stageStatus: {
+    detail: "proof gate failed",
+    downloaded: false,
+    gateStatus: "failed",
+    planned: true,
+    stageable: false,
+    tone: "bad",
+    value: "proof gate failed"
+  }
+});
+if (
+  failedProofStageBlocker?.title !== "Proof gate blocks staging" ||
+  !failedProofStageBlocker.detail.includes("resolving runtime readiness blockers")
+) {
+  throw new Error("mission package stage blocker should explain failed proof gates");
+}
+if (
+  missionPackageModule.missionPackageStageBlocker({
+    manifest: stageablePackageStatusFixture,
+    stageStatus: stageablePackageStatus
+  }) !== undefined
+) {
+  throw new Error("mission package stage blocker should be empty when package staging is allowed");
+}
+const stageRequestFixture = missionPackageModule.buildMissionPackageStageRequest(stageablePackageStatusFixture);
+if (
+  stageRequestFixture.actor !== "operator:mission-package-workbench" ||
+  stageRequestFixture.reason !== "mission package deployment handoff" ||
+  stageRequestFixture.rollout_id !== "rollout-model-yolov8-lowlight-001-temms-rpi5-tflite-edge-rpi5" ||
+  stageRequestFixture.mission_package !== stageablePackageStatusFixture
+) {
+  throw new Error("mission package stage request should preserve actor, reason, rollout id, and manifest payload");
 }
 const readyStageOptions = {
   ddilDetail: "ready for replay",

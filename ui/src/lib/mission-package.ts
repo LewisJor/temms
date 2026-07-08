@@ -10,6 +10,13 @@ import type { MissionDraft } from "./mission-spec";
 import { shortProofDigest } from "./proof-hash";
 import type { MissionPackageStageStatus, ModelRecord } from "./workbench-types";
 
+export interface MissionPackageStageRequest {
+  actor?: string;
+  mission_package: JsonObject;
+  reason?: string;
+  rollout_id?: string;
+}
+
 export function buildMissionPackagePlanRequest({
   draft,
   minRuntimeFit = 95,
@@ -318,6 +325,41 @@ export function missionPackageRolloutId(manifest: JsonObject): string {
     .filter(Boolean)
     .join("-");
   return `rollout-${parts || "mission-package"}`;
+}
+
+export function missionPackageStageBlocker({
+  manifest,
+  stageStatus
+}: {
+  manifest: JsonObject;
+  stageStatus: MissionPackageStageStatus;
+}): { detail: string; title: string } | undefined {
+  const deploymentIntent = asRecord(manifest.deployment_intent);
+  if (!deploymentIntent.rollout_id) {
+    return {
+      title: "Plan package first",
+      detail: "Stage rollout uses the mission package deployment intent."
+    };
+  }
+  if (!stageStatus.stageable) {
+    return {
+      title: "Proof gate blocks staging",
+      detail:
+        stageStatus.gateStatus === "failed"
+          ? "Refresh package planning after resolving runtime readiness blockers."
+          : "Run readiness/proof planning until the package proof gate passes."
+    };
+  }
+  return undefined;
+}
+
+export function buildMissionPackageStageRequest(manifest: JsonObject): MissionPackageStageRequest {
+  return {
+    actor: "operator:mission-package-workbench",
+    mission_package: manifest,
+    reason: "mission package deployment handoff",
+    rollout_id: missionPackageRolloutId(manifest)
+  };
 }
 
 function optionalNumber(value: string): number | undefined {

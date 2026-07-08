@@ -61,8 +61,9 @@ import {
 } from "./lib/mission-spec";
 import { buildMissionYamlImportResult } from "./lib/mission-yaml-import";
 import {
+  buildMissionPackageStageRequest,
   buildMissionPackagePlanRequest,
-  missionPackageRolloutId
+  missionPackageStageBlocker
 } from "./lib/mission-package";
 import { buildHubFormAction } from "./lib/hub-form-actions";
 import { useHubStageNavigation } from "./lib/hub-stage-navigation";
@@ -484,25 +485,12 @@ export function App(): JSX.Element {
   }
 
   function stageMissionPackageRollout(): void {
-    const deploymentIntent = asRecord(missionPackageManifest.deployment_intent);
-    if (!deploymentIntent.rollout_id) {
-      setToast({
-        tone: "info",
-        title: "Plan package first",
-        detail: "Stage rollout uses the mission package deployment intent."
-      });
-      navigateHubStage("package");
-      return;
-    }
-    if (!missionPackageStageStatus.stageable) {
-      setToast({
-        tone: "info",
-        title: "Proof gate blocks staging",
-        detail:
-          missionPackageStageStatus.gateStatus === "failed"
-            ? "Refresh package planning after resolving runtime readiness blockers."
-            : "Run readiness/proof planning until the package proof gate passes."
-      });
+    const blocker = missionPackageStageBlocker({
+      manifest: missionPackageManifest,
+      stageStatus: missionPackageStageStatus
+    });
+    if (blocker) {
+      setToast({ tone: "info", ...blocker });
       navigateHubStage("package");
       return;
     }
@@ -511,12 +499,7 @@ export function App(): JSX.Element {
       async () => {
         const stage = await stageMissionPackage(
           token,
-          {
-            actor: "operator:mission-package-workbench",
-            mission_package: missionPackageManifest,
-            reason: "mission package deployment handoff",
-            rollout_id: missionPackageRolloutId(missionPackageManifest)
-          }
+          buildMissionPackageStageRequest(missionPackageManifest)
         );
         navigateHubStage("deploy", { workflowTarget: "rollouts" });
         return stage;
