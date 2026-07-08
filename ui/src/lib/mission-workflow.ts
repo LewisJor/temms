@@ -2,6 +2,7 @@ import type {
   DeploymentReadinessCommand,
   Device,
   Rollout,
+  Toast,
   RuntimeTarget,
   RuntimeValidation
 } from "../types";
@@ -603,6 +604,17 @@ export function readinessCommandExecutionPlan(
     requiresEdgeExecution,
     runTitle: `Run ${action.label}`,
     shouldRefreshAfterRun: !requiresEdgeExecution && !reconcileAfterRun
+  };
+}
+
+export function readinessCommandEdgeExecutionNotice(
+  execution: ReadinessCommandExecutionPlan
+): Toast | undefined {
+  if (!execution.requiresEdgeExecution) return undefined;
+  return {
+    tone: "info",
+    title: execution.edgeInstructionTitle,
+    detail: execution.edgeInstructionDetail
   };
 }
 

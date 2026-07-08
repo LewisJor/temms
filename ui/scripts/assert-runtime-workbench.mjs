@@ -272,6 +272,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "readinessActionFocus",
   "readinessActionSelection",
   "readinessCommandExecutionPlan",
+  "readinessCommandEdgeExecutionNotice",
   "Ready when",
   "Risk",
   "Staging before package planning leaves rollout intent detached from the hashed mission handoff.",
@@ -2457,6 +2458,16 @@ if (
 ) {
   throw new Error("mission workflow readiness command execution should hold edge-required commands for edge execution");
 }
+const edgeExecutionNoticeFixture = missionWorkflowModule.readinessCommandEdgeExecutionNotice(
+  edgeExecutionPlanFixture
+);
+if (
+  edgeExecutionNoticeFixture?.tone !== "info" ||
+  edgeExecutionNoticeFixture?.title !== "Run this on the edge node" ||
+  !edgeExecutionNoticeFixture?.detail.includes("actual runtime")
+) {
+  throw new Error("mission workflow readiness edge execution notice should explain where to run the command");
+}
 const syncExecutionPlanFixture = missionWorkflowModule.readinessCommandExecutionPlan(
   { kind: "sync_pending", label: "Sync pending operations" },
   { method: "POST", path: "/v1/control/sync" }
@@ -2477,7 +2488,8 @@ if (
   normalExecutionPlanFixture.requiresEdgeExecution !== false ||
   normalExecutionPlanFixture.reconcileAfterRun !== false ||
   normalExecutionPlanFixture.shouldRefreshAfterRun !== true ||
-  normalExecutionPlanFixture.edgeInstructionDetail
+  normalExecutionPlanFixture.edgeInstructionDetail ||
+  missionWorkflowModule.readinessCommandEdgeExecutionNotice(normalExecutionPlanFixture) !== undefined
 ) {
   throw new Error("mission workflow readiness command execution should refresh after normal daemon commands");
 }

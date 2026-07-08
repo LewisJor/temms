@@ -73,6 +73,7 @@ import {
   hubStageRunbookFor,
   readinessActionPlan,
   readinessCommand,
+  readinessCommandEdgeExecutionNotice,
   readinessCommandExecutionPlan
 } from "./lib/mission-workflow";
 import { runtimeWorkbenchRowRemediationCommand } from "./lib/runtime-remediation";
@@ -729,12 +730,9 @@ export function App(): JSX.Element {
     const command = action ? readinessCommand(action) : undefined;
     if (!action || !command) return;
     const execution = readinessCommandExecutionPlan(action, command);
-    if (execution.requiresEdgeExecution) {
-      setToast({
-        tone: "info",
-        title: execution.edgeInstructionTitle,
-        detail: execution.edgeInstructionDetail
-      });
+    const edgeExecutionNotice = readinessCommandEdgeExecutionNotice(execution);
+    if (edgeExecutionNotice) {
+      setToast(edgeExecutionNotice);
       return;
     }
     setPendingReadinessAction(undefined);
