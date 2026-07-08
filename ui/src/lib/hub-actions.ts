@@ -1,6 +1,25 @@
-import { loadSnapshot } from "../api";
-import type { HubSnapshot } from "../types";
+import { controlApi, loadSnapshot } from "../api";
+import type { HubSnapshot, JsonObject } from "../types";
 import { asRecord, numberOf, stringOf } from "./json";
+
+export interface SyncPendingOperationsResult {
+  payload: JsonObject;
+  snapshot: HubSnapshot;
+}
+
+export async function syncPendingOperationsWithReconciliation(
+  token: string,
+  options: {
+    loadReconciledSnapshot?: (token: string) => Promise<HubSnapshot>;
+    syncPending?: (token: string) => Promise<JsonObject>;
+  } = {}
+): Promise<SyncPendingOperationsResult> {
+  const syncPending = options.syncPending ?? controlApi.syncPending;
+  const loadReconciledSnapshot = options.loadReconciledSnapshot ?? loadSnapshotAfterReconciliation;
+  const payload = await syncPending(token);
+  const snapshot = await loadReconciledSnapshot(token);
+  return { payload, snapshot };
+}
 
 export async function loadSnapshotAfterReconciliation(token: string): Promise<HubSnapshot> {
   let next = await loadSnapshot(token);

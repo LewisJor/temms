@@ -79,7 +79,10 @@ import {
   readinessCommandExecutionPlan
 } from "./lib/mission-workflow";
 import { runtimeWorkbenchRowRemediationCommand } from "./lib/runtime-remediation";
-import { loadSnapshotAfterReconciliation } from "./lib/hub-actions";
+import {
+  loadSnapshotAfterReconciliation,
+  syncPendingOperationsWithReconciliation
+} from "./lib/hub-actions";
 import {
   buildEdgeProofQuery,
   downloadJson,
@@ -636,11 +639,10 @@ export function App(): JSX.Element {
     void run(
       "Sync pending DDIL operations",
       async () => {
-        const payload = await controlApi.syncPending(token);
-        const nextSnapshot = await loadSnapshotAfterReconciliation(token);
-        setSnapshot(nextSnapshot);
+        const result = await syncPendingOperationsWithReconciliation(token);
+        setSnapshot(result.snapshot);
         setReadinessRefreshVersion((version) => version + 1);
-        return payload;
+        return result.payload;
       },
       false
     );

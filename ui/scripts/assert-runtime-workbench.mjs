@@ -532,6 +532,13 @@ collectTextFiles(docsBuildPath).forEach((path) => {
 ].forEach((needle) => assertContains("Field Ops proof sources", fieldOpsProofSource, needle));
 
 [
+  "syncPendingOperationsWithReconciliation",
+  "controlApi.syncPending",
+  "loadSnapshotAfterReconciliation",
+  "return { payload, snapshot }"
+].forEach((needle) => assertContains("Hub action sources", hubActionsSource, needle));
+
+[
   "formatProofCommand",
   "shellArg"
 ].forEach((needle) => assertContains("Proof command sources", proofCommandSource, needle));
@@ -658,6 +665,45 @@ const bundledFieldOpsProof = await build({
 const fieldOpsProofModule = await import(
   `data:text/javascript;base64,${Buffer.from(bundledFieldOpsProof.outputFiles[0].text).toString("base64")}`
 );
+const bundledHubActions = await build({
+  bundle: true,
+  entryPoints: [hubActionsPath],
+  format: "esm",
+  platform: "node",
+  target: "es2020",
+  write: false
+});
+const hubActionsModule = await import(
+  `data:text/javascript;base64,${Buffer.from(bundledHubActions.outputFiles[0].text).toString("base64")}`
+);
+const ddilSyncCalls = [];
+const reconciledSnapshotFixture = {
+  benchmarks: [],
+  devices: [{ device_id: "edge-rpi5" }],
+  evidenceBundles: [],
+  packages: [],
+  rolloutPlans: [],
+  rollouts: [],
+  runtimeTargets: [],
+  runtimeValidations: []
+};
+const ddilSyncResult = await hubActionsModule.syncPendingOperationsWithReconciliation("token-123", {
+  loadReconciledSnapshot: async (token) => {
+    ddilSyncCalls.push(`load:${token}`);
+    return reconciledSnapshotFixture;
+  },
+  syncPending: async (token) => {
+    ddilSyncCalls.push(`sync:${token}`);
+    return { synced: true, token };
+  }
+});
+if (
+  ddilSyncCalls.join(">") !== "sync:token-123>load:token-123" ||
+  ddilSyncResult.payload.synced !== true ||
+  ddilSyncResult.snapshot !== reconciledSnapshotFixture
+) {
+  throw new Error("hub actions DDIL sync should run sync before loading the reconciled snapshot");
+}
 const activeSlotFixture = [
   { active_model: "model-rgb", slot: "vision" },
   { active_model: "model-thermal", slot: "thermal" }
