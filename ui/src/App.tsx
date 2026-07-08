@@ -104,7 +104,9 @@ import {
   buildDeadLetterBatchRequeueRequest,
   buildDeadLetterRequeueRequest,
   buildEvidenceExportRequest,
-  buildPendingRuntimeRetargetRequest
+  buildPendingRuntimeRetargetRequest,
+  deadLetterRequeueUnavailableNotice,
+  pendingRuntimeRetargetUnavailableNotice
 } from "./lib/field-ops-proof";
 import { buildHubFlowState } from "./lib/hub-flow-state";
 import {
@@ -666,11 +668,7 @@ export function App(): JSX.Element {
   function requeueDeadLetteredOperation(operation: Record<string, unknown>): void {
     const request = buildDeadLetterRequeueRequest(operation);
     if (!request) {
-      setToast({
-        tone: "info",
-        title: "Requeue unavailable",
-        detail: "This quarantined DDIL intent does not include a payload hash."
-      });
+      setToast(deadLetterRequeueUnavailableNotice());
       return;
     }
     void run(
@@ -683,11 +681,7 @@ export function App(): JSX.Element {
   function retargetPendingRuntime(operation: Record<string, unknown>): void {
     const request = buildPendingRuntimeRetargetRequest(operation);
     if (!request) {
-      setToast({
-        tone: "info",
-        title: "Runtime retarget unavailable",
-        detail: "This pending DDIL intent does not include a measured runtime target candidate."
-      });
+      setToast(pendingRuntimeRetargetUnavailableNotice());
       return;
     }
     void run("Retarget pending runtime", () =>

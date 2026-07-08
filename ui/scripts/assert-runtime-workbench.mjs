@@ -521,7 +521,11 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "buildDeadLetterAcknowledgeRequest",
   "buildDeadLetterBatchRequeueRequest",
   "buildEvidenceExportRequest",
-  "buildAirgapExportRequest"
+  "buildAirgapExportRequest",
+  "deadLetterRequeueUnavailableNotice",
+  "pendingRuntimeRetargetUnavailableNotice",
+  "This quarantined DDIL intent does not include a payload hash.",
+  "This pending DDIL intent does not include a measured runtime target candidate."
 ].forEach((needle) => assertContains("Field Ops proof sources", fieldOpsProofSource, needle));
 
 [
@@ -703,6 +707,14 @@ if (
 if (fieldOpsProofModule.buildDeadLetterRequeueRequest({}) !== undefined) {
   throw new Error("field ops single requeue request should be unavailable without a payload hash");
 }
+const requeueUnavailableNotice = fieldOpsProofModule.deadLetterRequeueUnavailableNotice();
+if (
+  requeueUnavailableNotice.tone !== "info" ||
+  requeueUnavailableNotice.title !== "Requeue unavailable" ||
+  !requeueUnavailableNotice.detail.includes("payload hash")
+) {
+  throw new Error("field ops single requeue unavailable notice should explain the missing payload hash");
+}
 const quarantineBatchRequestFixture = fieldOpsProofModule.buildBlockedOperationsQuarantineRequest();
 if (
   quarantineBatchRequestFixture?.actor !== "operator:mission-package-workbench" ||
@@ -763,6 +775,14 @@ if (remediationRetargetRequestFixture?.runtime_target_id !== "temms-jetson-ort-t
 }
 if (fieldOpsProofModule.buildPendingRuntimeRetargetRequest({ payload_sha256: "missing-runtime" }) !== undefined) {
   throw new Error("field ops runtime retarget request should be unavailable without a runtime target candidate");
+}
+const retargetUnavailableNotice = fieldOpsProofModule.pendingRuntimeRetargetUnavailableNotice();
+if (
+  retargetUnavailableNotice.tone !== "info" ||
+  retargetUnavailableNotice.title !== "Runtime retarget unavailable" ||
+  !retargetUnavailableNotice.detail.includes("measured runtime target candidate")
+) {
+  throw new Error("field ops runtime retarget unavailable notice should explain the missing runtime target");
 }
 const timelineFixture = [
   {

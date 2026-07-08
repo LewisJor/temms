@@ -1,4 +1,4 @@
-import type { EvidenceExportMode, EvidenceSummary, JsonObject, MissionReplay } from "../types";
+import type { EvidenceExportMode, EvidenceSummary, JsonObject, MissionReplay, Toast } from "../types";
 import { asRecord, booleanOf, numberOf, stringOf } from "./json";
 import type { GateTone, RuntimeRepairProof } from "./workbench-types";
 
@@ -70,6 +70,14 @@ export function buildDeadLetterRequeueRequest(
   };
 }
 
+export function deadLetterRequeueUnavailableNotice(): Toast {
+  return {
+    tone: "info",
+    title: "Requeue unavailable",
+    detail: "This quarantined DDIL intent does not include a payload hash."
+  };
+}
+
 export function buildBlockedOperationsQuarantineRequest(): Record<string, unknown> {
   return {
     actor: FIELD_OPS_ACTOR,
@@ -123,6 +131,14 @@ export function buildPendingRuntimeRetargetRequest(
     runtime_target_id: runtimeTargetId,
     actor: FIELD_OPS_ACTOR,
     reason: "operator selected measured best runtime target"
+  };
+}
+
+export function pendingRuntimeRetargetUnavailableNotice(): Toast {
+  return {
+    tone: "info",
+    title: "Runtime retarget unavailable",
+    detail: "This pending DDIL intent does not include a measured runtime target candidate."
   };
 }
 
