@@ -497,7 +497,10 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "activeSlotForMission",
   "missionOperationLedgerForSlot",
   "prioritizedEvidenceEvents",
-  "latestRuntimeRepairProofFor"
+  "latestRuntimeRepairProofFor",
+  "buildBlockedOperationsQuarantineRequest",
+  "buildDeadLetterAcknowledgeRequest",
+  "buildDeadLetterBatchRequeueRequest"
 ].forEach((needle) => assertContains("Field Ops proof sources", fieldOpsProofSource, needle));
 
 [
@@ -670,6 +673,28 @@ if (
 }
 if (fieldOpsProofModule.buildDeadLetterRequeueRequest({}) !== undefined) {
   throw new Error("field ops single requeue request should be unavailable without a payload hash");
+}
+const quarantineBatchRequestFixture = fieldOpsProofModule.buildBlockedOperationsQuarantineRequest();
+if (
+  quarantineBatchRequestFixture?.actor !== "operator:mission-package-workbench" ||
+  quarantineBatchRequestFixture?.reason !== "operator quarantined blocked DDIL preflight"
+) {
+  throw new Error("field ops quarantine request should preserve Workbench actor and quarantine reason");
+}
+const acknowledgeBatchRequestFixture = fieldOpsProofModule.buildDeadLetterAcknowledgeRequest();
+if (
+  acknowledgeBatchRequestFixture?.actor !== "operator:mission-package-workbench" ||
+  acknowledgeBatchRequestFixture?.reason !== "operator reviewed quarantined DDIL intents"
+) {
+  throw new Error("field ops acknowledge request should preserve Workbench actor and review reason");
+}
+const batchRequeueRequestFixture = fieldOpsProofModule.buildDeadLetterBatchRequeueRequest();
+if (
+  batchRequeueRequestFixture?.actor !== "operator:mission-package-workbench" ||
+  batchRequeueRequestFixture?.reason !== "operator requeued remediated DDIL intents" ||
+  batchRequeueRequestFixture?.require_ready !== true
+) {
+  throw new Error("field ops batch requeue request should preserve Workbench actor and ready gate");
 }
 const retargetRequestFixture = fieldOpsProofModule.buildPendingRuntimeRetargetRequest({
   payload_sha256: "pending-hash",

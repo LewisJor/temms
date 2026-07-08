@@ -70,6 +70,28 @@ export function buildDeadLetterRequeueRequest(
   };
 }
 
+export function buildBlockedOperationsQuarantineRequest(): Record<string, unknown> {
+  return {
+    actor: FIELD_OPS_ACTOR,
+    reason: "operator quarantined blocked DDIL preflight"
+  };
+}
+
+export function buildDeadLetterAcknowledgeRequest(): Record<string, unknown> {
+  return {
+    actor: FIELD_OPS_ACTOR,
+    reason: "operator reviewed quarantined DDIL intents"
+  };
+}
+
+export function buildDeadLetterBatchRequeueRequest(): Record<string, unknown> {
+  return {
+    actor: FIELD_OPS_ACTOR,
+    reason: "operator requeued remediated DDIL intents",
+    require_ready: true
+  };
+}
+
 export function buildPendingRuntimeRetargetRequest(
   operation: Record<string, unknown>
 ): Record<string, unknown> | undefined {

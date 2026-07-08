@@ -98,6 +98,9 @@ import {
   buildRolloutRollbackRequest
 } from "./lib/deployment-intent";
 import {
+  buildBlockedOperationsQuarantineRequest,
+  buildDeadLetterAcknowledgeRequest,
+  buildDeadLetterBatchRequeueRequest,
   buildDeadLetterRequeueRequest,
   buildPendingRuntimeRetargetRequest
 } from "./lib/field-ops-proof";
@@ -653,14 +656,7 @@ export function App(): JSX.Element {
   function quarantineBlockedOperations(): void {
     void run(
       "Quarantine blocked DDIL operations",
-      () =>
-        controlApi.quarantineBlocked(
-          {
-            actor: "operator:mission-package-workbench",
-            reason: "operator quarantined blocked DDIL preflight"
-          },
-          token
-        ),
+      () => controlApi.quarantineBlocked(buildBlockedOperationsQuarantineRequest(), token),
       true
     );
   }
@@ -668,14 +664,7 @@ export function App(): JSX.Element {
   function acknowledgeDeadLetteredOperations(): void {
     void run(
       "Acknowledge quarantined DDIL operations",
-      () =>
-        controlApi.acknowledgeDeadLetters(
-          {
-            actor: "operator:mission-package-workbench",
-            reason: "operator reviewed quarantined DDIL intents"
-          },
-          token
-        ),
+      () => controlApi.acknowledgeDeadLetters(buildDeadLetterAcknowledgeRequest(), token),
       true
     );
   }
@@ -683,15 +672,7 @@ export function App(): JSX.Element {
   function requeueDeadLetteredOperations(): void {
     void run(
       "Requeue quarantined DDIL operations",
-      () =>
-        controlApi.requeueDeadLetters(
-          {
-            actor: "operator:mission-package-workbench",
-            reason: "operator requeued remediated DDIL intents",
-            require_ready: true
-          },
-          token
-        ),
+      () => controlApi.requeueDeadLetters(buildDeadLetterBatchRequeueRequest(), token),
       true
     );
   }
