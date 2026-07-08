@@ -16,7 +16,7 @@ import {
   runtimeCapabilityLockForProof,
   runtimeFitScoreForProof
 } from "./runtime-fit";
-import { selectionMatchesContext } from "./readiness";
+import { readinessMatchesContext, selectionMatchesContext } from "./readiness";
 import type {
   EdgeProofComponentDigestStatus,
   EdgeProofTraceStatus,
@@ -39,6 +39,18 @@ export function buildEdgeProofQuery(context: ReadinessQuery): EdgeProofQuery {
     require_best_runtime: true,
     require_capability_lock: true
   };
+}
+
+export function edgeProofReadinessForContext(
+  proof: unknown,
+  context: ReadinessQuery
+): DeploymentReadiness | undefined {
+  const record = asRecord(proof);
+  if (record.schema_version !== "temms-edge-runtime-proof/v1") return undefined;
+  if (!selectionMatchesContext(asRecord(record.selection), context)) return undefined;
+  const readiness = asRecord(record.readiness) as DeploymentReadiness;
+  if (!readinessMatchesContext(readiness, context)) return undefined;
+  return readiness;
 }
 
 export function buildEdgeProofWorkflow({

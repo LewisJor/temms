@@ -570,6 +570,15 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "edge_execution_manifest_sha256"
 ].forEach((needle) => assertContains("ui/src/lib/proof-hash.ts", proofHashSource, needle));
 
+[
+  "edgeProofReadinessForContext",
+  "readinessMatchesContext",
+  "selectionMatchesContext",
+  "schema_version !== \"temms-edge-runtime-proof/v1\"",
+  "runtime_decision_trace",
+  "runtime_workbench"
+].forEach((needle) => assertContains("Edge proof workflow sources", edgeProofWorkflowSource, needle));
+
 if (!globalThis.crypto) {
   Object.defineProperty(globalThis, "crypto", { value: webcrypto });
 }
@@ -877,6 +886,53 @@ Object.entries(expectedEdgeProofQuery).forEach(([key, value]) => {
     throw new Error(`edge proof query ${key} mismatch: ${edgeProofQueryFixture[key]}`);
   }
 });
+const matchingEdgeProofReadiness = {
+  gates: [{ gate_id: "runtime-fit", status: "go" }],
+  selection: {
+    device_id: "edge-thermal-01",
+    model_id: "model-thermal-detector-001",
+    package_id: "pkg-thermal-models-20260708",
+    runtime_target_id: "temms-jetson-ort-trt",
+    slot: "thermal"
+  },
+  status: "go"
+};
+const matchingEdgeProofPayload = {
+  readiness: matchingEdgeProofReadiness,
+  schema_version: "temms-edge-runtime-proof/v1",
+  selection: matchingEdgeProofReadiness.selection
+};
+if (
+  edgeProofWorkflowModule.edgeProofReadinessForContext(matchingEdgeProofPayload, edgeProofQueryFixture) !==
+  matchingEdgeProofReadiness
+) {
+  throw new Error("edge proof readiness adoption should retain readiness for matching proof context");
+}
+const staleEdgeProofPayload = {
+  ...matchingEdgeProofPayload,
+  selection: { ...matchingEdgeProofReadiness.selection, slot: "vision" }
+};
+if (edgeProofWorkflowModule.edgeProofReadinessForContext(staleEdgeProofPayload, edgeProofQueryFixture) !== undefined) {
+  throw new Error("edge proof readiness adoption should reject proofs for another mission slot");
+}
+const staleReadinessPayload = {
+  ...matchingEdgeProofPayload,
+  readiness: {
+    ...matchingEdgeProofReadiness,
+    selection: { ...matchingEdgeProofReadiness.selection, runtime_target_id: "temms-rpi5-tflite" }
+  }
+};
+if (edgeProofWorkflowModule.edgeProofReadinessForContext(staleReadinessPayload, edgeProofQueryFixture) !== undefined) {
+  throw new Error("edge proof readiness adoption should reject readiness for another runtime target");
+}
+if (
+  edgeProofWorkflowModule.edgeProofReadinessForContext(
+    { ...matchingEdgeProofPayload, schema_version: "temms-edge-runtime-proof/v0" },
+    edgeProofQueryFixture
+  ) !== undefined
+) {
+  throw new Error("edge proof readiness adoption should reject non-proof payloads");
+}
 const thermalEdgeProofWorkflow = edgeProofWorkflowModule.buildEdgeProofWorkflow({
   device: { device_id: "edge-thermal-01", status: "online" },
   model: {

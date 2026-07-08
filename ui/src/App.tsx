@@ -83,6 +83,7 @@ import {
   buildEdgeProofQuery,
   downloadJson,
   edgeProofComponentDigestStatus,
+  edgeProofReadinessForContext,
   edgeProofTraceStatus,
   verifyEdgeProofComponentDigestStatus
 } from "./lib/edge-proof-workflow";
@@ -102,11 +103,7 @@ import {
 } from "./lib/field-ops-proof";
 import { buildHubFlowState } from "./lib/hub-flow-state";
 import { buildHubMissionContext } from "./lib/hub-mission-context";
-import {
-  hasReadinessContextSelection,
-  readinessMatchesContext,
-  selectionMatchesContext
-} from "./lib/readiness";
+import { hasReadinessContextSelection } from "./lib/readiness";
 import type {
   DeploymentReadiness,
   EdgeRecommendation,
@@ -545,11 +542,8 @@ export function App(): JSX.Element {
   }
 
   function adoptEdgeProofReadiness(proof: unknown): void {
-    const record = asRecord(proof);
-    if (record.schema_version !== "temms-edge-runtime-proof/v1") return;
-    const readiness = asRecord(record.readiness) as DeploymentReadiness;
-    if (!selectionMatchesContext(asRecord(record.selection), readinessContext)) return;
-    if (!readinessMatchesContext(readiness, readinessContext)) return;
+    const readiness = edgeProofReadinessForContext(proof, readinessContext);
+    if (!readiness) return;
     setContextReadiness(readiness);
     setSnapshot((current) => ({ ...current, readiness }));
   }
