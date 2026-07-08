@@ -26,10 +26,8 @@ import type {
   MissionPackageDownloadHandoff
 } from "./api";
 import {
-  Badge,
   Button,
   PreviewPanel,
-  ReadinessCard,
   ToastView
 } from "./components/ui";
 import { EdgeDeployStage } from "./components/edge-deploy-stage";
@@ -54,8 +52,7 @@ import {
   rolloutId,
   runtimeTargetId,
   saveToken,
-  storedToken,
-  toneForPath
+  storedToken
 } from "./lib/hub-format";
 import {
   asRecord,
@@ -87,7 +84,6 @@ import {
   hubStageRunbookFor,
   readinessActionContext,
   readinessCommand,
-  readinessCommandFromValue,
   workflowTargetForReadinessAction,
   workflowTargetLabel
 } from "./lib/mission-workflow";
@@ -104,10 +100,10 @@ import {
   withBenchmarkEvidence
 } from "./lib/runtime-fit";
 import { buildRuntimeStageView } from "./lib/runtime-stage-view";
-import { formatProofCommand } from "./lib/proof-command";
 import { runtimeWorkbenchRowRemediationCommand } from "./lib/runtime-remediation";
 import { loadSnapshotAfterReconciliation } from "./lib/hub-actions";
 import {
+  buildEdgeProofQuery,
   buildEdgeProofWorkflow,
   downloadJson,
   edgeProofComponentDigestStatus,
@@ -162,8 +158,6 @@ const emptySnapshot: HubSnapshot = {
   benchmarks: [],
   evidenceBundles: []
 };
-
-const EDGE_PROOF_MAX_AGE_SECONDS = 900;
 
 export function App(): JSX.Element {
   const [snapshot, setSnapshot] = useState<HubSnapshot>(emptySnapshot);
@@ -741,14 +735,7 @@ export function App(): JSX.Element {
     void run(
       "Generate edge runtime proof",
       async () => {
-        const proof = await loadEdgeRuntimeProof(token, {
-          ...readinessContext,
-          source_action: "edge-runtime-mission",
-          require_go: true,
-          min_runtime_fit: 95,
-          require_best_runtime: true,
-          require_capability_lock: true
-        });
+        const proof = await loadEdgeRuntimeProof(token, buildEdgeProofQuery(readinessContext));
         adoptEdgeProofReadiness(proof);
         setLastEdgeProof(proof);
         setLastEdgeProofHandoff(undefined);
@@ -762,14 +749,7 @@ export function App(): JSX.Element {
     void run(
       "Download edge runtime proof",
       async () => {
-        const artifact = await downloadEdgeRuntimeProof(token, {
-          ...readinessContext,
-          source_action: "edge-runtime-mission",
-          require_go: true,
-          min_runtime_fit: 95,
-          require_best_runtime: true,
-          require_capability_lock: true
-        });
+        const artifact = await downloadEdgeRuntimeProof(token, buildEdgeProofQuery(readinessContext));
         adoptEdgeProofReadiness(artifact.payload);
         setLastEdgeProof(artifact.payload);
         setLastEdgeProofHandoff(artifact.handoff);

@@ -790,6 +790,30 @@ const bundledEdgeProofWorkflow = await build({
 const edgeProofWorkflowModule = await import(
   `data:text/javascript;base64,${Buffer.from(bundledEdgeProofWorkflow.outputFiles[0].text).toString("base64")}`
 );
+const edgeProofQueryFixture = edgeProofWorkflowModule.buildEdgeProofQuery({
+  device_id: "edge-thermal-01",
+  model_id: "model-thermal-detector-001",
+  package_id: "pkg-thermal-models-20260708",
+  runtime_target_id: "temms-jetson-ort-trt",
+  slot: "thermal"
+});
+const expectedEdgeProofQuery = {
+  device_id: "edge-thermal-01",
+  min_runtime_fit: 95,
+  model_id: "model-thermal-detector-001",
+  package_id: "pkg-thermal-models-20260708",
+  require_best_runtime: true,
+  require_capability_lock: true,
+  require_go: true,
+  runtime_target_id: "temms-jetson-ort-trt",
+  slot: "thermal",
+  source_action: "edge-runtime-mission"
+};
+Object.entries(expectedEdgeProofQuery).forEach(([key, value]) => {
+  if (edgeProofQueryFixture[key] !== value) {
+    throw new Error(`edge proof query ${key} mismatch: ${edgeProofQueryFixture[key]}`);
+  }
+});
 const thermalEdgeProofWorkflow = edgeProofWorkflowModule.buildEdgeProofWorkflow({
   device: { device_id: "edge-thermal-01", status: "online" },
   model: {

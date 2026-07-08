@@ -1,4 +1,4 @@
-import type { ReadinessQuery } from "../api";
+import type { EdgeProofQuery, ReadinessQuery } from "../api";
 import type { DeploymentReadiness, Device, JsonObject, RuntimeTarget } from "../types";
 import { currentHubUrl, deviceId, runtimeTargetId } from "./hub-format";
 import { asRecord, numberOf, stringOf } from "./json";
@@ -28,6 +28,18 @@ import type {
 } from "./workbench-types";
 
 const EDGE_PROOF_MAX_AGE_SECONDS = 900;
+const EDGE_PROOF_MIN_RUNTIME_FIT = 95;
+
+export function buildEdgeProofQuery(context: ReadinessQuery): EdgeProofQuery {
+  return {
+    ...context,
+    source_action: "edge-runtime-mission",
+    require_go: true,
+    min_runtime_fit: EDGE_PROOF_MIN_RUNTIME_FIT,
+    require_best_runtime: true,
+    require_capability_lock: true
+  };
+}
 
 export function buildEdgeProofWorkflow({
   device,
