@@ -616,6 +616,76 @@ if (defaultSlotRuntimeStageView.remediationContext.slot !== "vision") {
   throw new Error("runtime stage remediation context should default blank mission slots to vision");
 }
 
+const bundledEdgeProofWorkflow = await build({
+  bundle: true,
+  entryPoints: [edgeProofWorkflowPath],
+  format: "esm",
+  platform: "node",
+  target: "es2020",
+  write: false
+});
+const edgeProofWorkflowModule = await import(
+  `data:text/javascript;base64,${Buffer.from(bundledEdgeProofWorkflow.outputFiles[0].text).toString("base64")}`
+);
+const thermalEdgeProofWorkflow = edgeProofWorkflowModule.buildEdgeProofWorkflow({
+  device: { device_id: "edge-thermal-01", status: "online" },
+  model: {
+    format: "onnx",
+    id: "model-thermal-detector-001",
+    packageId: "pkg-thermal-models-20260708"
+  },
+  readiness: {
+    runtime_fit: { score: 98 },
+    runtime_capability_lock: { status: "locked" }
+  },
+  readinessVerdict: {
+    label: "go",
+    nextAction: "Stage thermal mission package",
+    tone: "good"
+  },
+  runtime: { runtime_target_id: "temms-jetson-ort-trt" },
+  runtimeFitDisplay: {
+    detail: "thermal runtime fit",
+    label: "98/100",
+    tileDetail: "thermal fit",
+    tone: "good"
+  },
+  slot: "thermal"
+});
+if (!thermalEdgeProofWorkflow.generateCommand.includes("--slot thermal")) {
+  throw new Error("edge proof generate command should use the selected mission slot");
+}
+if (!thermalEdgeProofWorkflow.verifyCommand.includes("--slot thermal")) {
+  throw new Error("edge proof verify command should use the selected mission slot");
+}
+if (!thermalEdgeProofWorkflow.verifyJsonCommand.includes("--slot thermal")) {
+  throw new Error("edge proof JSON verify command should use the selected mission slot");
+}
+if (!thermalEdgeProofWorkflow.proofPath.includes("thermal")) {
+  throw new Error("edge proof path should include the selected mission slot to avoid artifact collisions");
+}
+const defaultSlotEdgeProofWorkflow = edgeProofWorkflowModule.buildEdgeProofWorkflow({
+  device: undefined,
+  model: undefined,
+  readiness: undefined,
+  readinessVerdict: {
+    label: "attention",
+    nextAction: "Select mission path",
+    tone: "warn"
+  },
+  runtime: undefined,
+  runtimeFitDisplay: {
+    detail: "runtime pending",
+    label: "pending",
+    tileDetail: "pending",
+    tone: "warn"
+  },
+  slot: ""
+});
+if (!defaultSlotEdgeProofWorkflow.generateCommand.includes("--slot vision")) {
+  throw new Error("edge proof command should default blank mission slots to vision");
+}
+
 const bundledMissionWorkflow = await build({
   bundle: true,
   entryPoints: [missionWorkflowPath],

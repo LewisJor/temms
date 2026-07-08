@@ -35,7 +35,8 @@ export function buildEdgeProofWorkflow({
   readiness,
   readinessVerdict,
   runtime,
-  runtimeFitDisplay
+  runtimeFitDisplay,
+  slot
 }: {
   device: Device | undefined;
   model: ModelRecord | undefined;
@@ -43,9 +44,11 @@ export function buildEdgeProofWorkflow({
   readinessVerdict: ReadinessVerdict;
   runtime: RuntimeTarget | undefined;
   runtimeFitDisplay: RuntimeFitDisplay;
+  slot: string;
 }): EdgeProofWorkflow {
   const runtimeId = runtime ? runtimeTargetId(runtime) : "";
   const edgeId = device ? deviceId(device) : "";
+  const proofSlot = slot || "vision";
   const missing = [
     model ? "" : "model",
     runtimeId ? "" : "runtime target",
@@ -55,7 +58,7 @@ export function buildEdgeProofWorkflow({
   const runtimeFitLabel =
     runtimeFitScore !== undefined ? `runtime fit ${runtimeFitScore}/100` : runtimeFitDisplay.label;
   const gatePolicy = "go + best runtime + capability lock + fit >= 95 + proof <= 15m + path bound";
-  const proofPath = `/tmp/${proofFileName(model?.id, runtimeId, edgeId)}`;
+  const proofPath = `/tmp/${proofFileName(model?.id, runtimeId, edgeId, proofSlot)}`;
   const hubUrl = currentHubUrl();
   const capabilityLock = runtimeCapabilityLockForProof(readiness);
 
@@ -95,7 +98,7 @@ export function buildEdgeProofWorkflow({
     "--runtime-target-id",
     runtimeId || "<runtime-target-id>",
     "--slot",
-    "vision",
+    proofSlot,
     "--require-go",
     "--require-best-runtime",
     "--require-capability-lock",
@@ -127,7 +130,7 @@ export function buildEdgeProofWorkflow({
     "--runtime-target-id",
     runtimeId || "<runtime-target-id>",
     "--slot",
-    "vision",
+    proofSlot,
     "--require-proof-signature"
   ]);
   const verifyJsonCommand = formatProofCommand([
@@ -153,7 +156,7 @@ export function buildEdgeProofWorkflow({
     "--runtime-target-id",
     runtimeId || "<runtime-target-id>",
     "--slot",
-    "vision",
+    proofSlot,
     "--require-proof-signature",
     "--json"
   ]);
@@ -551,8 +554,13 @@ function edgeProofTracePathDetail(selection: JsonObject): string {
   return `Latest proof is for ${model} -> ${runtime} -> ${device}.`;
 }
 
-function proofFileName(modelId: string | undefined, runtimeId: string, deviceIdValue: string): string {
-  const slug = [modelId, runtimeId, deviceIdValue]
+function proofFileName(
+  modelId: string | undefined,
+  runtimeId: string,
+  deviceIdValue: string,
+  slot: string
+): string {
+  const slug = [modelId, runtimeId, deviceIdValue, slot]
     .filter((part): part is string => Boolean(part))
     .map((part) => part.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""))
     .filter(Boolean)

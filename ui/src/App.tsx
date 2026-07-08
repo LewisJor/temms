@@ -433,7 +433,8 @@ export function App(): JSX.Element {
     readiness: scopedReadiness,
     readinessVerdict,
     runtime: selectedRuntime,
-    runtimeFitDisplay
+    runtimeFitDisplay,
+    slot: readinessContext.slot || missionDraft.slot
   });
   const draftMissionPackageManifest = buildMissionPackageManifest({
     device: selectedDevice,
