@@ -42,6 +42,7 @@ const proofCommandPath = join(uiRoot, "src", "lib", "proof-command.ts");
 const runtimeRemediationPath = join(uiRoot, "src", "lib", "runtime-remediation.ts");
 const runtimeStageViewPath = join(uiRoot, "src", "lib", "runtime-stage-view.ts");
 const hubStageNavigationPath = join(uiRoot, "src", "lib", "hub-stage-navigation.ts");
+const missionYamlImportPath = join(uiRoot, "src", "lib", "mission-yaml-import.ts");
 const missionPackagePath = join(uiRoot, "src", "lib", "mission-package.ts");
 const missionWorkflowPath = join(uiRoot, "src", "lib", "mission-workflow.ts");
 const missionSpecPath = join(uiRoot, "src", "lib", "mission-spec.ts");
@@ -136,9 +137,10 @@ const proofCommandSource = readFileSync(proofCommandPath, "utf8");
 const runtimeRemediationSource = readFileSync(runtimeRemediationPath, "utf8");
 const runtimeStageViewSource = readFileSync(runtimeStageViewPath, "utf8");
 const hubStageNavigationSource = readFileSync(hubStageNavigationPath, "utf8");
+const missionYamlImportSource = readFileSync(missionYamlImportPath, "utf8");
 const missionPackageSource = readFileSync(missionPackagePath, "utf8");
 const missionWorkflowSource = readFileSync(missionWorkflowPath, "utf8");
-const workbenchSource = `${source}\n${capabilityDossierSource}\n${edgeDeployStageSource}\n${deployListsSource}\n${edgeProofSource}\n${fieldOpsSource}\n${fieldOpsStageSource}\n${packageHandoffSource}\n${packageStageSource}\n${missionStagesSource}\n${modelPlanSource}\n${readinessPanelsSource}\n${runtimeDecisionTraceSource}\n${runtimeExecutionContractSource}\n${runtimeContractRowsSource}\n${runtimeMissionSource}\n${runtimeOperatorProofSource}\n${runtimeOptimizerSource}\n${runtimeWorkbenchSource}\n${workbenchFlowSource}\n${edgeProofWorkflowSource}\n${deploymentIntentSource}\n${edgeRuntimeMissionSource}\n${fieldOpsProofSource}\n${hubActionsSource}\n${hubFormActionsSource}\n${readinessSource}\n${runtimeDecisionSource}\n${proofCommandSource}\n${runtimeRemediationSource}\n${runtimeStageViewSource}\n${hubStageNavigationSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
+const workbenchSource = `${source}\n${capabilityDossierSource}\n${edgeDeployStageSource}\n${deployListsSource}\n${edgeProofSource}\n${fieldOpsSource}\n${fieldOpsStageSource}\n${packageHandoffSource}\n${packageStageSource}\n${missionStagesSource}\n${modelPlanSource}\n${readinessPanelsSource}\n${runtimeDecisionTraceSource}\n${runtimeExecutionContractSource}\n${runtimeContractRowsSource}\n${runtimeMissionSource}\n${runtimeOperatorProofSource}\n${runtimeOptimizerSource}\n${runtimeWorkbenchSource}\n${workbenchFlowSource}\n${edgeProofWorkflowSource}\n${deploymentIntentSource}\n${edgeRuntimeMissionSource}\n${fieldOpsProofSource}\n${hubActionsSource}\n${hubFormActionsSource}\n${readinessSource}\n${runtimeDecisionSource}\n${proofCommandSource}\n${runtimeRemediationSource}\n${runtimeStageViewSource}\n${hubStageNavigationSource}\n${missionYamlImportSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
 const apiSource = readFileSync(apiPath, "utf8");
 const missionSpecSource = readFileSync(missionSpecPath, "utf8");
 const proofHashSource = readFileSync(proofHashPath, "utf8");
@@ -493,6 +495,18 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "collectMissionYamlBlock",
   "normalizeMissionYamlKey"
 ].forEach((needle) => assertContains("ui/src/lib/mission-spec.ts", missionSpecSource, needle));
+
+[
+  "buildMissionYamlImportResult",
+  "missionDraftFromYaml(currentDraft, yaml)",
+  "missionSelectionFromYaml(yaml)",
+  "selectedModelId: selectedYamlModel?.id",
+  "selectedDeviceId: selectedYamlDevice ? deviceId(selectedYamlDevice) : undefined",
+  "selectedRuntimeId: selectedYamlRuntime ? runtimeTargetId(selectedYamlRuntime) : undefined",
+  "Selected ${appliedSelection.join(\", \")} from the spec.",
+  "Unmatched hints: ${missingSelection.join(\", \")}."
+].forEach((needle) => assertContains("Mission YAML import sources", missionYamlImportSource, needle));
+
 [
   "Edge Runtime Control",
   "operator:edge-runtime-control",
@@ -888,6 +902,68 @@ const modelFixture = {
   name: "YOLOv8 lowlight",
   packageId: "pkg-vision-models-20240115"
 };
+const bundledMissionYamlImport = await build({
+  bundle: true,
+  entryPoints: [missionYamlImportPath],
+  format: "esm",
+  platform: "node",
+  target: "es2020",
+  write: false
+});
+const missionYamlImportModule = await import(
+  `data:text/javascript;base64,${Buffer.from(bundledMissionYamlImport.outputFiles[0].text).toString("base64")}`
+);
+const missionYamlImportFixture = missionYamlImportModule.buildMissionYamlImportResult({
+  currentDraft: missionDraftFixture,
+  devices: [{ device_id: "edge-thermal-01" }],
+  fileName: "thermal-mission.yaml",
+  models: [modelFixture],
+  runtimeTargets: [{ runtime_target_id: "temms-jetson-tensorrt" }],
+  yaml: `
+mission:
+  goal: Track thermal vehicles while disconnected.
+  sensor: camera.thermal
+  slot: thermal
+selection:
+  package_id: pkg-vision-models-20240115
+  device_id: edge-thermal-01
+  runtime_target_id: temms-jetson-tensorrt
+model_handling:
+  switch_policy: condition_and_confidence
+ddil:
+  mode: queue_signed_intents
+`
+});
+if (
+  missionYamlImportFixture.selectedModelId !== modelFixture.id ||
+  missionYamlImportFixture.selectedDeviceId !== "edge-thermal-01" ||
+  missionYamlImportFixture.selectedRuntimeId !== "temms-jetson-tensorrt"
+) {
+  throw new Error("mission YAML import should apply model, edge, and runtime selections from YAML hints");
+}
+if (
+  missionYamlImportFixture.draft.slot !== "thermal" ||
+  missionYamlImportFixture.draft.sensor !== "camera.thermal" ||
+  !missionYamlImportFixture.toastDetail.includes("Selected model model-yolov8-lowlight-001, edge edge-thermal-01, runtime temms-jetson-tensorrt from the spec.")
+) {
+  throw new Error("mission YAML import should populate mission fields and selected-context toast detail");
+}
+const missingMissionYamlImportFixture = missionYamlImportModule.buildMissionYamlImportResult({
+  currentDraft: missionDraftFixture,
+  devices: [],
+  fileName: "missing-selection.yaml",
+  models: [modelFixture],
+  runtimeTargets: [],
+  yaml: `
+selection:
+  model_id: missing-model
+  device_id: missing-edge
+  runtime_target_id: missing-runtime
+`
+});
+if (!missingMissionYamlImportFixture.toastDetail.includes("Unmatched hints: model missing-model, edge missing-edge, runtime missing-runtime.")) {
+  throw new Error("mission YAML import should report unmatched model, edge, and runtime hints");
+}
 const scopedRollouts = deploymentIntentModule.missionRolloutsForSelection({
   missionSlot: "thermal",
   model: modelFixture,

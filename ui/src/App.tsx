@@ -66,10 +66,9 @@ import {
 } from "./lib/json";
 import {
   defaultMissionDraft,
-  missionDraftFromYaml,
-  missionSelectionFromYaml,
   type MissionDraft
 } from "./lib/mission-spec";
+import { buildMissionYamlImportResult } from "./lib/mission-yaml-import";
 import {
   buildMissionPackagePlanRequest,
   buildMissionPackageManifest,
@@ -607,53 +606,24 @@ export function App(): JSX.Element {
   }
 
   function importMissionYaml(yaml: string, fileName: string): void {
-    const selection = missionSelectionFromYaml(yaml);
-    const selectedYamlModel =
-      (selection.modelId ? models.find((model) => model.id === selection.modelId) : undefined) ??
-      (selection.packageId ? models.find((model) => model.packageId === selection.packageId) : undefined);
-    const selectedYamlDevice = selection.deviceId
-      ? snapshot.devices.find((device) => deviceId(device) === selection.deviceId)
-      : undefined;
-    const selectedYamlRuntime = selection.runtimeTargetId
-      ? snapshot.runtimeTargets.find((target) => runtimeTargetId(target) === selection.runtimeTargetId)
-      : undefined;
-    const appliedSelection: string[] = [];
-    const missingSelection: string[] = [];
-
-    if (selectedYamlModel) {
-      setSelectedModelId(selectedYamlModel.id);
-      appliedSelection.push(`model ${selectedYamlModel.id}`);
-    } else {
-      if (selection.modelId) missingSelection.push(`model ${selection.modelId}`);
-      if (!selection.modelId && selection.packageId) missingSelection.push(`package ${selection.packageId}`);
-    }
-    if (selectedYamlDevice) {
-      setSelectedDeviceId(deviceId(selectedYamlDevice));
-      appliedSelection.push(`edge ${deviceId(selectedYamlDevice)}`);
-    } else if (selection.deviceId) {
-      missingSelection.push(`edge ${selection.deviceId}`);
-    }
-    if (selectedYamlRuntime) {
-      setSelectedRuntimeId(runtimeTargetId(selectedYamlRuntime));
-      appliedSelection.push(`runtime ${runtimeTargetId(selectedYamlRuntime)}`);
-    } else if (selection.runtimeTargetId) {
-      missingSelection.push(`runtime ${selection.runtimeTargetId}`);
-    }
-
-    setMissionDraft((current) => missionDraftFromYaml(current, yaml));
+    const result = buildMissionYamlImportResult({
+      currentDraft: missionDraft,
+      devices: snapshot.devices,
+      fileName,
+      models,
+      runtimeTargets: snapshot.runtimeTargets,
+      yaml
+    });
+    if (result.selectedModelId) setSelectedModelId(result.selectedModelId);
+    if (result.selectedDeviceId) setSelectedDeviceId(result.selectedDeviceId);
+    if (result.selectedRuntimeId) setSelectedRuntimeId(result.selectedRuntimeId);
+    setMissionDraft(result.draft);
     setMissionPackagePlan(undefined);
     setLastMissionPackageHandoff(undefined);
-    const detailParts = [`${fileName} populated mission, SLO, handling, and DDIL fields.`];
-    if (appliedSelection.length) {
-      detailParts.push(`Selected ${appliedSelection.join(", ")} from the spec.`);
-    }
-    if (missingSelection.length) {
-      detailParts.push(`Unmatched hints: ${missingSelection.join(", ")}.`);
-    }
     setToast({
       tone: "success",
       title: "Mission YAML imported",
-      detail: detailParts.join(" ")
+      detail: result.toastDetail
     });
     navigateHubStage("mission");
   }
