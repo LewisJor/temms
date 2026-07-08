@@ -2,6 +2,16 @@ import type { EvidenceSummary, MissionReplay } from "../types";
 import { asRecord, booleanOf, numberOf, stringOf } from "./json";
 import type { GateTone, RuntimeRepairProof } from "./workbench-types";
 
+export function activeSlotForMission(
+  activeSlots: unknown,
+  missionSlot: string
+): Record<string, unknown> | undefined {
+  if (!Array.isArray(activeSlots)) return undefined;
+  const slots = activeSlots.map(asRecord);
+  const slotName = missionSlot || "vision";
+  return slots.find((slot) => stringOf(slot.slot, "") === slotName) ?? slots[0];
+}
+
 export function prioritizedEvidenceEvents(
   timeline: unknown,
   activeModelId: string

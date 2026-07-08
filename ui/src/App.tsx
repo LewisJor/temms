@@ -118,6 +118,7 @@ import {
 import { buildDeploymentIntentRequest } from "./lib/deployment-intent";
 import { buildEdgeRuntimeMission } from "./lib/edge-runtime-mission";
 import {
+  activeSlotForMission,
   latestRuntimeRepairProofFor,
   prioritizedEvidenceEvents
 } from "./lib/field-ops-proof";
@@ -224,10 +225,7 @@ export function App(): JSX.Element {
   const selectedRuntime =
     snapshot.runtimeTargets.find((target) => runtimeTargetId(target) === selectedRuntimeId) ??
     runtimeForModel(snapshot.runtimeTargets, selectedModel);
-  const activeSlots = Array.isArray(snapshot.evidenceSummary?.active_slots)
-    ? snapshot.evidenceSummary.active_slots.map(asRecord)
-    : [];
-  const activeSlot = activeSlots[0];
+  const activeSlot = activeSlotForMission(snapshot.evidenceSummary?.active_slots, missionDraft.slot);
   const missionRollouts = selectedModel
     ? snapshot.rollouts.filter(
         (rollout) =>

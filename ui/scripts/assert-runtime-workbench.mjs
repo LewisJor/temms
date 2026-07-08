@@ -227,6 +227,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   'aria-label={`${index + 1}. ${stage.label}. ${stage.value}. ${stage.detail}`}',
   "scrollIntoView",
   "showProductStage",
+  "activeSlotForMission(snapshot.evidenceSummary?.active_slots, missionDraft.slot)",
   "MissionWorkflowCockpit",
   "buildHubStages",
   "mission-workflow-cockpit",
@@ -431,6 +432,12 @@ collectTextFiles(docsBuildPath).forEach((path) => {
 ].forEach((needle) => assertNotContains("Edge deploy stage sources", edgeDeployStageSource, needle));
 
 [
+  "activeSlotForMission",
+  "prioritizedEvidenceEvents",
+  "latestRuntimeRepairProofFor"
+].forEach((needle) => assertContains("Field Ops proof sources", fieldOpsProofSource, needle));
+
+[
   "formatProofCommand",
   "shellArg"
 ].forEach((needle) => assertContains("Proof command sources", proofCommandSource, needle));
@@ -508,6 +515,40 @@ const expectedDigest = "4cc7d0dd44ca8f915530d9d1b0312f1a01ce16361075d3b405f666f7
 const digest = await proofHashModule.sha256Hex(canonicalString);
 if (digest !== expectedDigest) {
   throw new Error(`proof-hash SHA256 mismatch: ${digest}`);
+}
+
+const bundledFieldOpsProof = await build({
+  bundle: true,
+  entryPoints: [fieldOpsProofPath],
+  format: "esm",
+  platform: "node",
+  target: "es2020",
+  write: false
+});
+const fieldOpsProofModule = await import(
+  `data:text/javascript;base64,${Buffer.from(bundledFieldOpsProof.outputFiles[0].text).toString("base64")}`
+);
+const activeSlotFixture = [
+  { active_model: "model-rgb", slot: "vision" },
+  { active_model: "model-thermal", slot: "thermal" }
+];
+const thermalActiveSlot = fieldOpsProofModule.activeSlotForMission(activeSlotFixture, "thermal");
+if (thermalActiveSlot?.active_model !== "model-thermal") {
+  throw new Error("field ops active slot should follow the selected mission slot");
+}
+const defaultActiveSlot = fieldOpsProofModule.activeSlotForMission(activeSlotFixture, "");
+if (defaultActiveSlot?.active_model !== "model-rgb") {
+  throw new Error("field ops active slot should default blank mission slots to vision");
+}
+const fallbackActiveSlot = fieldOpsProofModule.activeSlotForMission(
+  [{ active_model: "model-lidar", slot: "lidar" }],
+  "thermal"
+);
+if (fallbackActiveSlot?.active_model !== "model-lidar") {
+  throw new Error("field ops active slot should fall back to first evidence slot when the mission slot is absent");
+}
+if (fieldOpsProofModule.activeSlotForMission(undefined, "thermal") !== undefined) {
+  throw new Error("field ops active slot should be empty when evidence slots are missing");
 }
 
 const bundledReadiness = await build({
