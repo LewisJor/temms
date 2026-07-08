@@ -267,6 +267,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "StageRunbookFact",
   "hubStageRunbookFor",
   "buildMissionWorkflowSignals",
+  "buildRuntimeFitTileSummary",
   "readinessActionFocus",
   "readinessActionSelection",
   "readinessCommandExecutionPlan",
@@ -1986,6 +1987,26 @@ if (signalFixture.find((signal) => signal.label === "Runtime")?.detail !== "edge
 }
 if (signalFixture.find((signal) => signal.label === "Handling")?.detail !== "fallback model-fallback / queue signed intents") {
   throw new Error("mission workflow handling signal should bind fallback model and DDIL policy");
+}
+const selectedRuntimeFitTileFixture = missionWorkflowModule.buildRuntimeFitTileSummary({
+  compatibleTargets: 2,
+  runtimeFitDisplay: readyStageOptions.runtimeFitDisplay,
+  runtimeTargetCount: 5,
+  selectedModel: modelFixture,
+  selectedRuntime: { runtime_target_id: "temms-rpi5-tflite" }
+});
+if (selectedRuntimeFitTileFixture.value !== "98 optimal" || selectedRuntimeFitTileFixture.detail !== "temms-rpi5-tflite; 2/5 eligible") {
+  throw new Error("mission workflow runtime fit tile should summarize selected model runtime fit");
+}
+const unselectedRuntimeFitTileFixture = missionWorkflowModule.buildRuntimeFitTileSummary({
+  compatibleTargets: 3,
+  runtimeFitDisplay: readyStageOptions.runtimeFitDisplay,
+  runtimeTargetCount: 5,
+  selectedModel: undefined,
+  selectedRuntime: undefined
+});
+if (unselectedRuntimeFitTileFixture.value !== 3 || unselectedRuntimeFitTileFixture.detail !== "runtime targets available") {
+  throw new Error("mission workflow runtime fit tile should summarize available targets before model selection");
 }
 const readinessContextSelectionFixture = missionWorkflowModule.readinessActionSelection({
   kind: "select_context",

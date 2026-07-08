@@ -73,6 +73,11 @@ export interface BuildMissionWorkflowSignalsOptions {
   selectedRuntime: RuntimeTarget | undefined;
 }
 
+export interface RuntimeFitTileSummary {
+  detail: string;
+  value: number | string;
+}
+
 export interface ReadinessActionSelection {
   deviceId: string;
   modelId: string;
@@ -137,6 +142,31 @@ export function buildMissionWorkflowSignals({
       tone: missionPackageStageStatus.tone
     }
   ];
+}
+
+export function buildRuntimeFitTileSummary({
+  compatibleTargets,
+  runtimeFitDisplay,
+  runtimeTargetCount,
+  selectedModel,
+  selectedRuntime
+}: {
+  compatibleTargets: number;
+  runtimeFitDisplay: RuntimeFitDisplay;
+  runtimeTargetCount: number;
+  selectedModel: ModelRecord | undefined;
+  selectedRuntime: RuntimeTarget | undefined;
+}): RuntimeFitTileSummary {
+  if (!selectedModel) {
+    return {
+      detail: "runtime targets available",
+      value: compatibleTargets
+    };
+  }
+  return {
+    detail: `${selectedRuntime ? runtimeTargetId(selectedRuntime) : "runtime target"}; ${compatibleTargets}/${runtimeTargetCount} eligible`,
+    value: runtimeFitDisplay.label
+  };
 }
 
 export function buildHubStages({

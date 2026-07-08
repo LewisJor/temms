@@ -65,6 +65,7 @@ import { buildHubFormAction } from "./lib/hub-form-actions";
 import { useHubStageNavigation } from "./lib/hub-stage-navigation";
 import {
   buildMissionWorkflowSignals,
+  buildRuntimeFitTileSummary,
   hubStageRunbookFor,
   readinessActionFocus,
   readinessActionSelection,
@@ -279,10 +280,13 @@ export function App(): JSX.Element {
     scopedReadiness,
     showProductStage
   } = flowState;
-  const targetFitValue = selectedModel ? runtimeFitDisplay.label : compatibleTargets;
-  const targetFitDetail = selectedModel
-    ? `${selectedRuntime ? runtimeTargetId(selectedRuntime) : "runtime target"}; ${compatibleTargets}/${snapshot.runtimeTargets.length} eligible`
-    : "runtime targets available";
+  const runtimeFitTile = buildRuntimeFitTileSummary({
+    compatibleTargets,
+    runtimeFitDisplay,
+    runtimeTargetCount: snapshot.runtimeTargets.length,
+    selectedModel,
+    selectedRuntime
+  });
   const edgeProofTrace = useMemo(
     () => edgeProofTraceStatus(lastEdgeProof, readinessContext),
     [lastEdgeProof, readinessKey]
@@ -844,8 +848,8 @@ export function App(): JSX.Element {
             />
             <StatusTile
               label="Runtime Fit"
-              value={targetFitValue}
-              detail={targetFitDetail}
+              value={runtimeFitTile.value}
+              detail={runtimeFitTile.detail}
               icon={<Cpu size={18} />}
             />
             <StatusTile
