@@ -82,6 +82,8 @@ import {
   edgeProofComponentDigestStatus,
   edgeProofComponentDigestVerificationFailureStatus,
   edgeProofComponentDigestVerificationPendingStatus,
+  edgeProofDownloadAdoption,
+  edgeProofGeneratedAdoption,
   edgeProofReadinessAdoptionForContext,
   edgeProofTraceStatus,
   verifyEdgeProofComponentDigestStatus
@@ -513,10 +515,11 @@ export function App(): JSX.Element {
       "Generate edge runtime proof",
       async () => {
         const proof = await loadEdgeRuntimeProof(token, buildEdgeProofQuery(readinessContext));
-        adoptEdgeProofReadiness(proof);
-        setLastEdgeProof(proof);
-        setLastEdgeProofHandoff(undefined);
-        return proof;
+        const adoption = edgeProofGeneratedAdoption(proof);
+        adoptEdgeProofReadiness(adoption.proof);
+        setLastEdgeProof(adoption.proof);
+        setLastEdgeProofHandoff(adoption.handoff);
+        return adoption.preview;
       },
       false
     );
@@ -527,11 +530,12 @@ export function App(): JSX.Element {
       "Download edge runtime proof",
       async () => {
         const artifact = await downloadEdgeRuntimeProof(token, buildEdgeProofQuery(readinessContext));
-        adoptEdgeProofReadiness(artifact.payload);
-        setLastEdgeProof(artifact.payload);
-        setLastEdgeProofHandoff(artifact.handoff);
-        downloadJson(artifact.fileName, artifact.payload);
-        return artifact.payload;
+        const adoption = edgeProofDownloadAdoption(artifact);
+        adoptEdgeProofReadiness(adoption.proof);
+        setLastEdgeProof(adoption.proof);
+        setLastEdgeProofHandoff(adoption.handoff);
+        if (adoption.fileName) downloadJson(adoption.fileName, adoption.proof);
+        return adoption.preview;
       },
       false
     );

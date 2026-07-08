@@ -606,6 +606,11 @@ collectTextFiles(docsBuildPath).forEach((path) => {
 [
   "edgeProofReadinessForContext",
   "edgeProofReadinessAdoptionForContext",
+  "EdgeProofArtifactAdoption",
+  "edgeProofGeneratedAdoption",
+  "edgeProofDownloadAdoption",
+  "handoff: undefined",
+  "fileName: artifact.fileName",
   "edgeProofComponentDigestVerificationPendingStatus",
   "edgeProofComponentDigestVerificationFailureStatus",
   "readinessMatchesContext",
@@ -993,6 +998,39 @@ const matchingEdgeProofPayload = {
   schema_version: "temms-edge-runtime-proof/v1",
   selection: matchingEdgeProofReadiness.selection
 };
+const generatedProofAdoption = edgeProofWorkflowModule.edgeProofGeneratedAdoption(
+  matchingEdgeProofPayload
+);
+if (
+  generatedProofAdoption.proof !== matchingEdgeProofPayload ||
+  generatedProofAdoption.preview !== matchingEdgeProofPayload ||
+  generatedProofAdoption.handoff !== undefined
+) {
+  throw new Error("edge proof generated adoption should retain proof payload and clear download handoff");
+}
+const edgeProofDownloadHandoffFixture = {
+  attestation: "signed",
+  edgeExecutionManifestSha256: "c".repeat(64),
+  fileName: "thermal-proof.json",
+  gateStatus: "passed",
+  keyFingerprint: "demo-key",
+  payloadSha256: "d".repeat(64),
+  runtimeDecisionTraceSha256: "e".repeat(64),
+  runtimeWorkbenchSha256: "f".repeat(64)
+};
+const downloadedProofAdoption = edgeProofWorkflowModule.edgeProofDownloadAdoption({
+  fileName: "thermal-proof.json",
+  handoff: edgeProofDownloadHandoffFixture,
+  payload: matchingEdgeProofPayload
+});
+if (
+  downloadedProofAdoption.fileName !== "thermal-proof.json" ||
+  downloadedProofAdoption.handoff !== edgeProofDownloadHandoffFixture ||
+  downloadedProofAdoption.proof !== matchingEdgeProofPayload ||
+  downloadedProofAdoption.preview !== matchingEdgeProofPayload
+) {
+  throw new Error("edge proof download adoption should retain proof payload, file name, and download handoff");
+}
 if (
   edgeProofWorkflowModule.edgeProofReadinessForContext(matchingEdgeProofPayload, edgeProofQueryFixture) !==
   matchingEdgeProofReadiness

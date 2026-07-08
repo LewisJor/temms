@@ -1,4 +1,9 @@
-import type { EdgeProofQuery, ReadinessQuery } from "../api";
+import type {
+  EdgeProofArtifact,
+  EdgeProofDownloadHandoff,
+  EdgeProofQuery,
+  ReadinessQuery
+} from "../api";
 import type { DeploymentReadiness, Device, HubSnapshot, JsonObject, RuntimeTarget } from "../types";
 import { currentHubUrl, deviceId, runtimeTargetId } from "./hub-format";
 import { asRecord, numberOf, stringOf } from "./json";
@@ -33,6 +38,32 @@ const EDGE_PROOF_MIN_RUNTIME_FIT = 95;
 export interface EdgeProofReadinessAdoption {
   readiness: DeploymentReadiness;
   applyToSnapshot: (snapshot: HubSnapshot) => HubSnapshot;
+}
+
+export interface EdgeProofArtifactAdoption {
+  fileName?: string;
+  handoff: EdgeProofDownloadHandoff | undefined;
+  preview: unknown;
+  proof: JsonObject;
+}
+
+export function edgeProofGeneratedAdoption(proof: JsonObject): EdgeProofArtifactAdoption {
+  return {
+    handoff: undefined,
+    preview: proof,
+    proof
+  };
+}
+
+export function edgeProofDownloadAdoption(
+  artifact: EdgeProofArtifact
+): EdgeProofArtifactAdoption {
+  return {
+    fileName: artifact.fileName,
+    handoff: artifact.handoff,
+    preview: artifact.payload,
+    proof: artifact.payload
+  };
 }
 
 export function buildEdgeProofQuery(context: ReadinessQuery): EdgeProofQuery {
