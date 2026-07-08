@@ -269,6 +269,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "buildMissionWorkflowSignals",
   "readinessActionFocus",
   "readinessActionSelection",
+  "readinessCommandExecutionPlan",
   "Ready when",
   "Risk",
   "Staging before package planning leaves rollout intent detached from the hashed mission handoff.",
@@ -2056,6 +2057,43 @@ if (
   evidenceFocusFixture.detail !== "Mission proof is focused for slot thermal."
 ) {
   throw new Error("mission workflow readiness action focus should route evidence actions to Field Ops evidence");
+}
+const edgeExecutionPlanFixture = missionWorkflowModule.readinessCommandExecutionPlan(
+  { kind: "record_benchmark", label: "Record benchmark" },
+  { method: "POST", path: "/v1/benchmarks", requires_edge_execution: true }
+);
+if (
+  edgeExecutionPlanFixture.requiresEdgeExecution !== true ||
+  edgeExecutionPlanFixture.edgeInstructionTitle !== "Run this on the edge node" ||
+  !edgeExecutionPlanFixture.edgeInstructionDetail.includes("actual runtime") ||
+  edgeExecutionPlanFixture.reconcileAfterRun !== false ||
+  edgeExecutionPlanFixture.shouldRefreshAfterRun !== false
+) {
+  throw new Error("mission workflow readiness command execution should hold edge-required commands for edge execution");
+}
+const syncExecutionPlanFixture = missionWorkflowModule.readinessCommandExecutionPlan(
+  { kind: "sync_pending", label: "Sync pending operations" },
+  { method: "POST", path: "/v1/control/sync" }
+);
+if (
+  syncExecutionPlanFixture.requiresEdgeExecution !== false ||
+  syncExecutionPlanFixture.reconcileAfterRun !== true ||
+  syncExecutionPlanFixture.shouldRefreshAfterRun !== false ||
+  syncExecutionPlanFixture.runTitle !== "Run Sync pending operations"
+) {
+  throw new Error("mission workflow readiness command execution should reconcile Hub state after sync commands");
+}
+const normalExecutionPlanFixture = missionWorkflowModule.readinessCommandExecutionPlan(
+  { kind: "approve_rollout", label: "Approve rollout" },
+  { method: "POST", path: "/v1/hub/rollouts/rollout-1/approve" }
+);
+if (
+  normalExecutionPlanFixture.requiresEdgeExecution !== false ||
+  normalExecutionPlanFixture.reconcileAfterRun !== false ||
+  normalExecutionPlanFixture.shouldRefreshAfterRun !== true ||
+  normalExecutionPlanFixture.edgeInstructionDetail
+) {
+  throw new Error("mission workflow readiness command execution should refresh after normal daemon commands");
 }
 const blockedStageFixture = missionWorkflowModule.buildHubStages({
   ...readyStageOptions,

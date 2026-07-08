@@ -65,11 +65,11 @@ import { buildHubFormAction } from "./lib/hub-form-actions";
 import { useHubStageNavigation } from "./lib/hub-stage-navigation";
 import {
   buildMissionWorkflowSignals,
-  edgeReadinessCommandReason,
   hubStageRunbookFor,
   readinessActionFocus,
   readinessActionSelection,
-  readinessCommand
+  readinessCommand,
+  readinessCommandExecutionPlan
 } from "./lib/mission-workflow";
 import { runtimeWorkbenchRowRemediationCommand } from "./lib/runtime-remediation";
 import { loadSnapshotAfterReconciliation } from "./lib/hub-actions";
@@ -732,27 +732,28 @@ export function App(): JSX.Element {
     const action = pendingReadinessAction;
     const command = action ? readinessCommand(action) : undefined;
     if (!action || !command) return;
-    if (command.requires_edge_execution) {
+    const execution = readinessCommandExecutionPlan(action, command);
+    if (execution.requiresEdgeExecution) {
       setToast({
         tone: "info",
-        title: "Run this on the edge node",
-        detail: edgeReadinessCommandReason(action, command)
+        title: execution.edgeInstructionTitle,
+        detail: execution.edgeInstructionDetail
       });
       return;
     }
     setPendingReadinessAction(undefined);
     void run(
-      `Run ${action.label}`,
+      execution.runTitle,
       async () => {
         const payload = await executeReadinessCommand(command, token);
-        if (command.path === "/v1/control/sync") {
+        if (execution.reconcileAfterRun) {
           const nextSnapshot = await loadSnapshotAfterReconciliation(token);
           setSnapshot(nextSnapshot);
           setReadinessRefreshVersion((version) => version + 1);
         }
         return payload;
       },
-      command.path !== "/v1/control/sync"
+      execution.shouldRefreshAfterRun
     );
   }
 

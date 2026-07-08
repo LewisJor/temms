@@ -87,6 +87,15 @@ export interface ReadinessActionFocus {
   workflowTarget: WorkflowTarget;
 }
 
+export interface ReadinessCommandExecutionPlan {
+  edgeInstructionDetail: string;
+  edgeInstructionTitle: string;
+  reconcileAfterRun: boolean;
+  requiresEdgeExecution: boolean;
+  runTitle: string;
+  shouldRefreshAfterRun: boolean;
+}
+
 export function buildMissionWorkflowSignals({
   missionDraft,
   missionPackageStageStatus,
@@ -543,6 +552,22 @@ export function edgeReadinessCommandReason(
     return "Run against the target runtime image or edge node so validation proof is tied to the actual execution surface.";
   }
   return "Run on the edge node so TEMMS records proof from the actual on-device runtime.";
+}
+
+export function readinessCommandExecutionPlan(
+  action: ReadinessGateAction,
+  command: DeploymentReadinessCommand
+): ReadinessCommandExecutionPlan {
+  const requiresEdgeExecution = command.requires_edge_execution === true;
+  const reconcileAfterRun = !requiresEdgeExecution && command.path === "/v1/control/sync";
+  return {
+    edgeInstructionDetail: requiresEdgeExecution ? edgeReadinessCommandReason(action, command) : "",
+    edgeInstructionTitle: requiresEdgeExecution ? "Run this on the edge node" : "",
+    reconcileAfterRun,
+    requiresEdgeExecution,
+    runTitle: `Run ${action.label}`,
+    shouldRefreshAfterRun: !requiresEdgeExecution && !reconcileAfterRun
+  };
 }
 
 export function readinessCommand(action: ReadinessGateAction): DeploymentReadinessCommand | undefined {
