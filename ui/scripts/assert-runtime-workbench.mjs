@@ -532,6 +532,8 @@ collectTextFiles(docsBuildPath).forEach((path) => {
 ].forEach((needle) => assertContains("Field Ops proof sources", fieldOpsProofSource, needle));
 
 [
+  "copyOperatorCommand",
+  "Command opened in the payload panel.",
   "syncPendingOperationsWithReconciliation",
   "controlApi.syncPending",
   "loadSnapshotAfterReconciliation",
@@ -676,6 +678,37 @@ const bundledHubActions = await build({
 const hubActionsModule = await import(
   `data:text/javascript;base64,${Buffer.from(bundledHubActions.outputFiles[0].text).toString("base64")}`
 );
+const copiedOperatorCommands = [];
+const copiedOperatorCommandResult = await hubActionsModule.copyOperatorCommand({
+  command: "uv run temms hub verify-edge-proof /tmp/proof.json",
+  label: "Edge proof verify",
+  writeText: async (command) => {
+    copiedOperatorCommands.push(command);
+  }
+});
+if (
+  copiedOperatorCommands[0] !== "uv run temms hub verify-edge-proof /tmp/proof.json" ||
+  copiedOperatorCommandResult.preview !== undefined ||
+  copiedOperatorCommandResult.toast.tone !== "success" ||
+  copiedOperatorCommandResult.toast.title !== "Edge proof verify copied"
+) {
+  throw new Error("hub actions copy command should write the command and emit a success toast");
+}
+const fallbackOperatorCommandResult = await hubActionsModule.copyOperatorCommand({
+  command: "uv run temms hub edge-runtime-mission",
+  label: "Edge execution command",
+  writeText: async () => {
+    throw new Error("clipboard unavailable");
+  }
+});
+if (
+  fallbackOperatorCommandResult.preview?.title !== "Edge execution command" ||
+  fallbackOperatorCommandResult.preview?.payload?.command !== "uv run temms hub edge-runtime-mission" ||
+  fallbackOperatorCommandResult.toast.tone !== "info" ||
+  fallbackOperatorCommandResult.toast.title !== "Edge execution command ready"
+) {
+  throw new Error("hub actions copy command should open a preview fallback when clipboard write fails");
+}
 const ddilSyncCalls = [];
 const reconciledSnapshotFixture = {
   benchmarks: [],

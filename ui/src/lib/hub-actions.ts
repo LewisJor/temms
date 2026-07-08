@@ -1,10 +1,39 @@
 import { controlApi, loadSnapshot } from "../api";
-import type { HubSnapshot, JsonObject } from "../types";
+import type { HubSnapshot, JsonObject, Preview, Toast } from "../types";
 import { asRecord, numberOf, stringOf } from "./json";
+
+export interface CopyOperatorCommandResult {
+  preview?: Preview;
+  toast: Toast;
+}
 
 export interface SyncPendingOperationsResult {
   payload: JsonObject;
   snapshot: HubSnapshot;
+}
+
+export async function copyOperatorCommand({
+  command,
+  label,
+  writeText = (text: string) => navigator.clipboard.writeText(text)
+}: {
+  command: string;
+  label: string;
+  writeText?: (text: string) => Promise<unknown>;
+}): Promise<CopyOperatorCommandResult> {
+  try {
+    await writeText(command);
+    return { toast: { tone: "success", title: `${label} copied` } };
+  } catch {
+    return {
+      preview: { title: label, payload: { command } },
+      toast: {
+        tone: "info",
+        title: `${label} ready`,
+        detail: "Command opened in the payload panel."
+      }
+    };
+  }
 }
 
 export async function syncPendingOperationsWithReconciliation(

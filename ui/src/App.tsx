@@ -80,6 +80,7 @@ import {
 } from "./lib/mission-workflow";
 import { runtimeWorkbenchRowRemediationCommand } from "./lib/runtime-remediation";
 import {
+  copyOperatorCommand,
   loadSnapshotAfterReconciliation,
   syncPendingOperationsWithReconciliation
 } from "./lib/hub-actions";
@@ -434,17 +435,9 @@ export function App(): JSX.Element {
   }
 
   async function copyCommand(label: string, command: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(command);
-      setToast({ tone: "success", title: `${label} copied` });
-    } catch {
-      setPreview({ title: label, payload: { command } });
-      setToast({
-        tone: "info",
-        title: `${label} ready`,
-        detail: "Command opened in the payload panel."
-      });
-    }
+    const result = await copyOperatorCommand({ command, label });
+    if (result.preview) setPreview(result.preview);
+    setToast(result.toast);
   }
 
   function missionPackagePlanPayload() {
