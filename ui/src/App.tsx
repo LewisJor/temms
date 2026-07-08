@@ -8,7 +8,7 @@ import {
   RefreshCw,
   ShieldCheck
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   controlApi,
   downloadEdgeRuntimeProof,
@@ -79,6 +79,7 @@ import {
   buildMissionPackageStageStatus,
   missionPackageRolloutId
 } from "./lib/mission-package";
+import { useHubStageNavigation } from "./lib/hub-stage-navigation";
 import {
   buildHubStages,
   buildMissionWorkflowSignals,
@@ -150,7 +151,6 @@ import type {
 } from "./types";
 import type {
   EdgeProofComponentDigestStatus,
-  HubStage,
   ReadinessGateAction,
   WorkflowTarget
 } from "./lib/workbench-types";
@@ -185,17 +185,22 @@ export function App(): JSX.Element {
   const [missionPackagePlan, setMissionPackagePlan] = useState<JsonObject | undefined>();
   const [lastMissionPackageHandoff, setLastMissionPackageHandoff] = useState<MissionPackageDownloadHandoff | undefined>();
   const [readinessRefreshVersion, setReadinessRefreshVersion] = useState(0);
-  const [focusedWorkflow, setFocusedWorkflow] = useState<WorkflowTarget | undefined>();
-  const [activeHubStage, setActiveHubStage] = useState<HubStage>("mission");
   const [pendingReadinessAction, setPendingReadinessAction] = useState<ReadinessGateAction | undefined>();
-  const stageFlowRef = useRef<HTMLDivElement>(null);
-  const ddilWorkflowRef = useRef<HTMLElement>(null);
-  const modelWorkflowRef = useRef<HTMLElement>(null);
-  const deploymentWorkflowRef = useRef<HTMLElement>(null);
-  const plansWorkflowRef = useRef<HTMLElement>(null);
-  const rolloutsWorkflowRef = useRef<HTMLElement>(null);
-  const evidenceWorkflowRef = useRef<HTMLElement>(null);
-  const assetsWorkflowRef = useRef<HTMLDetailsElement>(null);
+  const {
+    activeHubStage,
+    assetsWorkflowRef,
+    ddilWorkflowRef,
+    deploymentWorkflowRef,
+    evidenceWorkflowRef,
+    focusedWorkflow,
+    modelWorkflowRef,
+    navigateHubStage,
+    plansWorkflowRef,
+    rolloutsWorkflowRef,
+    setFocusedWorkflow,
+    stageFlowRef,
+    workflowClass
+  } = useHubStageNavigation();
 
   const refresh = useCallback(async (options?: { quiet?: boolean }) => {
     setLoading(true);
@@ -1140,38 +1145,6 @@ export function App(): JSX.Element {
         token
       )
     );
-  }
-
-  function workflowClass(target: WorkflowTarget, className: string): string {
-    return focusedWorkflow === target ? `${className} workflow-target-active` : className;
-  }
-
-  function workflowRefForTarget(target: WorkflowTarget) {
-    return {
-      model: modelWorkflowRef,
-      deployment: deploymentWorkflowRef,
-      plans: plansWorkflowRef,
-      rollouts: rolloutsWorkflowRef,
-      ddil: ddilWorkflowRef,
-      evidence: evidenceWorkflowRef,
-      assets: assetsWorkflowRef
-    }[target];
-  }
-
-  function navigateHubStage(stage: HubStage, options: { workflowTarget?: WorkflowTarget } = {}): void {
-    setActiveHubStage(stage);
-    setFocusedWorkflow(options.workflowTarget);
-    window.setTimeout(() => {
-      const section = options.workflowTarget ? workflowRefForTarget(options.workflowTarget).current : stageFlowRef.current;
-      if (!section) return;
-      section.scrollIntoView({ behavior: "smooth", block: "start" });
-      if (options.workflowTarget) {
-        section.focus({ preventScroll: true });
-        return;
-      }
-      const activeStep = stageFlowRef.current?.querySelector<HTMLElement>(`[data-stage-id="${stage}"]`);
-      activeStep?.focus({ preventScroll: true });
-    }, 0);
   }
 
   function focusWorkflow(target: WorkflowTarget, actionLabel: string, contextLabel = ""): void {
