@@ -3,6 +3,8 @@ import { deviceId, runtimeTargetId } from "./hub-format";
 import type { MissionDraft } from "./mission-spec";
 import type { ModelRecord } from "./workbench-types";
 
+const WORKBENCH_ACTOR = "operator:mission-package-workbench";
+
 export function missionRolloutsForSelection({
   missionSlot,
   model,
@@ -36,7 +38,7 @@ export function missionRolloutPlansForSelection({
 }
 
 export function buildDeploymentIntentRequest({
-  actor = "operator:mission-package-workbench",
+  actor = WORKBENCH_ACTOR,
   device,
   draft,
   model,
@@ -61,6 +63,61 @@ export function buildDeploymentIntentRequest({
     runtime_target_id: runtime ? runtimeTargetId(runtime) : undefined,
     slot: draft.slot || "vision",
     requested_at: requestedAt
+  };
+}
+
+export function buildPackagePromotionRequest(nextPackageState: string): JsonObject {
+  return {
+    state: nextPackageState,
+    actor: "operator:react-ui",
+    reason: `promoted to ${nextPackageState} from Mission Package Workbench`
+  };
+}
+
+export function buildRolloutApprovalRequest(): JsonObject {
+  return {
+    actor: "operator:approver-ui",
+    reason: "mission policy approved from Mission Package Workbench"
+  };
+}
+
+export function buildRolloutApplyRequest({
+  rollout,
+  selectedModel
+}: {
+  rollout: Rollout | undefined;
+  selectedModel: ModelRecord | undefined;
+}): JsonObject {
+  return {
+    actor: "operator:react-ui",
+    model_id: rollout?.model_id || selectedModel?.id
+  };
+}
+
+export function buildRolloutRollbackRequest(): JsonObject {
+  return {
+    actor: WORKBENCH_ACTOR,
+    reason: "operator requested rollback from Mission Package Workbench"
+  };
+}
+
+export function buildRolloutPlanAdvanceRequest(): JsonObject {
+  return {
+    actor: WORKBENCH_ACTOR
+  };
+}
+
+export function buildRolloutPlanPauseRequest(): JsonObject {
+  return {
+    actor: WORKBENCH_ACTOR,
+    reason: "operator paused rollout plan from Mission Package Workbench"
+  };
+}
+
+export function buildRolloutPlanResumeRequest(): JsonObject {
+  return {
+    actor: WORKBENCH_ACTOR,
+    reason: "operator resumed rollout plan from Mission Package Workbench"
   };
 }
 

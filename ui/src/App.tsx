@@ -111,7 +111,14 @@ import {
   verifyEdgeProofComponentDigestStatus
 } from "./lib/edge-proof-workflow";
 import {
+  buildPackagePromotionRequest,
   buildDeploymentIntentRequest,
+  buildRolloutApplyRequest,
+  buildRolloutApprovalRequest,
+  buildRolloutPlanAdvanceRequest,
+  buildRolloutPlanPauseRequest,
+  buildRolloutPlanResumeRequest,
+  buildRolloutRollbackRequest,
   missionRolloutPlansForSelection,
   missionRolloutsForSelection
 } from "./lib/deployment-intent";
@@ -784,11 +791,7 @@ export function App(): JSX.Element {
     void run(`Promote ${id}`, () =>
       hubApi.promotePackage(
         id,
-        {
-          state: nextPackageState,
-          actor: "operator:react-ui",
-          reason: `promoted to ${nextPackageState} from Mission Package Workbench`
-        },
+        buildPackagePromotionRequest(nextPackageState),
         token
       )
     );
@@ -803,79 +806,38 @@ export function App(): JSX.Element {
 
   function approveRollout(id: string): void {
     void run(`Approve ${id}`, () =>
-      hubApi.approveRollout(
-        id,
-        {
-          actor: "operator:approver-ui",
-          reason: "mission policy approved from Mission Package Workbench"
-        },
-        token
-      )
+      hubApi.approveRollout(id, buildRolloutApprovalRequest(), token)
     );
   }
 
   function applyRollout(id: string): void {
     const rollout = snapshot.rollouts.find((candidate) => rolloutId(candidate) === id);
     void run(`Apply ${id}`, () =>
-      hubApi.applyRollout(
-        id,
-        {
-          actor: "operator:react-ui",
-          model_id: rollout?.model_id || selectedModel?.id
-        },
-        token
-      )
+      hubApi.applyRollout(id, buildRolloutApplyRequest({ rollout, selectedModel }), token)
     );
   }
 
   function rollbackRollout(id: string): void {
     void run(`Rollback ${id}`, () =>
-      hubApi.rollbackRollout(
-        id,
-        {
-          actor: "operator:mission-package-workbench",
-          reason: "operator requested rollback from Mission Package Workbench"
-        },
-        token
-      )
+      hubApi.rollbackRollout(id, buildRolloutRollbackRequest(), token)
     );
   }
 
   function advanceRolloutPlan(id: string): void {
     void run(`Advance ${id}`, () =>
-      hubApi.advanceRolloutPlan(
-        id,
-        {
-          actor: "operator:mission-package-workbench"
-        },
-        token
-      )
+      hubApi.advanceRolloutPlan(id, buildRolloutPlanAdvanceRequest(), token)
     );
   }
 
   function pauseRolloutPlan(id: string): void {
     void run(`Pause ${id}`, () =>
-      hubApi.pauseRolloutPlan(
-        id,
-        {
-          actor: "operator:mission-package-workbench",
-          reason: "operator paused rollout plan from Mission Package Workbench"
-        },
-        token
-      )
+      hubApi.pauseRolloutPlan(id, buildRolloutPlanPauseRequest(), token)
     );
   }
 
   function resumeRolloutPlan(id: string): void {
     void run(`Resume ${id}`, () =>
-      hubApi.resumeRolloutPlan(
-        id,
-        {
-          actor: "operator:mission-package-workbench",
-          reason: "operator resumed rollout plan from Mission Package Workbench"
-        },
-        token
-      )
+      hubApi.resumeRolloutPlan(id, buildRolloutPlanResumeRequest(), token)
     );
   }
 

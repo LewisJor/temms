@@ -961,6 +961,50 @@ const modelFixture = {
   name: "YOLOv8 lowlight",
   packageId: "pkg-vision-models-20240115"
 };
+const promotionRequestFixture = deploymentIntentModule.buildPackagePromotionRequest("released");
+if (
+  promotionRequestFixture.state !== "released" ||
+  promotionRequestFixture.actor !== "operator:react-ui" ||
+  !String(promotionRequestFixture.reason).includes("promoted to released")
+) {
+  throw new Error("package promotion request should preserve promotion state, actor, and reason");
+}
+const rolloutApprovalRequestFixture = deploymentIntentModule.buildRolloutApprovalRequest();
+if (
+  rolloutApprovalRequestFixture.actor !== "operator:approver-ui" ||
+  rolloutApprovalRequestFixture.reason !== "mission policy approved from Mission Package Workbench"
+) {
+  throw new Error("rollout approval request should preserve approver actor and mission policy reason");
+}
+const rolloutApplyRequestFixture = deploymentIntentModule.buildRolloutApplyRequest({
+  rollout: { model_id: "model-from-rollout" },
+  selectedModel: { id: "model-from-selection" }
+});
+if (
+  rolloutApplyRequestFixture.actor !== "operator:react-ui" ||
+  rolloutApplyRequestFixture.model_id !== "model-from-rollout"
+) {
+  throw new Error("rollout apply request should prefer the rollout model id");
+}
+const fallbackRolloutApplyRequestFixture = deploymentIntentModule.buildRolloutApplyRequest({
+  rollout: {},
+  selectedModel: { id: "model-from-selection" }
+});
+if (fallbackRolloutApplyRequestFixture.model_id !== "model-from-selection") {
+  throw new Error("rollout apply request should fall back to the selected model id");
+}
+if (deploymentIntentModule.buildRolloutRollbackRequest().reason !== "operator requested rollback from Mission Package Workbench") {
+  throw new Error("rollout rollback request should preserve mission workbench rollback reason");
+}
+if (deploymentIntentModule.buildRolloutPlanAdvanceRequest().actor !== "operator:mission-package-workbench") {
+  throw new Error("rollout plan advance request should use the mission package workbench actor");
+}
+if (deploymentIntentModule.buildRolloutPlanPauseRequest().reason !== "operator paused rollout plan from Mission Package Workbench") {
+  throw new Error("rollout plan pause request should preserve pause reason");
+}
+if (deploymentIntentModule.buildRolloutPlanResumeRequest().reason !== "operator resumed rollout plan from Mission Package Workbench") {
+  throw new Error("rollout plan resume request should preserve resume reason");
+}
 const bundledMissionYamlImport = await build({
   bundle: true,
   entryPoints: [missionYamlImportPath],
