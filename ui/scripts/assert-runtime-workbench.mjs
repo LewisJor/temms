@@ -35,6 +35,7 @@ const edgeProofWorkflowPath = join(uiRoot, "src", "lib", "edge-proof-workflow.ts
 const edgeRuntimeMissionPath = join(uiRoot, "src", "lib", "edge-runtime-mission.ts");
 const fieldOpsProofPath = join(uiRoot, "src", "lib", "field-ops-proof.ts");
 const hubActionsPath = join(uiRoot, "src", "lib", "hub-actions.ts");
+const hubFormActionsPath = join(uiRoot, "src", "lib", "hub-form-actions.ts");
 const readinessPath = join(uiRoot, "src", "lib", "readiness.ts");
 const runtimeDecisionPath = join(uiRoot, "src", "lib", "runtime-decision.ts");
 const proofCommandPath = join(uiRoot, "src", "lib", "proof-command.ts");
@@ -128,6 +129,7 @@ const deploymentIntentSource = readFileSync(deploymentIntentPath, "utf8");
 const edgeRuntimeMissionSource = readFileSync(edgeRuntimeMissionPath, "utf8");
 const fieldOpsProofSource = readFileSync(fieldOpsProofPath, "utf8");
 const hubActionsSource = readFileSync(hubActionsPath, "utf8");
+const hubFormActionsSource = readFileSync(hubFormActionsPath, "utf8");
 const readinessSource = readFileSync(readinessPath, "utf8");
 const runtimeDecisionSource = readFileSync(runtimeDecisionPath, "utf8");
 const proofCommandSource = readFileSync(proofCommandPath, "utf8");
@@ -136,7 +138,7 @@ const runtimeStageViewSource = readFileSync(runtimeStageViewPath, "utf8");
 const hubStageNavigationSource = readFileSync(hubStageNavigationPath, "utf8");
 const missionPackageSource = readFileSync(missionPackagePath, "utf8");
 const missionWorkflowSource = readFileSync(missionWorkflowPath, "utf8");
-const workbenchSource = `${source}\n${capabilityDossierSource}\n${edgeDeployStageSource}\n${deployListsSource}\n${edgeProofSource}\n${fieldOpsSource}\n${fieldOpsStageSource}\n${packageHandoffSource}\n${packageStageSource}\n${missionStagesSource}\n${modelPlanSource}\n${readinessPanelsSource}\n${runtimeDecisionTraceSource}\n${runtimeExecutionContractSource}\n${runtimeContractRowsSource}\n${runtimeMissionSource}\n${runtimeOperatorProofSource}\n${runtimeOptimizerSource}\n${runtimeWorkbenchSource}\n${workbenchFlowSource}\n${edgeProofWorkflowSource}\n${deploymentIntentSource}\n${edgeRuntimeMissionSource}\n${fieldOpsProofSource}\n${hubActionsSource}\n${readinessSource}\n${runtimeDecisionSource}\n${proofCommandSource}\n${runtimeRemediationSource}\n${runtimeStageViewSource}\n${hubStageNavigationSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
+const workbenchSource = `${source}\n${capabilityDossierSource}\n${edgeDeployStageSource}\n${deployListsSource}\n${edgeProofSource}\n${fieldOpsSource}\n${fieldOpsStageSource}\n${packageHandoffSource}\n${packageStageSource}\n${missionStagesSource}\n${modelPlanSource}\n${readinessPanelsSource}\n${runtimeDecisionTraceSource}\n${runtimeExecutionContractSource}\n${runtimeContractRowsSource}\n${runtimeMissionSource}\n${runtimeOperatorProofSource}\n${runtimeOptimizerSource}\n${runtimeWorkbenchSource}\n${workbenchFlowSource}\n${edgeProofWorkflowSource}\n${deploymentIntentSource}\n${edgeRuntimeMissionSource}\n${fieldOpsProofSource}\n${hubActionsSource}\n${hubFormActionsSource}\n${readinessSource}\n${runtimeDecisionSource}\n${proofCommandSource}\n${runtimeRemediationSource}\n${runtimeStageViewSource}\n${hubStageNavigationSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
 const apiSource = readFileSync(apiPath, "utf8");
 const missionSpecSource = readFileSync(missionSpecPath, "utf8");
 const proofHashSource = readFileSync(proofHashPath, "utf8");
@@ -369,6 +371,18 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "focus({ preventScroll: true })",
   "querySelector<HTMLElement>(`[data-stage-id=\"${stage}\"]`)"
 ].forEach((needle) => assertContains("Hub stage navigation sources", hubStageNavigationSource, needle));
+
+[
+  "buildHubFormAction",
+  "\"compatibility-preview\"",
+  "\"assign-rollout\"",
+  "\"create-rollout-plan\"",
+  "slot: fieldValue(form, \"slot\") || undefined",
+  "runtime_target_id: fieldValue(form, \"runtime_target_id\") || undefined",
+  "reason: \"operator assigned rollout from Mission Package Workbench\"",
+  "reason: \"operator created rollout plan from Mission Package Workbench\"",
+  "refresh: name !== \"compatibility-preview\""
+].forEach((needle) => assertContains("Hub form action sources", hubFormActionsSource, needle));
 
 [
   "Runtime workbench",
