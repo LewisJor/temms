@@ -584,6 +584,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
 
 [
   "edgeProofReadinessForContext",
+  "edgeProofReadinessAdoptionForContext",
   "edgeProofComponentDigestVerificationPendingStatus",
   "edgeProofComponentDigestVerificationFailureStatus",
   "readinessMatchesContext",
@@ -985,6 +986,40 @@ if (
   ) !== undefined
 ) {
   throw new Error("edge proof readiness adoption should reject non-proof payloads");
+}
+const edgeProofReadinessAdoption = edgeProofWorkflowModule.edgeProofReadinessAdoptionForContext({
+  context: edgeProofQueryFixture,
+  proof: matchingEdgeProofPayload
+});
+if (!edgeProofReadinessAdoption || edgeProofReadinessAdoption.readiness !== matchingEdgeProofReadiness) {
+  throw new Error("edge proof readiness adoption should expose matching proof readiness");
+}
+const adoptionBaseSnapshot = {
+  benchmarks: [],
+  devices: [{ device_id: "edge-thermal-01" }],
+  evidenceBundles: [],
+  packages: [],
+  readiness: { status: "attention" },
+  rolloutPlans: [],
+  rollouts: [],
+  runtimeTargets: [],
+  runtimeValidations: []
+};
+const adoptedSnapshot = edgeProofReadinessAdoption.applyToSnapshot(adoptionBaseSnapshot);
+if (
+  adoptedSnapshot === adoptionBaseSnapshot ||
+  adoptedSnapshot.devices !== adoptionBaseSnapshot.devices ||
+  adoptedSnapshot.readiness !== matchingEdgeProofReadiness
+) {
+  throw new Error("edge proof readiness adoption should patch snapshot readiness without rebuilding snapshot lists");
+}
+if (
+  edgeProofWorkflowModule.edgeProofReadinessAdoptionForContext({
+    context: edgeProofQueryFixture,
+    proof: staleEdgeProofPayload
+  }) !== undefined
+) {
+  throw new Error("edge proof readiness adoption should not patch snapshots for stale proof paths");
 }
 const digestStatusFixture = {
   detail: "Runtime workbench, trace, and execution manifest hashes are retained.",

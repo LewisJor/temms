@@ -78,7 +78,7 @@ import {
   edgeProofComponentDigestStatus,
   edgeProofComponentDigestVerificationFailureStatus,
   edgeProofComponentDigestVerificationPendingStatus,
-  edgeProofReadinessForContext,
+  edgeProofReadinessAdoptionForContext,
   edgeProofTraceStatus,
   verifyEdgeProofComponentDigestStatus
 } from "./lib/edge-proof-workflow";
@@ -536,10 +536,10 @@ export function App(): JSX.Element {
   }
 
   function adoptEdgeProofReadiness(proof: unknown): void {
-    const readiness = edgeProofReadinessForContext(proof, readinessContext);
-    if (!readiness) return;
-    setContextReadiness(readiness);
-    setSnapshot((current) => ({ ...current, readiness }));
+    const adoption = edgeProofReadinessAdoptionForContext({ context: readinessContext, proof });
+    if (!adoption) return;
+    setContextReadiness(adoption.readiness);
+    setSnapshot(adoption.applyToSnapshot);
   }
 
   function submitForm(name: string, event: FormEvent<HTMLFormElement>): void {

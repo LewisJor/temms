@@ -1,5 +1,5 @@
 import type { EdgeProofQuery, ReadinessQuery } from "../api";
-import type { DeploymentReadiness, Device, JsonObject, RuntimeTarget } from "../types";
+import type { DeploymentReadiness, Device, HubSnapshot, JsonObject, RuntimeTarget } from "../types";
 import { currentHubUrl, deviceId, runtimeTargetId } from "./hub-format";
 import { asRecord, numberOf, stringOf } from "./json";
 import {
@@ -30,6 +30,11 @@ import type {
 const EDGE_PROOF_MAX_AGE_SECONDS = 900;
 const EDGE_PROOF_MIN_RUNTIME_FIT = 95;
 
+export interface EdgeProofReadinessAdoption {
+  readiness: DeploymentReadiness;
+  applyToSnapshot: (snapshot: HubSnapshot) => HubSnapshot;
+}
+
 export function buildEdgeProofQuery(context: ReadinessQuery): EdgeProofQuery {
   return {
     ...context,
@@ -51,6 +56,21 @@ export function edgeProofReadinessForContext(
   const readiness = asRecord(record.readiness) as DeploymentReadiness;
   if (!readinessMatchesContext(readiness, context)) return undefined;
   return readiness;
+}
+
+export function edgeProofReadinessAdoptionForContext({
+  context,
+  proof
+}: {
+  context: ReadinessQuery;
+  proof: unknown;
+}): EdgeProofReadinessAdoption | undefined {
+  const readiness = edgeProofReadinessForContext(proof, context);
+  if (!readiness) return undefined;
+  return {
+    readiness,
+    applyToSnapshot: (snapshot) => ({ ...snapshot, readiness })
+  };
 }
 
 export function buildEdgeProofWorkflow({
