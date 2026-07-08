@@ -124,6 +124,7 @@ import { buildEdgeRuntimeMission } from "./lib/edge-runtime-mission";
 import {
   activeSlotForMission,
   latestRuntimeRepairProofFor,
+  missionOperationLedgerForSlot,
   prioritizedEvidenceEvents
 } from "./lib/field-ops-proof";
 import {
@@ -279,11 +280,15 @@ export function App(): JSX.Element {
   const evidenceRuntime = asRecord(snapshot.evidenceSummary?.runtime);
   const deploymentState = asRecord(evidenceRuntime.deployment_state);
   const offlineMode = evidenceRuntime.offline_mode === true;
-  const pendingOperations = numberOf(evidenceRuntime.pending_operations_count) ?? 0;
   const pendingOperationTypes = stringsOf(evidenceRuntime.pending_operation_types);
-  const pendingOperationLedger = Array.isArray(evidenceRuntime.pending_operations)
-    ? evidenceRuntime.pending_operations.map(asRecord)
-    : [];
+  const hasPendingOperationRecords = Array.isArray(evidenceRuntime.pending_operations);
+  const pendingOperationLedger = missionOperationLedgerForSlot(
+    evidenceRuntime.pending_operations,
+    missionDraft.slot
+  );
+  const pendingOperations = hasPendingOperationRecords
+    ? pendingOperationLedger.length
+    : numberOf(evidenceRuntime.pending_operations_count) ?? 0;
   const runtimeRepairProof = useMemo(
     () =>
       latestRuntimeRepairProofFor({
@@ -302,15 +307,20 @@ export function App(): JSX.Element {
   const supersededOperations = numberOf(pendingOperationPreflight.superseded) ?? 0;
   const runtimeOptimizationAdvisories =
     numberOf(pendingOperationPreflight.optimization_advisories) ?? 0;
-  const totalDeadLetteredOperations = numberOf(evidenceRuntime.pending_operation_dead_letters_count) ?? 0;
-  const deadLetteredOperations =
-    numberOf(evidenceRuntime.pending_operation_dead_letters_unresolved_count) ?? totalDeadLetteredOperations;
-  const allDeadLetteredOperations = Array.isArray(evidenceRuntime.pending_operation_dead_letters)
-    ? evidenceRuntime.pending_operation_dead_letters.map(asRecord)
-    : [];
+  const allDeadLetteredOperations = missionOperationLedgerForSlot(
+    evidenceRuntime.pending_operation_dead_letters,
+    missionDraft.slot
+  );
   const deadLetteredOperationLedger = allDeadLetteredOperations.filter(
     (operation) => operation.acknowledged !== true && operation.requeued !== true
   );
+  const hasDeadLetterRecords = Array.isArray(evidenceRuntime.pending_operation_dead_letters);
+  const totalDeadLetteredOperations = hasDeadLetterRecords
+    ? allDeadLetteredOperations.length
+    : numberOf(evidenceRuntime.pending_operation_dead_letters_count) ?? 0;
+  const deadLetteredOperations = hasDeadLetterRecords
+    ? deadLetteredOperationLedger.length
+    : numberOf(evidenceRuntime.pending_operation_dead_letters_unresolved_count) ?? totalDeadLetteredOperations;
   const deploymentStateName = stringOf(deploymentState.state, "UNKNOWN");
   const deploymentReason = stringOf(
     deploymentState.reason,

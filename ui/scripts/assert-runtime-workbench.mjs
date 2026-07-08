@@ -228,6 +228,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "scrollIntoView",
   "showProductStage",
   "activeSlotForMission(snapshot.evidenceSummary?.active_slots, missionDraft.slot)",
+  "missionOperationLedgerForSlot",
   "missionRolloutsForSelection",
   "missionRolloutPlansForSelection",
   "MissionWorkflowCockpit",
@@ -435,6 +436,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
 
 [
   "activeSlotForMission",
+  "missionOperationLedgerForSlot",
   "prioritizedEvidenceEvents",
   "latestRuntimeRepairProofFor"
 ].forEach((needle) => assertContains("Field Ops proof sources", fieldOpsProofSource, needle));
@@ -551,6 +553,30 @@ if (fallbackActiveSlot?.active_model !== "model-lidar") {
 }
 if (fieldOpsProofModule.activeSlotForMission(undefined, "thermal") !== undefined) {
   throw new Error("field ops active slot should be empty when evidence slots are missing");
+}
+const scopedPendingOperations = fieldOpsProofModule.missionOperationLedgerForSlot(
+  [
+    { operation: "deploy", payload: { request: { slot: "thermal" } }, payload_sha256: "thermal" },
+    { operation: "deploy", slot: "vision", payload_sha256: "vision" },
+    { operation: "deploy", payload_sha256: "legacy" }
+  ],
+  "thermal"
+);
+const scopedPendingIds = scopedPendingOperations.map((operation) => operation.payload_sha256).join(",");
+if (scopedPendingIds !== "thermal,legacy") {
+  throw new Error(`field ops pending operations should be scoped to mission slot: ${scopedPendingIds}`);
+}
+const defaultPendingOperations = fieldOpsProofModule.missionOperationLedgerForSlot(
+  [
+    { operation: "deploy", payload_sha256: "vision", slot: "vision" },
+    { operation: "deploy", payload_sha256: "thermal", slot: "thermal" },
+    { operation: "deploy", payload_sha256: "legacy" }
+  ],
+  ""
+);
+const defaultPendingIds = defaultPendingOperations.map((operation) => operation.payload_sha256).join(",");
+if (defaultPendingIds !== "vision,legacy") {
+  throw new Error("field ops pending operations should default blank mission slots to vision");
 }
 
 const bundledReadiness = await build({

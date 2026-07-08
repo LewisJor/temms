@@ -12,6 +12,20 @@ export function activeSlotForMission(
   return slots.find((slot) => stringOf(slot.slot, "") === slotName) ?? slots[0];
 }
 
+export function missionOperationLedgerForSlot(
+  operations: unknown,
+  missionSlot: string
+): Record<string, unknown>[] {
+  if (!Array.isArray(operations)) return [];
+  const slotName = missionSlot || "vision";
+  return operations
+    .map(asRecord)
+    .filter((operation) => {
+      const slot = operationSlot(operation);
+      return !slot || slot === slotName;
+    });
+}
+
 export function prioritizedEvidenceEvents(
   timeline: unknown,
   activeModelId: string
@@ -66,6 +80,19 @@ export function latestRuntimeRepairProofFor({
   if (replayedProof) return replayedProof;
 
   return runtimeRepairProofFromMissionReplay(missionReplay);
+}
+
+function operationSlot(operation: Record<string, unknown>): string {
+  const payload = asRecord(operation.payload);
+  const request = asRecord(payload.request);
+  const preflight = asRecord(operation.preflight);
+  return stringOf(operation.slot, "") ||
+    stringOf(payload.slot, "") ||
+    stringOf(payload.slot_name, "") ||
+    stringOf(request.slot, "") ||
+    stringOf(request.slot_name, "") ||
+    stringOf(preflight.slot, "") ||
+    stringOf(preflight.slot_name, "");
 }
 
 function firstRuntimeRepairProof(
