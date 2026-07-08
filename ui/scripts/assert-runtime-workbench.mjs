@@ -268,6 +268,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "hubStageRunbookFor",
   "buildMissionWorkflowSignals",
   "buildRuntimeFitTileSummary",
+  "readinessActionPlan",
   "readinessActionFocus",
   "readinessActionSelection",
   "readinessCommandExecutionPlan",
@@ -2214,6 +2215,27 @@ if (
   ignoredSelectionFixture.runtimeTargetId
 ) {
   throw new Error("mission workflow readiness action selection should ignore non-selection readiness actions");
+}
+const readinessActionPlanFixture = missionWorkflowModule.readinessActionPlan({
+  command: { method: "POST", path: "/v1/control/sync" },
+  kind: "select_context",
+  label: "Select measured runtime path",
+  refs: {
+    device_id: "edge-rpi5",
+    model_id: "model-yolov8-lowlight-001",
+    runtime_target_id: "temms-rpi5-tflite"
+  }
+});
+if (
+  readinessActionPlanFixture.command?.method !== "POST" ||
+  readinessActionPlanFixture.command?.path !== "/v1/control/sync" ||
+  readinessActionPlanFixture.selection.modelId !== "model-yolov8-lowlight-001" ||
+  readinessActionPlanFixture.selection.deviceId !== "edge-rpi5" ||
+  readinessActionPlanFixture.selection.runtimeTargetId !== "temms-rpi5-tflite" ||
+  readinessActionPlanFixture.focus.stage !== "deploy" ||
+  readinessActionPlanFixture.focus.workflowTarget !== "deployment"
+) {
+  throw new Error("mission workflow readiness action plan should compose command, selection, and focus");
 }
 const deploymentFocusFixture = missionWorkflowModule.readinessActionFocus({
   kind: "select_context",

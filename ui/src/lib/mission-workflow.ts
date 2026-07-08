@@ -92,6 +92,12 @@ export interface ReadinessActionFocus {
   workflowTarget: WorkflowTarget;
 }
 
+export interface ReadinessActionPlan {
+  command: DeploymentReadinessCommand | undefined;
+  focus: ReadinessActionFocus;
+  selection: ReadinessActionSelection;
+}
+
 export interface ReadinessCommandExecutionPlan {
   edgeInstructionDetail: string;
   edgeInstructionTitle: string;
@@ -661,6 +667,14 @@ export function readinessActionFocus(action: ReadinessGateAction): ReadinessActi
     stage: hubStageForWorkflowTarget(workflowTarget),
     title: action.label,
     workflowTarget
+  };
+}
+
+export function readinessActionPlan(action: ReadinessGateAction): ReadinessActionPlan {
+  return {
+    command: readinessCommand(action),
+    focus: readinessActionFocus(action),
+    selection: readinessActionSelection(action)
   };
 }
 

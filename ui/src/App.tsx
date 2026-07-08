@@ -65,8 +65,7 @@ import {
   buildMissionWorkflowSignals,
   buildRuntimeFitTileSummary,
   hubStageRunbookFor,
-  readinessActionFocus,
-  readinessActionSelection,
+  readinessActionPlan,
   readinessCommand,
   readinessCommandExecutionPlan
 } from "./lib/mission-workflow";
@@ -711,16 +710,15 @@ export function App(): JSX.Element {
   }
 
   function handleReadinessAction(action: ReadinessGateAction): void {
-    const command = readinessCommand(action);
-    const focus = readinessActionFocus(action);
-    applyReadinessActionSelection(action);
+    const plan = readinessActionPlan(action);
+    applyReadinessActionSelection(plan.selection);
+    const { command, focus } = plan;
     navigateHubStage(focus.stage, { workflowTarget: focus.workflowTarget });
     setToast({ tone: "success", title: focus.title, detail: focus.detail });
     if (command) setPendingReadinessAction(action);
   }
 
-  function applyReadinessActionSelection(action: ReadinessGateAction): void {
-    const selection = readinessActionSelection(action);
+  function applyReadinessActionSelection(selection: ReturnType<typeof readinessActionPlan>["selection"]): void {
     if (selection.modelId) setSelectedModelId(selection.modelId);
     if (selection.deviceId) setSelectedDeviceId(selection.deviceId);
     if (selection.runtimeTargetId) setSelectedRuntimeId(selection.runtimeTargetId);
