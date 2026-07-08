@@ -33,9 +33,7 @@ import {
 import { EdgeDeployStage } from "./components/edge-deploy-stage";
 import { FieldOpsStage } from "./components/field-ops-stage";
 import { PackageHandoffStage } from "./components/package-stage";
-import {
-  ReadinessCommandPanel,
-} from "./components/readiness-panels";
+import { ReadinessCommandPanel } from "./components/readiness-panels";
 import { EdgeOperatorCommandPanel } from "./components/runtime-operator-proof";
 import { EdgeRuntimeWorkbench } from "./components/runtime-workbench";
 import {
@@ -64,14 +62,11 @@ import {
 import { buildMissionYamlImportResult } from "./lib/mission-yaml-import";
 import {
   buildMissionPackagePlanRequest,
-  buildMissionPackageManifest,
-  buildMissionPackageStageStatus,
   missionPackageRolloutId
 } from "./lib/mission-package";
 import { buildHubFormAction } from "./lib/hub-form-actions";
 import { useHubStageNavigation } from "./lib/hub-stage-navigation";
 import {
-  buildHubStages,
   buildMissionWorkflowSignals,
   edgeReadinessCommandReason,
   hubStageForWorkflowTarget,
@@ -81,15 +76,10 @@ import {
   workflowTargetForReadinessAction,
   workflowTargetLabel
 } from "./lib/mission-workflow";
-import {
-  runtimeFitDisplayFor
-} from "./lib/runtime-fit";
-import { buildRuntimeStageView } from "./lib/runtime-stage-view";
 import { runtimeWorkbenchRowRemediationCommand } from "./lib/runtime-remediation";
 import { loadSnapshotAfterReconciliation } from "./lib/hub-actions";
 import {
   buildEdgeProofQuery,
-  buildEdgeProofWorkflow,
   downloadJson,
   edgeProofComponentDigestStatus,
   edgeProofTraceStatus,
@@ -105,21 +95,16 @@ import {
   buildRolloutPlanResumeRequest,
   buildRolloutRollbackRequest
 } from "./lib/deployment-intent";
-import { buildEdgeRuntimeMission } from "./lib/edge-runtime-mission";
 import {
   buildDeadLetterRequeueRequest,
-  buildPendingRuntimeRetargetRequest,
+  buildPendingRuntimeRetargetRequest
 } from "./lib/field-ops-proof";
+import { buildHubFlowState } from "./lib/hub-flow-state";
 import { buildHubMissionContext } from "./lib/hub-mission-context";
 import {
-  buildReadinessContext,
   hasReadinessContextSelection,
   readinessMatchesContext,
-  readinessContextKey,
-  readinessVerdictFromApi,
-  selectionMatchesContext,
-  scopedReadinessFor,
-  syncingReadinessVerdict
+  selectionMatchesContext
 } from "./lib/readiness";
 import type {
   DeploymentReadiness,
@@ -222,7 +207,6 @@ export function App(): JSX.Element {
     deadLetteredOperations,
     deploymentDetail,
     deploymentStateName,
-    derivedReadinessVerdict,
     edgeRecommendations,
     edgeRuntimeFit,
     evidenceDetail,
@@ -255,124 +239,54 @@ export function App(): JSX.Element {
     signedEvidenceImports,
     signedPackages
   } = missionContext;
-  const readinessContext = useMemo(
-    () => buildReadinessContext({
-      device: selectedDevice,
-      model: selectedModel,
-      runtime: selectedRuntime,
-      slot: missionDraft.slot
-    }),
-    [missionDraft.slot, selectedDevice, selectedModel, selectedRuntime]
+  const flowState = useMemo(
+    () =>
+      buildHubFlowState({
+        activeHubStage,
+        contextReadiness,
+        hasLoadedSnapshot,
+        lastMissionPackageHandoff,
+        missionContext,
+        missionDraft,
+        missionPackagePlan,
+        snapshot
+      }),
+    [
+      activeHubStage,
+      contextReadiness,
+      hasLoadedSnapshot,
+      lastMissionPackageHandoff,
+      missionContext,
+      missionDraft,
+      missionPackagePlan,
+      snapshot
+    ]
   );
-  const readinessKey = readinessContextKey(readinessContext);
-  const scopedReadiness = scopedReadinessFor({
-    context: readinessContext,
-    contextReadiness,
-    snapshotReadiness: snapshot.readiness
-  });
-  const runtimeDecision = asRecord(scopedReadiness?.runtime_decision);
-  const edgeExecutionContract = asRecord(scopedReadiness?.edge_execution_contract);
-  const runtimeFitDisplay = runtimeFitDisplayFor(scopedReadiness, edgeRuntimeFit, selectedRuntime);
-  const runtimeStageView = useMemo(() => buildRuntimeStageView({
-    activeHubStage,
+  const {
+    canStageMissionPackage,
     edgeExecutionContract,
-    readiness: scopedReadiness,
+    edgeProofWorkflow,
+    edgeRuntimeMission,
+    hasMissionPackageDeploymentIntent,
+    hubStages,
+    missionPackageDeploymentCommand,
+    missionPackageDeploymentIntent,
+    missionPackageManifest,
+    missionPackageStageStatus,
+    missionReady,
+    readinessContext,
+    readinessKey,
+    readinessVerdict,
     runtimeDecision,
-    runtimeTargets: snapshot.runtimeTargets,
-    runtimeValidations: snapshot.runtimeValidations,
-    selectedDevice,
-    selectedModel,
-    selectedRuntime,
-    slot: missionDraft.slot
-  }), [
-    activeHubStage,
-    edgeExecutionContract,
-    missionDraft.slot,
-    runtimeDecision,
+    runtimeFitDisplay,
+    runtimeStageView,
     scopedReadiness,
-    selectedDevice,
-    selectedModel,
-    selectedRuntime,
-    snapshot.runtimeTargets,
-    snapshot.runtimeValidations
-  ]);
+    showProductStage
+  } = flowState;
   const targetFitValue = selectedModel ? runtimeFitDisplay.label : compatibleTargets;
   const targetFitDetail = selectedModel
     ? `${selectedRuntime ? runtimeTargetId(selectedRuntime) : "runtime target"}; ${compatibleTargets}/${snapshot.runtimeTargets.length} eligible`
     : "runtime targets available";
-  const readinessVerdict =
-    !hasLoadedSnapshot
-      ? syncingReadinessVerdict()
-      : scopedReadiness?.gates?.length
-      ? readinessVerdictFromApi(scopedReadiness)
-      : derivedReadinessVerdict;
-  const edgeRuntimeMission = buildEdgeRuntimeMission({
-    device: selectedDevice,
-    edgeRuntimeFit,
-    missionReplay: snapshot.missionReplay,
-    model: selectedModel,
-    pendingOperationLedger,
-    pendingOperations,
-    readiness: scopedReadiness,
-    readinessVerdict,
-    replayBlockedOperations,
-    resourceEnvelopeFit,
-    runtime: selectedRuntime,
-    runtimeFitDisplay,
-    runtimeValidation: selectedRuntimeValidation
-  });
-  const edgeProofWorkflow = buildEdgeProofWorkflow({
-    device: selectedDevice,
-    model: selectedModel,
-    readiness: scopedReadiness,
-    readinessVerdict,
-    runtime: selectedRuntime,
-    runtimeFitDisplay,
-    slot: readinessContext.slot || missionDraft.slot
-  });
-  const draftMissionPackageManifest = buildMissionPackageManifest({
-    device: selectedDevice,
-    draft: missionDraft,
-    model: selectedModel,
-    runtime: selectedRuntime
-  });
-  const missionPackageManifest = missionPackagePlan ?? draftMissionPackageManifest;
-  const missionReady = Boolean((missionDraft.goal || missionDraft.yaml).trim());
-  const missionPackageStageStatus = buildMissionPackageStageStatus({
-    handoff: lastMissionPackageHandoff,
-    manifest: missionPackageManifest,
-    missionReady,
-    plan: missionPackagePlan
-  });
-  const hubStages = buildHubStages({
-    ddilDetail,
-    deadLetteredOperations,
-    evidenceBundleCount: snapshot.evidenceBundles.length,
-    evidenceDetail,
-    evidenceValue,
-    latestRollout,
-    missionDraft,
-    missionPackageStageStatus,
-    missionProofComplete,
-    missionReady,
-    missionRolloutCount: missionRollouts.length,
-    offlineMode,
-    proofEvents,
-    replayBlockedOperations,
-    rolloutDetail,
-    runtimeFitDisplay,
-    selectedModel,
-    selectedRuntime
-  });
-  const showProductStage =
-    activeHubStage === "model" || activeHubStage === "deploy" || activeHubStage === "field";
-  const missionPackageDeploymentIntent = asRecord(missionPackageManifest.deployment_intent);
-  const missionPackageDeploymentCommand = asRecord(missionPackageDeploymentIntent.command);
-  const hasMissionPackageDeploymentIntent = Boolean(
-    missionPackageDeploymentIntent.rollout_id && missionPackageDeploymentCommand.path
-  );
-  const canStageMissionPackage =
-    hasMissionPackageDeploymentIntent && missionPackageStageStatus.stageable;
   const edgeProofTrace = useMemo(
     () => edgeProofTraceStatus(lastEdgeProof, readinessContext),
     [lastEdgeProof, readinessKey]

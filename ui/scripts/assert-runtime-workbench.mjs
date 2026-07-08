@@ -35,6 +35,7 @@ const edgeProofWorkflowPath = join(uiRoot, "src", "lib", "edge-proof-workflow.ts
 const edgeRuntimeMissionPath = join(uiRoot, "src", "lib", "edge-runtime-mission.ts");
 const fieldOpsProofPath = join(uiRoot, "src", "lib", "field-ops-proof.ts");
 const hubActionsPath = join(uiRoot, "src", "lib", "hub-actions.ts");
+const hubFlowStatePath = join(uiRoot, "src", "lib", "hub-flow-state.ts");
 const hubFormActionsPath = join(uiRoot, "src", "lib", "hub-form-actions.ts");
 const hubMissionContextPath = join(uiRoot, "src", "lib", "hub-mission-context.ts");
 const readinessPath = join(uiRoot, "src", "lib", "readiness.ts");
@@ -131,6 +132,7 @@ const deploymentIntentSource = readFileSync(deploymentIntentPath, "utf8");
 const edgeRuntimeMissionSource = readFileSync(edgeRuntimeMissionPath, "utf8");
 const fieldOpsProofSource = readFileSync(fieldOpsProofPath, "utf8");
 const hubActionsSource = readFileSync(hubActionsPath, "utf8");
+const hubFlowStateSource = readFileSync(hubFlowStatePath, "utf8");
 const hubFormActionsSource = readFileSync(hubFormActionsPath, "utf8");
 const hubMissionContextSource = readFileSync(hubMissionContextPath, "utf8");
 const readinessSource = readFileSync(readinessPath, "utf8");
@@ -142,7 +144,7 @@ const hubStageNavigationSource = readFileSync(hubStageNavigationPath, "utf8");
 const missionYamlImportSource = readFileSync(missionYamlImportPath, "utf8");
 const missionPackageSource = readFileSync(missionPackagePath, "utf8");
 const missionWorkflowSource = readFileSync(missionWorkflowPath, "utf8");
-const workbenchSource = `${source}\n${capabilityDossierSource}\n${edgeDeployStageSource}\n${deployListsSource}\n${edgeProofSource}\n${fieldOpsSource}\n${fieldOpsStageSource}\n${packageHandoffSource}\n${packageStageSource}\n${missionStagesSource}\n${modelPlanSource}\n${readinessPanelsSource}\n${runtimeDecisionTraceSource}\n${runtimeExecutionContractSource}\n${runtimeContractRowsSource}\n${runtimeMissionSource}\n${runtimeOperatorProofSource}\n${runtimeOptimizerSource}\n${runtimeWorkbenchSource}\n${workbenchFlowSource}\n${edgeProofWorkflowSource}\n${deploymentIntentSource}\n${edgeRuntimeMissionSource}\n${fieldOpsProofSource}\n${hubActionsSource}\n${hubFormActionsSource}\n${hubMissionContextSource}\n${readinessSource}\n${runtimeDecisionSource}\n${proofCommandSource}\n${runtimeRemediationSource}\n${runtimeStageViewSource}\n${hubStageNavigationSource}\n${missionYamlImportSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
+const workbenchSource = `${source}\n${capabilityDossierSource}\n${edgeDeployStageSource}\n${deployListsSource}\n${edgeProofSource}\n${fieldOpsSource}\n${fieldOpsStageSource}\n${packageHandoffSource}\n${packageStageSource}\n${missionStagesSource}\n${modelPlanSource}\n${readinessPanelsSource}\n${runtimeDecisionTraceSource}\n${runtimeExecutionContractSource}\n${runtimeContractRowsSource}\n${runtimeMissionSource}\n${runtimeOperatorProofSource}\n${runtimeOptimizerSource}\n${runtimeWorkbenchSource}\n${workbenchFlowSource}\n${edgeProofWorkflowSource}\n${deploymentIntentSource}\n${edgeRuntimeMissionSource}\n${fieldOpsProofSource}\n${hubActionsSource}\n${hubFlowStateSource}\n${hubFormActionsSource}\n${hubMissionContextSource}\n${readinessSource}\n${runtimeDecisionSource}\n${proofCommandSource}\n${runtimeRemediationSource}\n${runtimeStageViewSource}\n${hubStageNavigationSource}\n${missionYamlImportSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
 const apiSource = readFileSync(apiPath, "utf8");
 const missionSpecSource = readFileSync(missionSpecPath, "utf8");
 const proofHashSource = readFileSync(proofHashPath, "utf8");
@@ -375,6 +377,18 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "focus({ preventScroll: true })",
   "querySelector<HTMLElement>(`[data-stage-id=\"${stage}\"]`)"
 ].forEach((needle) => assertContains("Hub stage navigation sources", hubStageNavigationSource, needle));
+
+[
+  "buildHubFlowState",
+  "buildReadinessContext",
+  "buildRuntimeStageView",
+  "buildEdgeRuntimeMission",
+  "buildEdgeProofWorkflow",
+  "buildMissionPackageManifest",
+  "buildMissionPackageStageStatus",
+  "buildHubStages",
+  "readinessContextKey"
+].forEach((needle) => assertContains("Hub flow state sources", hubFlowStateSource, needle));
 
 [
   "buildHubFormAction",
@@ -976,6 +990,17 @@ const bundledHubMissionContext = await build({
 const hubMissionContextModule = await import(
   `data:text/javascript;base64,${Buffer.from(bundledHubMissionContext.outputFiles[0].text).toString("base64")}`
 );
+const bundledHubFlowState = await build({
+  bundle: true,
+  entryPoints: [hubFlowStatePath],
+  format: "esm",
+  platform: "node",
+  target: "es2020",
+  write: false
+});
+const hubFlowStateModule = await import(
+  `data:text/javascript;base64,${Buffer.from(bundledHubFlowState.outputFiles[0].text).toString("base64")}`
+);
 const modelFixture = {
   format: "onnx",
   id: "model-yolov8-lowlight-001",
@@ -984,8 +1009,9 @@ const modelFixture = {
   name: "YOLOv8 lowlight",
   packageId: "pkg-vision-models-20240115"
 };
+const thermalMissionDraftFixture = { ...missionDraftFixture, sensor: "camera.thermal", slot: "thermal" };
 const missionContextFixture = hubMissionContextModule.buildHubMissionContext({
-  missionDraft: { ...missionDraftFixture, sensor: "camera.thermal", slot: "thermal" },
+  missionDraft: thermalMissionDraftFixture,
   selectedDeviceId: "edge-thermal-01",
   selectedModelId: "model-thermal-detector-001",
   selectedRuntimeId: "temms-jetson-ort-trt",
@@ -1218,6 +1244,119 @@ if (missionContextFixture.deploymentDetail !== "activated model-thermal-detector
 }
 if (missionContextFixture.derivedReadinessVerdict.gates.length === 0) {
   throw new Error("hub mission context should produce an operator readiness verdict");
+}
+const flowReadinessSelection = {
+  device_id: "edge-thermal-01",
+  model_id: "model-thermal-detector-001",
+  package_id: "pkg-thermal-models-20260708",
+  runtime_target_id: "temms-jetson-ort-trt",
+  slot: "thermal"
+};
+const flowContextReadiness = {
+  edge_execution_contract: {
+    target_selection: {
+      best_runtime_target_id: "temms-jetson-ort-trt",
+      selected_runtime_target_id: "temms-jetson-ort-trt"
+    }
+  },
+  gates: [{ gate_id: "runtime-fit", label: "Runtime fit", status: "go" }],
+  headline: "Thermal mission can deploy",
+  next_action: "Stage thermal package",
+  runtime_fit: {
+    detail: "validated thermal edge path",
+    runtime_target_id: "temms-jetson-ort-trt",
+    score: 98,
+    tier: "optimal"
+  },
+  selection: flowReadinessSelection,
+  status: "go"
+};
+const flowMissionPackagePlan = {
+  ...missionPackageModule.buildMissionPackageManifest({
+    device: missionContextFixture.selectedDevice,
+    draft: thermalMissionDraftFixture,
+    model: missionContextFixture.selectedModel,
+    runtime: missionContextFixture.selectedRuntime
+  }),
+  component_digests: { edge_handoff_sha256: "d".repeat(64) },
+  deployment_intent: {
+    command: { method: "POST", path: "/v1/hub/rollouts/assign" },
+    mission_contract_sha256: "b".repeat(64),
+    requires: {
+      mission_contract_digest: true,
+      runtime_capability_lock_digest: true,
+      runtime_plan_digest: true
+    },
+    runtime_capability_lock_sha256: "c".repeat(64),
+    runtime_plan_sha256: "a".repeat(64),
+    rollout_id: "rollout-model-thermal-detector-001-temms-jetson-ort-trt-edge-thermal-01"
+  },
+  edge_handoff: { schema_version: "temms-edge-mission-package-handoff/v1" },
+  proof_gate: { status: "passed" }
+};
+const flowStateFixture = hubFlowStateModule.buildHubFlowState({
+  activeHubStage: "runtime",
+  contextReadiness: flowContextReadiness,
+  hasLoadedSnapshot: true,
+  lastMissionPackageHandoff: undefined,
+  missionContext: missionContextFixture,
+  missionDraft: thermalMissionDraftFixture,
+  missionPackagePlan: flowMissionPackagePlan,
+  snapshot: {
+    benchmarks: [],
+    devices: [],
+    evidenceBundles: [{ evidence_id: "evidence-thermal" }],
+    missionReplay: { phases: [] },
+    packages: [],
+    readiness: undefined,
+    rolloutPlans: [],
+    rollouts: [],
+    runtimeTargets: [
+      {
+        device_profiles: ["jetson"],
+        runtime_target_id: "temms-jetson-ort-trt",
+        runtimes: { onnx: { available: true }, onnxruntime: { available: true, providers: ["tensorrt"] } }
+      }
+    ],
+    runtimeValidations: [
+      {
+        package_id: "pkg-thermal-models-20260708",
+        result: { ok: true },
+        runtime_target_id: "temms-jetson-ort-trt",
+        validation_id: "validation-thermal"
+      }
+    ]
+  }
+});
+if (
+  flowStateFixture.readinessKey !==
+  "pkg-thermal-models-20260708|model-thermal-detector-001|edge-thermal-01|temms-jetson-ort-trt|thermal"
+) {
+  throw new Error(`hub flow state should bind readiness context to selected mission path: ${flowStateFixture.readinessKey}`);
+}
+if (flowStateFixture.scopedReadiness !== flowContextReadiness || flowStateFixture.readinessVerdict.label !== "go") {
+  throw new Error("hub flow state should prefer fresh context readiness for the selected mission path");
+}
+if (!flowStateFixture.edgeProofWorkflow.generateCommand.includes("--slot thermal")) {
+  throw new Error("hub flow state should build edge proof workflow for the selected mission slot");
+}
+if (flowStateFixture.runtimeStageView.remediationContext.slot !== "thermal") {
+  throw new Error("hub flow state should retain thermal slot in runtime remediation context");
+}
+if (
+  flowStateFixture.missionPackageManifest.selection?.model_id !== "model-thermal-detector-001" ||
+  flowStateFixture.missionPackageManifest.selection?.runtime_target_id !== "temms-jetson-ort-trt"
+) {
+  throw new Error("hub flow state should preserve selected model/runtime in mission package manifest");
+}
+if (!flowStateFixture.canStageMissionPackage || !flowStateFixture.missionPackageStageStatus.stageable) {
+  throw new Error("hub flow state should unlock staging after proof gate and deployment intent pass");
+}
+if (flowStateFixture.hubStages.map((stage) => stage.id).join(">") !== "mission>model>runtime>handling>package>deploy>field") {
+  throw new Error("hub flow state should preserve the mission-to-edge stage order");
+}
+if (flowStateFixture.showProductStage !== false) {
+  throw new Error("hub flow state should keep runtime stage outside the product-grid advanced surface");
 }
 const promotionRequestFixture = deploymentIntentModule.buildPackagePromotionRequest("released");
 if (

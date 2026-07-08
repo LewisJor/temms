@@ -229,3 +229,5 @@ export function buildHubMissionContext({
     signedPackages
   };
 }
+
+export type HubMissionContext = ReturnType<typeof buildHubMissionContext>;
