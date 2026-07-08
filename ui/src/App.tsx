@@ -55,7 +55,8 @@ import {
 } from "./lib/mission-spec";
 import {
   buildMissionYamlImportResult,
-  missionYamlImportAdoption
+  missionYamlImportAdoption,
+  missionYamlImportErrorNotice
 } from "./lib/mission-yaml-import";
 import {
   buildMissionPackageStageRequest,
@@ -426,11 +427,7 @@ export function App(): JSX.Element {
   }
 
   function reportMissionYamlImportError(fileName: string): void {
-    setToast({
-      tone: "error",
-      title: "Mission YAML import failed",
-      detail: `${fileName} could not be read by the browser.`
-    });
+    setToast(missionYamlImportErrorNotice(fileName));
   }
 
   async function copyCommand(label: string, command: string): Promise<void> {

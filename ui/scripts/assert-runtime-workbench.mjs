@@ -558,10 +558,12 @@ collectTextFiles(docsBuildPath).forEach((path) => {
 [
   "buildMissionYamlImportResult",
   "missionYamlImportAdoption",
+  "missionYamlImportErrorNotice",
   "packagePlan: undefined",
   "packageHandoff: undefined",
   "stage: \"mission\"",
   "title: \"Mission YAML imported\"",
+  "title: \"Mission YAML import failed\"",
   "missionDraftFromYaml(currentDraft, yaml)",
   "missionSelectionFromYaml(yaml)",
   "selectedModelId: selectedYamlModel?.id",
@@ -1820,6 +1822,16 @@ if (
   missionYamlAdoptionFixture.toast.detail !== missionYamlImportFixture.toastDetail
 ) {
   throw new Error("mission YAML adoption should expose an operator-facing import toast");
+}
+const missionYamlImportErrorNoticeFixture = missionYamlImportModule.missionYamlImportErrorNotice(
+  "bad-mission.yaml"
+);
+if (
+  missionYamlImportErrorNoticeFixture.tone !== "error" ||
+  missionYamlImportErrorNoticeFixture.title !== "Mission YAML import failed" ||
+  missionYamlImportErrorNoticeFixture.detail !== "bad-mission.yaml could not be read by the browser."
+) {
+  throw new Error("mission YAML import error notice should name the unreadable mission spec file");
 }
 const missingMissionYamlImportFixture = missionYamlImportModule.buildMissionYamlImportResult({
   currentDraft: missionDraftFixture,

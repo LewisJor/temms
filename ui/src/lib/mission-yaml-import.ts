@@ -45,6 +45,14 @@ export function missionYamlImportAdoption(
   };
 }
 
+export function missionYamlImportErrorNotice(fileName: string): Toast {
+  return {
+    tone: "error",
+    title: "Mission YAML import failed",
+    detail: `${fileName} could not be read by the browser.`
+  };
+}
+
 export function buildMissionYamlImportResult({
   currentDraft,
   devices,
