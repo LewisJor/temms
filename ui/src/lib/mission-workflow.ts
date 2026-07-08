@@ -73,6 +73,12 @@ export interface BuildMissionWorkflowSignalsOptions {
   selectedRuntime: RuntimeTarget | undefined;
 }
 
+export interface ReadinessActionSelection {
+  deviceId: string;
+  modelId: string;
+  runtimeTargetId: string;
+}
+
 export function buildMissionWorkflowSignals({
   missionDraft,
   missionPackageStageStatus,
@@ -569,6 +575,18 @@ export function readinessActionContext(action: ReadinessGateAction): string {
   if (runtime) parts.push(`via ${runtime}`);
   if (slot) parts.push(`slot ${slot}`);
   return parts.join(" ");
+}
+
+export function readinessActionSelection(action: ReadinessGateAction): ReadinessActionSelection {
+  if (!["select_context", "select_runtime_target"].includes(action.kind)) {
+    return { deviceId: "", modelId: "", runtimeTargetId: "" };
+  }
+  const refs = asRecord(action.refs);
+  return {
+    deviceId: stringOf(refs.device_id, ""),
+    modelId: stringOf(refs.model_id, ""),
+    runtimeTargetId: stringOf(refs.runtime_target_id, "")
+  };
 }
 
 export function workflowTargetForReadinessAction(action: ReadinessGateAction): WorkflowTarget {

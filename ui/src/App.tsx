@@ -52,10 +52,6 @@ import {
   storedToken
 } from "./lib/hub-format";
 import {
-  asRecord,
-  stringOf
-} from "./lib/json";
-import {
   defaultMissionDraft,
   type MissionDraft
 } from "./lib/mission-spec";
@@ -72,6 +68,7 @@ import {
   edgeReadinessCommandReason,
   hubStageForWorkflowTarget,
   hubStageRunbookFor,
+  readinessActionSelection,
   readinessActionContext,
   readinessCommand,
   workflowTargetForReadinessAction,
@@ -742,28 +739,24 @@ export function App(): JSX.Element {
   }
 
   function applyReadinessActionSelection(action: ReadinessGateAction): void {
-    if (!["select_context", "select_runtime_target"].includes(action.kind)) return;
-    const refs = asRecord(action.refs);
-    const model = stringOf(refs.model_id, "");
-    const device = stringOf(refs.device_id, "");
-    const runtime = stringOf(refs.runtime_target_id, "");
-    if (model) setSelectedModelId(model);
-    if (device) setSelectedDeviceId(device);
-    if (runtime) setSelectedRuntimeId(runtime);
+    const selection = readinessActionSelection(action);
+    if (selection.modelId) setSelectedModelId(selection.modelId);
+    if (selection.deviceId) setSelectedDeviceId(selection.deviceId);
+    if (selection.runtimeTargetId) setSelectedRuntimeId(selection.runtimeTargetId);
   }
 
-function executePendingReadinessAction(): void {
-  const action = pendingReadinessAction;
-  const command = action ? readinessCommand(action) : undefined;
-  if (!action || !command) return;
-  if (command.requires_edge_execution) {
-    setToast({
-      tone: "info",
-      title: "Run this on the edge node",
-      detail: edgeReadinessCommandReason(action, command)
-    });
-    return;
-  }
+  function executePendingReadinessAction(): void {
+    const action = pendingReadinessAction;
+    const command = action ? readinessCommand(action) : undefined;
+    if (!action || !command) return;
+    if (command.requires_edge_execution) {
+      setToast({
+        tone: "info",
+        title: "Run this on the edge node",
+        detail: edgeReadinessCommandReason(action, command)
+      });
+      return;
+    }
     setPendingReadinessAction(undefined);
     void run(
       `Run ${action.label}`,

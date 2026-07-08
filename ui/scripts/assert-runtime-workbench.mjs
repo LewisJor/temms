@@ -267,6 +267,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "StageRunbookFact",
   "hubStageRunbookFor",
   "buildMissionWorkflowSignals",
+  "readinessActionSelection",
   "Ready when",
   "Risk",
   "Staging before package planning leaves rollout intent detached from the hashed mission handoff.",
@@ -1983,6 +1984,47 @@ if (signalFixture.find((signal) => signal.label === "Runtime")?.detail !== "edge
 }
 if (signalFixture.find((signal) => signal.label === "Handling")?.detail !== "fallback model-fallback / queue signed intents") {
   throw new Error("mission workflow handling signal should bind fallback model and DDIL policy");
+}
+const readinessContextSelectionFixture = missionWorkflowModule.readinessActionSelection({
+  kind: "select_context",
+  refs: {
+    device_id: "edge-rpi5",
+    model_id: "model-yolov8-lowlight-001",
+    runtime_target_id: "temms-rpi5-tflite"
+  }
+});
+if (
+  readinessContextSelectionFixture.modelId !== "model-yolov8-lowlight-001" ||
+  readinessContextSelectionFixture.deviceId !== "edge-rpi5" ||
+  readinessContextSelectionFixture.runtimeTargetId !== "temms-rpi5-tflite"
+) {
+  throw new Error("mission workflow readiness action selection should extract model, device, and runtime refs");
+}
+const runtimeOnlySelectionFixture = missionWorkflowModule.readinessActionSelection({
+  kind: "select_runtime_target",
+  refs: { runtime_target_id: "temms-jetson-ort-trt" }
+});
+if (
+  runtimeOnlySelectionFixture.modelId !== "" ||
+  runtimeOnlySelectionFixture.deviceId !== "" ||
+  runtimeOnlySelectionFixture.runtimeTargetId !== "temms-jetson-ort-trt"
+) {
+  throw new Error("mission workflow readiness action selection should support runtime-only refs");
+}
+const ignoredSelectionFixture = missionWorkflowModule.readinessActionSelection({
+  kind: "record_benchmark",
+  refs: {
+    device_id: "edge-rpi5",
+    model_id: "model-yolov8-lowlight-001",
+    runtime_target_id: "temms-rpi5-tflite"
+  }
+});
+if (
+  ignoredSelectionFixture.modelId ||
+  ignoredSelectionFixture.deviceId ||
+  ignoredSelectionFixture.runtimeTargetId
+) {
+  throw new Error("mission workflow readiness action selection should ignore non-selection readiness actions");
 }
 const blockedStageFixture = missionWorkflowModule.buildHubStages({
   ...readyStageOptions,
