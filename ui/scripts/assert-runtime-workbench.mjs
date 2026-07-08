@@ -621,6 +621,41 @@ const defaultPendingIds = defaultPendingOperations.map((operation) => operation.
 if (defaultPendingIds !== "vision,legacy") {
   throw new Error("field ops pending operations should default blank mission slots to vision");
 }
+const requeueRequestFixture = fieldOpsProofModule.buildDeadLetterRequeueRequest({
+  payload_sha256: "deadbeef"
+});
+if (
+  requeueRequestFixture?.actor !== "operator:mission-package-workbench" ||
+  requeueRequestFixture?.payload_sha256s?.[0] !== "deadbeef" ||
+  requeueRequestFixture?.require_ready !== true
+) {
+  throw new Error("field ops single requeue request should preserve DDIL payload hash and ready gate");
+}
+if (fieldOpsProofModule.buildDeadLetterRequeueRequest({}) !== undefined) {
+  throw new Error("field ops single requeue request should be unavailable without a payload hash");
+}
+const retargetRequestFixture = fieldOpsProofModule.buildPendingRuntimeRetargetRequest({
+  payload_sha256: "pending-hash",
+  runtime_workbench_best_runtime_target_id: "temms-jetson-trt"
+});
+if (
+  retargetRequestFixture?.payload_sha256 !== "pending-hash" ||
+  retargetRequestFixture?.runtime_target_id !== "temms-jetson-trt" ||
+  retargetRequestFixture?.reason !== "operator selected measured best runtime target"
+) {
+  throw new Error("field ops runtime retarget request should use the measured workbench best runtime");
+}
+const remediationRetargetRequestFixture = fieldOpsProofModule.buildPendingRuntimeRetargetRequest({
+  best_runtime_target_id: "temms-rpi5-tflite",
+  payload_sha256: "pending-hash",
+  runtime_remediation_runtime_target_id: "temms-jetson-ort-trt"
+});
+if (remediationRetargetRequestFixture?.runtime_target_id !== "temms-jetson-ort-trt") {
+  throw new Error("field ops runtime retarget request should prefer the explicit remediation runtime target");
+}
+if (fieldOpsProofModule.buildPendingRuntimeRetargetRequest({ payload_sha256: "missing-runtime" }) !== undefined) {
+  throw new Error("field ops runtime retarget request should be unavailable without a runtime target candidate");
+}
 const timelineFixture = [
   {
     active_runtime_proof: true,

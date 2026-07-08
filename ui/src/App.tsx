@@ -118,6 +118,8 @@ import {
 import { buildEdgeRuntimeMission } from "./lib/edge-runtime-mission";
 import {
   activeSlotForMission,
+  buildDeadLetterRequeueRequest,
+  buildPendingRuntimeRetargetRequest,
   latestRuntimeRepairProofFor,
   missionOperationLedgerForSlot,
   prioritizedEvidenceEvents
@@ -964,8 +966,8 @@ export function App(): JSX.Element {
   }
 
   function requeueDeadLetteredOperation(operation: Record<string, unknown>): void {
-    const digest = stringOf(operation.payload_sha256, "");
-    if (!digest) {
+    const request = buildDeadLetterRequeueRequest(operation);
+    if (!request) {
       setToast({
         tone: "info",
         title: "Requeue unavailable",
@@ -975,26 +977,14 @@ export function App(): JSX.Element {
     }
     void run(
       "Requeue quarantined DDIL intent",
-      () =>
-        controlApi.requeueDeadLetters(
-          {
-            actor: "operator:mission-package-workbench",
-            reason: "operator requeued remediated DDIL intent",
-            payload_sha256s: [digest],
-            require_ready: true
-          },
-          token
-        ),
+      () => controlApi.requeueDeadLetters(request, token),
       true
     );
   }
 
   function retargetPendingRuntime(operation: Record<string, unknown>): void {
-    const payloadSha256 = stringOf(operation.payload_sha256, "");
-    const runtimeTargetId =
-      stringOf(operation.runtime_remediation_runtime_target_id, "") ||
-      stringOf(operation.best_runtime_target_id, "");
-    if (!payloadSha256 || !runtimeTargetId) {
+    const request = buildPendingRuntimeRetargetRequest(operation);
+    if (!request) {
       setToast({
         tone: "info",
         title: "Runtime retarget unavailable",
@@ -1003,15 +993,7 @@ export function App(): JSX.Element {
       return;
     }
     void run("Retarget pending runtime", () =>
-      controlApi.retargetRuntime(
-        {
-          payload_sha256: payloadSha256,
-          runtime_target_id: runtimeTargetId,
-          actor: "operator:mission-package-workbench",
-          reason: "operator selected measured best runtime target"
-        },
-        token
-      )
+      controlApi.retargetRuntime(request, token)
     );
   }
 

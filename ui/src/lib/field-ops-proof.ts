@@ -2,6 +2,8 @@ import type { EvidenceSummary, MissionReplay } from "../types";
 import { asRecord, booleanOf, numberOf, stringOf } from "./json";
 import type { GateTone, RuntimeRepairProof } from "./workbench-types";
 
+const FIELD_OPS_ACTOR = "operator:mission-package-workbench";
+
 export function activeSlotForMission(
   activeSlots: unknown,
   missionSlot: string
@@ -53,6 +55,37 @@ export function prioritizedEvidenceEvents(
   };
   const remaining = events.filter((_, index) => index !== activeRuntimeFitIndex);
   return [activeRuntimeFit, ...remaining].slice(0, 4);
+}
+
+export function buildDeadLetterRequeueRequest(
+  operation: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  const digest = stringOf(operation.payload_sha256, "");
+  if (!digest) return undefined;
+  return {
+    actor: FIELD_OPS_ACTOR,
+    reason: "operator requeued remediated DDIL intent",
+    payload_sha256s: [digest],
+    require_ready: true
+  };
+}
+
+export function buildPendingRuntimeRetargetRequest(
+  operation: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  const payloadSha256 = stringOf(operation.payload_sha256, "");
+  const runtimeTargetId =
+    stringOf(operation.runtime_remediation_runtime_target_id, "") ||
+    stringOf(operation.runtime_retarget_workbench_best_runtime_target_id, "") ||
+    stringOf(operation.runtime_workbench_best_runtime_target_id, "") ||
+    stringOf(operation.best_runtime_target_id, "");
+  if (!payloadSha256 || !runtimeTargetId) return undefined;
+  return {
+    payload_sha256: payloadSha256,
+    runtime_target_id: runtimeTargetId,
+    actor: FIELD_OPS_ACTOR,
+    reason: "operator selected measured best runtime target"
+  };
 }
 
 function eventMatchesMissionSlot(event: Record<string, unknown>, missionSlot: string): boolean {
