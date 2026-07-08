@@ -36,6 +36,7 @@ const edgeRuntimeMissionPath = join(uiRoot, "src", "lib", "edge-runtime-mission.
 const fieldOpsProofPath = join(uiRoot, "src", "lib", "field-ops-proof.ts");
 const hubActionsPath = join(uiRoot, "src", "lib", "hub-actions.ts");
 const hubFormActionsPath = join(uiRoot, "src", "lib", "hub-form-actions.ts");
+const hubMissionContextPath = join(uiRoot, "src", "lib", "hub-mission-context.ts");
 const readinessPath = join(uiRoot, "src", "lib", "readiness.ts");
 const runtimeDecisionPath = join(uiRoot, "src", "lib", "runtime-decision.ts");
 const proofCommandPath = join(uiRoot, "src", "lib", "proof-command.ts");
@@ -131,6 +132,7 @@ const edgeRuntimeMissionSource = readFileSync(edgeRuntimeMissionPath, "utf8");
 const fieldOpsProofSource = readFileSync(fieldOpsProofPath, "utf8");
 const hubActionsSource = readFileSync(hubActionsPath, "utf8");
 const hubFormActionsSource = readFileSync(hubFormActionsPath, "utf8");
+const hubMissionContextSource = readFileSync(hubMissionContextPath, "utf8");
 const readinessSource = readFileSync(readinessPath, "utf8");
 const runtimeDecisionSource = readFileSync(runtimeDecisionPath, "utf8");
 const proofCommandSource = readFileSync(proofCommandPath, "utf8");
@@ -140,7 +142,7 @@ const hubStageNavigationSource = readFileSync(hubStageNavigationPath, "utf8");
 const missionYamlImportSource = readFileSync(missionYamlImportPath, "utf8");
 const missionPackageSource = readFileSync(missionPackagePath, "utf8");
 const missionWorkflowSource = readFileSync(missionWorkflowPath, "utf8");
-const workbenchSource = `${source}\n${capabilityDossierSource}\n${edgeDeployStageSource}\n${deployListsSource}\n${edgeProofSource}\n${fieldOpsSource}\n${fieldOpsStageSource}\n${packageHandoffSource}\n${packageStageSource}\n${missionStagesSource}\n${modelPlanSource}\n${readinessPanelsSource}\n${runtimeDecisionTraceSource}\n${runtimeExecutionContractSource}\n${runtimeContractRowsSource}\n${runtimeMissionSource}\n${runtimeOperatorProofSource}\n${runtimeOptimizerSource}\n${runtimeWorkbenchSource}\n${workbenchFlowSource}\n${edgeProofWorkflowSource}\n${deploymentIntentSource}\n${edgeRuntimeMissionSource}\n${fieldOpsProofSource}\n${hubActionsSource}\n${hubFormActionsSource}\n${readinessSource}\n${runtimeDecisionSource}\n${proofCommandSource}\n${runtimeRemediationSource}\n${runtimeStageViewSource}\n${hubStageNavigationSource}\n${missionYamlImportSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
+const workbenchSource = `${source}\n${capabilityDossierSource}\n${edgeDeployStageSource}\n${deployListsSource}\n${edgeProofSource}\n${fieldOpsSource}\n${fieldOpsStageSource}\n${packageHandoffSource}\n${packageStageSource}\n${missionStagesSource}\n${modelPlanSource}\n${readinessPanelsSource}\n${runtimeDecisionTraceSource}\n${runtimeExecutionContractSource}\n${runtimeContractRowsSource}\n${runtimeMissionSource}\n${runtimeOperatorProofSource}\n${runtimeOptimizerSource}\n${runtimeWorkbenchSource}\n${workbenchFlowSource}\n${edgeProofWorkflowSource}\n${deploymentIntentSource}\n${edgeRuntimeMissionSource}\n${fieldOpsProofSource}\n${hubActionsSource}\n${hubFormActionsSource}\n${hubMissionContextSource}\n${readinessSource}\n${runtimeDecisionSource}\n${proofCommandSource}\n${runtimeRemediationSource}\n${runtimeStageViewSource}\n${hubStageNavigationSource}\n${missionYamlImportSource}\n${missionPackageSource}\n${missionWorkflowSource}`;
 const apiSource = readFileSync(apiPath, "utf8");
 const missionSpecSource = readFileSync(missionSpecPath, "utf8");
 const proofHashSource = readFileSync(proofHashPath, "utf8");
@@ -385,6 +387,16 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "reason: \"operator created rollout plan from Mission Package Workbench\"",
   "refresh: name !== \"compatibility-preview\""
 ].forEach((needle) => assertContains("Hub form action sources", hubFormActionsSource, needle));
+
+[
+  "buildHubMissionContext",
+  "missionRolloutsForSelection",
+  "missionRolloutPlansForSelection",
+  "missionOperationLedgerForSlot",
+  "latestRuntimeRepairProofFor",
+  "prioritizedEvidenceEvents",
+  "buildReadinessVerdict"
+].forEach((needle) => assertContains("Hub mission context sources", hubMissionContextSource, needle));
 
 [
   "Runtime workbench",
@@ -953,6 +965,17 @@ const bundledMissionPackage = await build({
 const missionPackageModule = await import(
   `data:text/javascript;base64,${Buffer.from(bundledMissionPackage.outputFiles[0].text).toString("base64")}`
 );
+const bundledHubMissionContext = await build({
+  bundle: true,
+  entryPoints: [hubMissionContextPath],
+  format: "esm",
+  platform: "node",
+  target: "es2020",
+  write: false
+});
+const hubMissionContextModule = await import(
+  `data:text/javascript;base64,${Buffer.from(bundledHubMissionContext.outputFiles[0].text).toString("base64")}`
+);
 const modelFixture = {
   format: "onnx",
   id: "model-yolov8-lowlight-001",
@@ -961,6 +984,241 @@ const modelFixture = {
   name: "YOLOv8 lowlight",
   packageId: "pkg-vision-models-20240115"
 };
+const missionContextFixture = hubMissionContextModule.buildHubMissionContext({
+  missionDraft: { ...missionDraftFixture, sensor: "camera.thermal", slot: "thermal" },
+  selectedDeviceId: "edge-thermal-01",
+  selectedModelId: "model-thermal-detector-001",
+  selectedRuntimeId: "temms-jetson-ort-trt",
+  snapshot: {
+    benchmarks: [
+      {
+        benchmark_id: "bench-thermal",
+        created_at: new Date().toISOString(),
+        device_id: "edge-thermal-01",
+        model_id: "model-thermal-detector-001",
+        package_id: "pkg-thermal-models-20260708",
+        result: {
+          latency_ms: { p95: 76 },
+          throughput: { inferences_per_second: 12 }
+        },
+        runtime_target_id: "temms-jetson-ort-trt"
+      }
+    ],
+    compatibilityMatrix: {
+      recommendations: [
+        {
+          device_id: "edge-thermal-01",
+          model_id: "model-thermal-detector-001",
+          runtime_target_id: "temms-jetson-ort-trt"
+        }
+      ]
+    },
+    devices: [
+      {
+        device_id: "edge-thermal-01",
+        inventory: {
+          accelerators: { gpu: { available: true } },
+          memory_available_mb: 4096,
+          power_source: "line",
+          runtimes: { onnx: { available: true }, onnxruntime: { available: true, providers: ["tensorrt"] } },
+          storage_available_mb: 8192,
+          temperature_c: 44
+        },
+        profile: "jetson",
+        status: "online"
+      }
+    ],
+    evidenceBundles: [{ evidence_id: "evidence-thermal" }],
+    evidenceSummary: {
+      active_slots: [
+        { active_model: "model-rgb", slot: "vision" },
+        { active_model: "model-thermal-detector-001", slot: "thermal" }
+      ],
+      counts: { timeline_entries: 3 },
+      runtime: {
+        deployment_state: { state: "READY" },
+        offline_mode: true,
+        pending_operation_dead_letters: [
+          { payload: { request: { slot: "thermal" } }, payload_sha256: "dead-thermal" },
+          { payload: { request: { slot: "thermal" } }, payload_sha256: "dead-requeued", requeued: true },
+          { payload_sha256: "dead-legacy" },
+          { payload_sha256: "dead-vision", slot: "vision" }
+        ],
+        pending_operation_preflight: {
+          blocked: 0,
+          optimization_advisories: 1,
+          ready: 1,
+          superseded: 0
+        },
+        pending_operation_verification: { invalid: 0, verified: 1 },
+        pending_operations: [
+          { payload: { request: { slot: "thermal" } }, payload_sha256: "pending-thermal" },
+          { payload_sha256: "pending-legacy" },
+          { payload_sha256: "pending-vision", slot: "vision" }
+        ]
+      },
+      timeline: [
+        {
+          active_runtime_proof: true,
+          kind: "runtime_fit",
+          record: { selection: { model_id: "model-thermal-detector-001", slot: "thermal" } },
+          slot: "thermal",
+          summary: "thermal runtime proof retained"
+        },
+        {
+          active_runtime_proof: true,
+          kind: "runtime_fit",
+          record: { selection: { model_id: "model-rgb", slot: "vision" } },
+          slot: "vision",
+          summary: "vision runtime proof"
+        },
+        { kind: "deployment", summary: "legacy deployment event" }
+      ],
+      trust: { signed_package_imports: 1 }
+    },
+    missionReplay: {
+      outcome: { completed_phases: 2, incomplete_phases: [] },
+      phases: [
+        { label: "plan", status: "complete" },
+        { label: "deploy", status: "complete" }
+      ]
+    },
+    packages: [
+      {
+        metadata: {
+          models: [
+            {
+              format: "onnx",
+              id: "model-thermal-detector-001",
+              name: "Thermal detector",
+              performance_slo: {
+                max_benchmark_age_seconds: 86400,
+                max_latency_ms_p95: 95,
+                min_throughput_ips: 8
+              },
+              resource_requirements: {
+                max_temperature_c: 80,
+                min_memory_available_mb: 1024,
+                min_storage_available_mb: 1024,
+                required_power_source: "line"
+              },
+              runtime_constraints: {
+                device_profiles: ["jetson"],
+                providers: ["tensorrt"],
+                runtimes: ["onnx"]
+              },
+              version: "1.0.0"
+            }
+          ],
+          validation: { signature_verified: true }
+        },
+        name: "Thermal models",
+        package_id: "pkg-thermal-models-20260708",
+        promotion: { state: "approved" },
+        version: "2026.7.8"
+      }
+    ],
+    rolloutPlans: [
+      {
+        model_id: "model-thermal-detector-001",
+        package_id: "pkg-thermal-models-20260708",
+        plan_id: "plan-thermal",
+        slot: "thermal"
+      },
+      {
+        package_id: "pkg-thermal-models-20260708",
+        plan_id: "plan-package-wide",
+        slot: "thermal"
+      },
+      {
+        model_id: "model-thermal-detector-001",
+        package_id: "pkg-thermal-models-20260708",
+        plan_id: "plan-vision",
+        slot: "vision"
+      }
+    ],
+    rollouts: [
+      {
+        model_id: "model-thermal-detector-001",
+        package_id: "pkg-thermal-models-20260708",
+        rollout_id: "rollout-thermal",
+        slot: "thermal",
+        state: "activated",
+        updated_at: "2026-07-08T02:00:00.000Z"
+      },
+      {
+        model_id: "model-thermal-detector-001",
+        package_id: "pkg-thermal-models-20260708",
+        rollout_id: "rollout-legacy",
+        state: "assigned",
+        updated_at: "2026-07-08T01:00:00.000Z"
+      },
+      {
+        model_id: "model-thermal-detector-001",
+        package_id: "pkg-thermal-models-20260708",
+        rollout_id: "rollout-vision",
+        slot: "vision",
+        state: "assigned"
+      }
+    ],
+    runtimeTargets: [
+      {
+        device_profiles: ["jetson"],
+        runtime_target_id: "temms-jetson-ort-trt",
+        runtimes: { onnx: { available: true }, onnxruntime: { available: true, providers: ["tensorrt"] } }
+      }
+    ],
+    runtimeValidations: [
+      {
+        package_id: "pkg-thermal-models-20260708",
+        result: { ok: true },
+        runtime_target_id: "temms-jetson-ort-trt",
+        validation_id: "validation-thermal"
+      }
+    ]
+  }
+});
+if (missionContextFixture.selectedModel?.id !== "model-thermal-detector-001") {
+  throw new Error("hub mission context should select the requested model");
+}
+if (missionContextFixture.selectedPackage?.package_id !== "pkg-thermal-models-20260708") {
+  throw new Error("hub mission context should bind the selected model back to its package");
+}
+if (missionContextFixture.selectedRuntime?.runtime_target_id !== "temms-jetson-ort-trt") {
+  throw new Error("hub mission context should select the requested runtime target");
+}
+if (missionContextFixture.activeModelId !== "model-thermal-detector-001") {
+  throw new Error("hub mission context should follow active evidence for the selected mission slot");
+}
+if (missionContextFixture.edgeRuntimeFit.tone !== "good" || missionContextFixture.resourceEnvelopeFit.tone !== "good") {
+  throw new Error(
+    `hub mission context should preserve validated on-device runtime and resource fit: runtime=${missionContextFixture.edgeRuntimeFit.tone}/${missionContextFixture.edgeRuntimeFit.detail}; resource=${missionContextFixture.resourceEnvelopeFit.tone}/${missionContextFixture.resourceEnvelopeFit.detail}`
+  );
+}
+if (missionContextFixture.nextPackageState !== "released") {
+  throw new Error("hub mission context should keep package promotion state with the selected model package");
+}
+if (missionContextFixture.missionRollouts.map((rollout) => rollout.rollout_id).join(",") !== "rollout-thermal,rollout-legacy") {
+  throw new Error("hub mission context should scope rollouts to selected model and mission slot");
+}
+if (missionContextFixture.missionRolloutPlans.map((plan) => plan.plan_id).join(",") !== "plan-thermal,plan-package-wide") {
+  throw new Error("hub mission context should scope rollout plans to selected model/package and mission slot");
+}
+if (missionContextFixture.pendingOperationLedger.map((operation) => operation.payload_sha256).join(",") !== "pending-thermal,pending-legacy") {
+  throw new Error("hub mission context should scope pending DDIL operations to selected mission slot");
+}
+if (missionContextFixture.deadLetteredOperationLedger.map((operation) => operation.payload_sha256).join(",") !== "dead-thermal,dead-legacy") {
+  throw new Error("hub mission context should scope unresolved DDIL dead letters to selected mission slot");
+}
+if (missionContextFixture.latestEvents[0]?.summary !== "thermal runtime proof retained") {
+  throw new Error("hub mission context should prioritize selected-slot runtime proof events");
+}
+if (missionContextFixture.deploymentDetail !== "activated model-thermal-detector-001") {
+  throw new Error("hub mission context should show active selected-slot deployment detail");
+}
+if (missionContextFixture.derivedReadinessVerdict.gates.length === 0) {
+  throw new Error("hub mission context should produce an operator readiness verdict");
+}
 const promotionRequestFixture = deploymentIntentModule.buildPackagePromotionRequest("released");
 if (
   promotionRequestFixture.state !== "released" ||
