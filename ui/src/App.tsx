@@ -23,8 +23,7 @@ import {
 } from "./api";
 import type {
   EdgeProofDownloadHandoff,
-  MissionPackageDownloadHandoff,
-  ReadinessQuery
+  MissionPackageDownloadHandoff
 } from "./api";
 import {
   Badge,
@@ -122,9 +121,13 @@ import {
   prioritizedEvidenceEvents
 } from "./lib/field-ops-proof";
 import {
+  buildReadinessContext,
+  hasReadinessContextSelection,
   readinessMatchesContext,
+  readinessContextKey,
   readinessVerdictFromApi,
   selectionMatchesContext,
+  scopedReadinessFor,
   syncingReadinessVerdict
 } from "./lib/readiness";
 import type {
@@ -359,27 +362,20 @@ export function App(): JSX.Element {
     signedEvidenceImports
   });
   const readinessContext = useMemo(
-    () => ({
-      package_id: selectedModel?.packageId,
-      model_id: selectedModel?.id,
-      device_id: selectedDevice ? deviceId(selectedDevice) : undefined,
-      runtime_target_id: selectedRuntime ? runtimeTargetId(selectedRuntime) : undefined,
-      slot: missionDraft.slot || "vision"
+    () => buildReadinessContext({
+      device: selectedDevice,
+      model: selectedModel,
+      runtime: selectedRuntime,
+      slot: missionDraft.slot
     }),
     [missionDraft.slot, selectedDevice, selectedModel, selectedRuntime]
   );
-  const readinessKey = [
-    readinessContext.package_id,
-    readinessContext.model_id,
-    readinessContext.device_id,
-    readinessContext.runtime_target_id,
-    readinessContext.slot
-  ].join("|");
-  const scopedReadiness = readinessMatchesContext(contextReadiness, readinessContext)
-    ? contextReadiness
-    : readinessMatchesContext(snapshot.readiness, readinessContext)
-      ? snapshot.readiness
-      : undefined;
+  const readinessKey = readinessContextKey(readinessContext);
+  const scopedReadiness = scopedReadinessFor({
+    context: readinessContext,
+    contextReadiness,
+    snapshotReadiness: snapshot.readiness
+  });
   const runtimeDecision = asRecord(scopedReadiness?.runtime_decision);
   const edgeExecutionContract = asRecord(scopedReadiness?.edge_execution_contract);
   const runtimeFitDisplay = runtimeFitDisplayFor(scopedReadiness, edgeRuntimeFit, selectedRuntime);
@@ -547,7 +543,7 @@ export function App(): JSX.Element {
   }, [selectedRuntime, selectedRuntimeId]);
 
   useEffect(() => {
-    if (!readinessContext.package_id && !readinessContext.device_id && !readinessContext.runtime_target_id) {
+    if (!hasReadinessContextSelection(readinessContext)) {
       setContextReadiness(undefined);
       return;
     }

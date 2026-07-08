@@ -392,6 +392,16 @@ collectTextFiles(docsBuildPath).forEach((path) => {
 ].forEach((needle) => assertContains("Runtime decision sources", runtimeDecisionSource, needle));
 
 [
+  "buildReadinessContext",
+  "readinessContextKey",
+  "hasReadinessContextSelection",
+  "scopedReadinessFor",
+  "readinessMatchesContext",
+  "selectionMatchesContext",
+  "slot || \"vision\""
+].forEach((needle) => assertContains("Readiness sources", readinessSource, needle));
+
+[
   "buildRuntimeStageView",
   "RuntimeStageView",
   "runtimeWorkbenchRows",

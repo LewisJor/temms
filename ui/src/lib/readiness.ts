@@ -1,9 +1,9 @@
-import type { DeploymentReadiness } from "../types";
-import { toneForPath, toneForReadinessStatus } from "./hub-format";
+import type { DeploymentReadiness, Device, RuntimeTarget } from "../types";
+import { deviceId, runtimeTargetId, toneForPath, toneForReadinessStatus } from "./hub-format";
 import { asRecord, stringOf } from "./json";
 import { readinessCommandFromValue } from "./mission-workflow";
 import { compactMetricDetail } from "./runtime-fit";
-import type { ReadinessGate, ReadinessVerdict } from "./workbench-types";
+import type { ModelRecord, ReadinessGate, ReadinessVerdict } from "./workbench-types";
 
 export interface ReadinessContext {
   package_id?: string;
@@ -11,6 +11,54 @@ export interface ReadinessContext {
   device_id?: string;
   runtime_target_id?: string;
   slot?: string;
+}
+
+export function buildReadinessContext({
+  device,
+  model,
+  runtime,
+  slot
+}: {
+  device: Device | undefined;
+  model: ModelRecord | undefined;
+  runtime: RuntimeTarget | undefined;
+  slot: string;
+}): ReadinessContext {
+  return {
+    package_id: model?.packageId,
+    model_id: model?.id,
+    device_id: device ? deviceId(device) : undefined,
+    runtime_target_id: runtime ? runtimeTargetId(runtime) : undefined,
+    slot: slot || "vision"
+  };
+}
+
+export function readinessContextKey(context: ReadinessContext): string {
+  return [
+    context.package_id,
+    context.model_id,
+    context.device_id,
+    context.runtime_target_id,
+    context.slot
+  ].join("|");
+}
+
+export function hasReadinessContextSelection(context: ReadinessContext): boolean {
+  return Boolean(context.package_id || context.device_id || context.runtime_target_id);
+}
+
+export function scopedReadinessFor({
+  context,
+  contextReadiness,
+  snapshotReadiness
+}: {
+  context: ReadinessContext;
+  contextReadiness: DeploymentReadiness | undefined;
+  snapshotReadiness: DeploymentReadiness | undefined;
+}): DeploymentReadiness | undefined {
+  if (readinessMatchesContext(contextReadiness, context)) return contextReadiness;
+  if (readinessMatchesContext(snapshotReadiness, context)) return snapshotReadiness;
+  return undefined;
 }
 
 export function readinessMatchesContext(
