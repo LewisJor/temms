@@ -1,4 +1,4 @@
-import type { EvidenceSummary, MissionReplay } from "../types";
+import type { EvidenceExportMode, EvidenceSummary, JsonObject, MissionReplay } from "../types";
 import { asRecord, booleanOf, numberOf, stringOf } from "./json";
 import type { GateTone, RuntimeRepairProof } from "./workbench-types";
 
@@ -89,6 +89,22 @@ export function buildDeadLetterBatchRequeueRequest(): Record<string, unknown> {
     actor: FIELD_OPS_ACTOR,
     reason: "operator requeued remediated DDIL intents",
     require_ready: true
+  };
+}
+
+export function buildEvidenceExportRequest(mode: EvidenceExportMode): JsonObject {
+  if (mode === "summary") {
+    return { summary: true, summary_limit: 20 };
+  }
+  if (mode === "replay") {
+    return { replay: true, replay_limit: 50 };
+  }
+  return { decision_limit: 100, include_benchmarks: true };
+}
+
+export function buildAirgapExportRequest(includePackages: boolean): JsonObject {
+  return {
+    include_packages: includePackages
   };
 }
 

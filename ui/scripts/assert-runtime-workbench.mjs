@@ -500,7 +500,9 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "latestRuntimeRepairProofFor",
   "buildBlockedOperationsQuarantineRequest",
   "buildDeadLetterAcknowledgeRequest",
-  "buildDeadLetterBatchRequeueRequest"
+  "buildDeadLetterBatchRequeueRequest",
+  "buildEvidenceExportRequest",
+  "buildAirgapExportRequest"
 ].forEach((needle) => assertContains("Field Ops proof sources", fieldOpsProofSource, needle));
 
 [
@@ -695,6 +697,23 @@ if (
   batchRequeueRequestFixture?.require_ready !== true
 ) {
   throw new Error("field ops batch requeue request should preserve Workbench actor and ready gate");
+}
+const summaryExportRequestFixture = fieldOpsProofModule.buildEvidenceExportRequest("summary");
+if (summaryExportRequestFixture?.summary !== true || summaryExportRequestFixture?.summary_limit !== 20) {
+  throw new Error("field ops summary export request should preserve summary limit policy");
+}
+const replayExportRequestFixture = fieldOpsProofModule.buildEvidenceExportRequest("replay");
+if (replayExportRequestFixture?.replay !== true || replayExportRequestFixture?.replay_limit !== 50) {
+  throw new Error("field ops replay export request should preserve replay limit policy");
+}
+const fullExportRequestFixture = fieldOpsProofModule.buildEvidenceExportRequest("full");
+if (fullExportRequestFixture?.decision_limit !== 100 || fullExportRequestFixture?.include_benchmarks !== true) {
+  throw new Error("field ops full export request should preserve decision and benchmark policy");
+}
+const airgapWithPackagesFixture = fieldOpsProofModule.buildAirgapExportRequest(true);
+const airgapWithoutPackagesFixture = fieldOpsProofModule.buildAirgapExportRequest(false);
+if (airgapWithPackagesFixture?.include_packages !== true || airgapWithoutPackagesFixture?.include_packages !== false) {
+  throw new Error("field ops air-gap export request should preserve package inclusion flag");
 }
 const retargetRequestFixture = fieldOpsProofModule.buildPendingRuntimeRetargetRequest({
   payload_sha256: "pending-hash",

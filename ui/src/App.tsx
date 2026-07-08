@@ -98,10 +98,12 @@ import {
   buildRolloutRollbackRequest
 } from "./lib/deployment-intent";
 import {
+  buildAirgapExportRequest,
   buildBlockedOperationsQuarantineRequest,
   buildDeadLetterAcknowledgeRequest,
   buildDeadLetterBatchRequeueRequest,
   buildDeadLetterRequeueRequest,
+  buildEvidenceExportRequest,
   buildPendingRuntimeRetargetRequest
 } from "./lib/field-ops-proof";
 import { buildHubFlowState } from "./lib/hub-flow-state";
@@ -614,19 +616,13 @@ export function App(): JSX.Element {
   }
 
   function exportEvidence(mode: EvidenceExportMode): void {
-    const body =
-      mode === "summary"
-        ? { summary: true, summary_limit: 20 }
-        : mode === "replay"
-          ? { replay: true, replay_limit: 50 }
-          : { decision_limit: 100, include_benchmarks: true };
-    void run(`Evidence ${mode}`, () => hubApi.exportEvidence(body, token), false);
+    void run(`Evidence ${mode}`, () => hubApi.exportEvidence(buildEvidenceExportRequest(mode), token), false);
   }
 
   function exportAirgap(includePackages: boolean): void {
     void run(
       includePackages ? "Export air-gap bundle with packages" : "Export air-gap bundle",
-      () => hubApi.exportAirgap({ include_packages: includePackages }, token),
+      () => hubApi.exportAirgap(buildAirgapExportRequest(includePackages), token),
       false
     );
   }
