@@ -511,7 +511,9 @@ collectTextFiles(docsBuildPath).forEach((path) => {
 [
   "edgeRecommendationSelection",
   "deploymentIntentQueueAction",
+  "rolloutApplyAction",
   "title: \"Queue DDIL deployment intent\"",
+  "title: `Apply ${rolloutId}`",
   "workflowTarget: \"deployment\"",
   "modelId: recommendation.model_id ? String(recommendation.model_id) : undefined",
   "runtimeTargetId: recommendation.runtime_target_id ? String(recommendation.runtime_target_id) : undefined"
@@ -1815,6 +1817,18 @@ const fallbackRolloutApplyRequestFixture = deploymentIntentModule.buildRolloutAp
 });
 if (fallbackRolloutApplyRequestFixture.model_id !== "model-from-selection") {
   throw new Error("rollout apply request should fall back to the selected model id");
+}
+const rolloutApplyActionFixture = deploymentIntentModule.rolloutApplyAction({
+  rollout: { model_id: "model-from-rollout" },
+  rolloutId: "rollout-thermal",
+  selectedModel: { id: "model-from-selection" }
+});
+if (
+  rolloutApplyActionFixture.title !== "Apply rollout-thermal" ||
+  rolloutApplyActionFixture.request.actor !== "operator:react-ui" ||
+  rolloutApplyActionFixture.request.model_id !== "model-from-rollout"
+) {
+  throw new Error("rollout apply action should preserve rollout title and rollout-bound model request");
 }
 if (deploymentIntentModule.buildRolloutRollbackRequest().reason !== "operator requested rollback from Mission Package Workbench") {
   throw new Error("rollout rollback request should preserve mission workbench rollback reason");

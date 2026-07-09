@@ -17,6 +17,11 @@ export interface DeploymentIntentQueueAction {
   title: string;
 }
 
+export interface RolloutApplyAction {
+  request: JsonObject;
+  title: string;
+}
+
 export function edgeRecommendationSelection(
   recommendation: EdgeRecommendation
 ): EdgeRecommendationSelection {
@@ -131,6 +136,21 @@ export function buildRolloutApplyRequest({
   return {
     actor: "operator:react-ui",
     model_id: rollout?.model_id || selectedModel?.id
+  };
+}
+
+export function rolloutApplyAction({
+  rollout,
+  rolloutId,
+  selectedModel
+}: {
+  rollout: Rollout | undefined;
+  rolloutId: string;
+  selectedModel: ModelRecord | undefined;
+}): RolloutApplyAction {
+  return {
+    request: buildRolloutApplyRequest({ rollout, selectedModel }),
+    title: `Apply ${rolloutId}`
   };
 }
 

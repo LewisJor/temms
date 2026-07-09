@@ -100,12 +100,12 @@ import {
   buildPackagePromotionRequest,
   deploymentIntentQueueAction,
   edgeRecommendationSelection,
-  buildRolloutApplyRequest,
   buildRolloutApprovalRequest,
   buildRolloutPlanAdvanceRequest,
   buildRolloutPlanPauseRequest,
   buildRolloutPlanResumeRequest,
-  buildRolloutRollbackRequest
+  buildRolloutRollbackRequest,
+  rolloutApplyAction
 } from "./lib/deployment-intent";
 import {
   buildAirgapExportRequest,
@@ -579,9 +579,8 @@ export function App(): JSX.Element {
 
   function applyRollout(id: string): void {
     const rollout = snapshot.rollouts.find((candidate) => rolloutId(candidate) === id);
-    void run(`Apply ${id}`, () =>
-      hubApi.applyRollout(id, buildRolloutApplyRequest({ rollout, selectedModel }), token)
-    );
+    const action = rolloutApplyAction({ rollout, rolloutId: id, selectedModel });
+    void run(action.title, () => hubApi.applyRollout(id, action.request, token));
   }
 
   function rollbackRollout(id: string): void {
