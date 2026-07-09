@@ -511,6 +511,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
 [
   "edgeRecommendationSelection",
   "deploymentIntentQueueAction",
+  "packagePromotionAction",
   "rolloutApplyAction",
   "rolloutApprovalAction",
   "rolloutRollbackAction",
@@ -536,6 +537,8 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "buildDeadLetterBatchRequeueRequest",
   "buildEvidenceExportRequest",
   "buildAirgapExportRequest",
+  "evidenceExportAction",
+  "airgapExportAction",
   "deadLetterRequeueUnavailableNotice",
   "pendingRuntimeRetargetUnavailableNotice",
   "This quarantined DDIL intent does not include a payload hash.",
@@ -849,10 +852,25 @@ const fullExportRequestFixture = fieldOpsProofModule.buildEvidenceExportRequest(
 if (fullExportRequestFixture?.decision_limit !== 100 || fullExportRequestFixture?.include_benchmarks !== true) {
   throw new Error("field ops full export request should preserve decision and benchmark policy");
 }
+const evidenceExportActionFixture = fieldOpsProofModule.evidenceExportAction("replay");
+if (
+  evidenceExportActionFixture.title !== "Evidence replay" ||
+  evidenceExportActionFixture.request.replay !== true ||
+  evidenceExportActionFixture.request.replay_limit !== 50
+) {
+  throw new Error("field ops evidence export action should preserve title and replay request");
+}
 const airgapWithPackagesFixture = fieldOpsProofModule.buildAirgapExportRequest(true);
 const airgapWithoutPackagesFixture = fieldOpsProofModule.buildAirgapExportRequest(false);
 if (airgapWithPackagesFixture?.include_packages !== true || airgapWithoutPackagesFixture?.include_packages !== false) {
   throw new Error("field ops air-gap export request should preserve package inclusion flag");
+}
+const airgapActionFixture = fieldOpsProofModule.airgapExportAction(true);
+if (
+  airgapActionFixture.title !== "Export air-gap bundle with packages" ||
+  airgapActionFixture.request.include_packages !== true
+) {
+  throw new Error("field ops air-gap export action should preserve package title and request");
 }
 const retargetRequestFixture = fieldOpsProofModule.buildPendingRuntimeRetargetRequest({
   payload_sha256: "pending-hash",
@@ -1800,6 +1818,17 @@ if (
   !String(promotionRequestFixture.reason).includes("promoted to released")
 ) {
   throw new Error("package promotion request should preserve promotion state, actor, and reason");
+}
+const promotionActionFixture = deploymentIntentModule.packagePromotionAction({
+  packageId: "pkg-thermal",
+  nextPackageState: "approved"
+});
+if (
+  promotionActionFixture.title !== "Promote pkg-thermal" ||
+  promotionActionFixture.request.state !== "approved" ||
+  !String(promotionActionFixture.request.reason).includes("promoted to approved")
+) {
+  throw new Error("package promotion action should preserve package title and promotion request");
 }
 const rolloutApprovalRequestFixture = deploymentIntentModule.buildRolloutApprovalRequest();
 if (

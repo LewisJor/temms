@@ -17,6 +17,11 @@ export interface DeploymentIntentQueueAction {
   title: string;
 }
 
+export interface PackagePromotionAction {
+  request: JsonObject;
+  title: string;
+}
+
 export interface RolloutApplyAction {
   request: JsonObject;
   title: string;
@@ -121,6 +126,19 @@ export function buildPackagePromotionRequest(nextPackageState: string): JsonObje
     state: nextPackageState,
     actor: "operator:react-ui",
     reason: `promoted to ${nextPackageState} from Mission Package Workbench`
+  };
+}
+
+export function packagePromotionAction({
+  packageId,
+  nextPackageState
+}: {
+  packageId: string;
+  nextPackageState: string;
+}): PackagePromotionAction {
+  return {
+    request: buildPackagePromotionRequest(nextPackageState),
+    title: `Promote ${packageId}`
   };
 }
 

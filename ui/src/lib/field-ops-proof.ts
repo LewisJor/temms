@@ -4,6 +4,11 @@ import type { GateTone, RuntimeRepairProof } from "./workbench-types";
 
 const FIELD_OPS_ACTOR = "operator:mission-package-workbench";
 
+export interface FieldOpsExportAction {
+  request: JsonObject;
+  title: string;
+}
+
 export function activeSlotForMission(
   activeSlots: unknown,
   missionSlot: string
@@ -110,9 +115,23 @@ export function buildEvidenceExportRequest(mode: EvidenceExportMode): JsonObject
   return { decision_limit: 100, include_benchmarks: true };
 }
 
+export function evidenceExportAction(mode: EvidenceExportMode): FieldOpsExportAction {
+  return {
+    request: buildEvidenceExportRequest(mode),
+    title: `Evidence ${mode}`
+  };
+}
+
 export function buildAirgapExportRequest(includePackages: boolean): JsonObject {
   return {
     include_packages: includePackages
+  };
+}
+
+export function airgapExportAction(includePackages: boolean): FieldOpsExportAction {
+  return {
+    request: buildAirgapExportRequest(includePackages),
+    title: includePackages ? "Export air-gap bundle with packages" : "Export air-gap bundle"
   };
 }
 

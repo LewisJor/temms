@@ -97,9 +97,9 @@ import {
   verifyEdgeProofComponentDigestStatus
 } from "./lib/edge-proof-workflow";
 import {
-  buildPackagePromotionRequest,
   deploymentIntentQueueAction,
   edgeRecommendationSelection,
+  packagePromotionAction,
   rolloutApplyAction,
   rolloutApprovalAction,
   rolloutPlanAdvanceAction,
@@ -108,14 +108,14 @@ import {
   rolloutRollbackAction
 } from "./lib/deployment-intent";
 import {
-  buildAirgapExportRequest,
   buildBlockedOperationsQuarantineRequest,
   buildDeadLetterAcknowledgeRequest,
   buildDeadLetterBatchRequeueRequest,
   buildDeadLetterRequeueRequest,
-  buildEvidenceExportRequest,
   buildPendingRuntimeRetargetRequest,
+  airgapExportAction,
   deadLetterRequeueUnavailableNotice,
+  evidenceExportAction,
   pendingRuntimeRetargetUnavailableNotice
 } from "./lib/field-ops-proof";
 import { buildHubFlowState } from "./lib/hub-flow-state";
@@ -554,13 +554,8 @@ export function App(): JSX.Element {
   function promoteSelectedPackage(): void {
     if (!selectedPackage || !nextPackageState) return;
     const id = packageId(selectedPackage);
-    void run(`Promote ${id}`, () =>
-      hubApi.promotePackage(
-        id,
-        buildPackagePromotionRequest(nextPackageState),
-        token
-      )
-    );
+    const action = packagePromotionAction({ packageId: id, nextPackageState });
+    void run(action.title, () => hubApi.promotePackage(id, action.request, token));
   }
 
   function applyEdgeRecommendation(recommendation: EdgeRecommendation): void {
@@ -603,15 +598,13 @@ export function App(): JSX.Element {
   }
 
   function exportEvidence(mode: EvidenceExportMode): void {
-    void run(`Evidence ${mode}`, () => hubApi.exportEvidence(buildEvidenceExportRequest(mode), token), false);
+    const action = evidenceExportAction(mode);
+    void run(action.title, () => hubApi.exportEvidence(action.request, token), false);
   }
 
   function exportAirgap(includePackages: boolean): void {
-    void run(
-      includePackages ? "Export air-gap bundle with packages" : "Export air-gap bundle",
-      () => hubApi.exportAirgap(buildAirgapExportRequest(includePackages), token),
-      false
-    );
+    const action = airgapExportAction(includePackages);
+    void run(action.title, () => hubApi.exportAirgap(action.request, token), false);
   }
 
   function enterOfflineMode(): void {
