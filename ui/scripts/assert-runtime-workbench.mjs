@@ -272,6 +272,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "readinessActionFocus",
   "readinessActionFocusNotice",
   "readinessActionSelection",
+  "readinessCommandAction",
   "readinessCommandExecutionPlan",
   "readinessCommandEdgeExecutionNotice",
   "Ready when",
@@ -2805,6 +2806,18 @@ if (
 ) {
   throw new Error("mission workflow readiness edge execution notice should explain where to run the command");
 }
+const edgeCommandActionFixture = missionWorkflowModule.readinessCommandAction({
+  command: { method: "POST", path: "/v1/benchmarks", requires_edge_execution: true },
+  kind: "record_benchmark",
+  label: "Record benchmark"
+});
+if (
+  edgeCommandActionFixture?.command.path !== "/v1/benchmarks" ||
+  edgeCommandActionFixture.execution.requiresEdgeExecution !== true ||
+  edgeCommandActionFixture.edgeExecutionNotice?.title !== "Run this on the edge node"
+) {
+  throw new Error("mission workflow readiness command action should hold edge-required commands for edge execution");
+}
 const syncExecutionPlanFixture = missionWorkflowModule.readinessCommandExecutionPlan(
   { kind: "sync_pending", label: "Sync pending operations" },
   { method: "POST", path: "/v1/control/sync" }
@@ -2829,6 +2842,25 @@ if (
   missionWorkflowModule.readinessCommandEdgeExecutionNotice(normalExecutionPlanFixture) !== undefined
 ) {
   throw new Error("mission workflow readiness command execution should refresh after normal daemon commands");
+}
+const normalCommandActionFixture = missionWorkflowModule.readinessCommandAction({
+  command: { method: "POST", path: "/v1/hub/rollouts/rollout-1/approve" },
+  kind: "approve_rollout",
+  label: "Approve rollout"
+});
+if (
+  normalCommandActionFixture?.command.path !== "/v1/hub/rollouts/rollout-1/approve" ||
+  normalCommandActionFixture.execution.runTitle !== "Run Approve rollout" ||
+  normalCommandActionFixture.execution.shouldRefreshAfterRun !== true ||
+  normalCommandActionFixture.edgeExecutionNotice !== undefined
+) {
+  throw new Error("mission workflow readiness command action should prepare normal daemon command execution");
+}
+if (missionWorkflowModule.readinessCommandAction(undefined) !== undefined) {
+  throw new Error("mission workflow readiness command action should be unavailable without a pending action");
+}
+if (missionWorkflowModule.readinessCommandAction({ kind: "inspect_rollout", label: "Inspect rollout" }) !== undefined) {
+  throw new Error("mission workflow readiness command action should be unavailable without a command payload");
 }
 const blockedStageFixture = missionWorkflowModule.buildHubStages({
   ...readyStageOptions,

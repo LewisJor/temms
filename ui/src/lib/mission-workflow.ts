@@ -108,6 +108,12 @@ export interface ReadinessCommandExecutionPlan {
   shouldRefreshAfterRun: boolean;
 }
 
+export interface ReadinessCommandAction {
+  command: DeploymentReadinessCommand;
+  edgeExecutionNotice: Toast | undefined;
+  execution: ReadinessCommandExecutionPlan;
+}
+
 export function buildMissionWorkflowSignals({
   missionDraft,
   missionPackageStageStatus,
@@ -615,6 +621,20 @@ export function readinessCommandEdgeExecutionNotice(
     tone: "info",
     title: execution.edgeInstructionTitle,
     detail: execution.edgeInstructionDetail
+  };
+}
+
+export function readinessCommandAction(
+  action: ReadinessGateAction | undefined
+): ReadinessCommandAction | undefined {
+  if (!action) return undefined;
+  const command = readinessCommand(action);
+  if (!command) return undefined;
+  const execution = readinessCommandExecutionPlan(action, command);
+  return {
+    command,
+    edgeExecutionNotice: readinessCommandEdgeExecutionNotice(execution),
+    execution
   };
 }
 

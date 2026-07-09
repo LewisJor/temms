@@ -74,9 +74,7 @@ import {
   hubStageRunbookFor,
   readinessActionFocusNotice,
   readinessActionPlan,
-  readinessCommand,
-  readinessCommandEdgeExecutionNotice,
-  readinessCommandExecutionPlan
+  readinessCommandAction
 } from "./lib/mission-workflow";
 import { runtimeWorkbenchRowRemediationCommand } from "./lib/runtime-remediation";
 import {
@@ -689,28 +687,25 @@ export function App(): JSX.Element {
   }
 
   function executePendingReadinessAction(): void {
-    const action = pendingReadinessAction;
-    const command = action ? readinessCommand(action) : undefined;
-    if (!action || !command) return;
-    const execution = readinessCommandExecutionPlan(action, command);
-    const edgeExecutionNotice = readinessCommandEdgeExecutionNotice(execution);
-    if (edgeExecutionNotice) {
-      setToast(edgeExecutionNotice);
+    const action = readinessCommandAction(pendingReadinessAction);
+    if (!action) return;
+    if (action.edgeExecutionNotice) {
+      setToast(action.edgeExecutionNotice);
       return;
     }
     setPendingReadinessAction(undefined);
     void run(
-      execution.runTitle,
+      action.execution.runTitle,
       async () => {
-        const payload = await executeReadinessCommand(command, token);
-        if (execution.reconcileAfterRun) {
+        const payload = await executeReadinessCommand(action.command, token);
+        if (action.execution.reconcileAfterRun) {
           const nextSnapshot = await loadSnapshotAfterReconciliation(token);
           setSnapshot(nextSnapshot);
           setReadinessRefreshVersion((version) => version + 1);
         }
         return payload;
       },
-      execution.shouldRefreshAfterRun
+      action.execution.shouldRefreshAfterRun
     );
   }
 
