@@ -108,14 +108,16 @@ import {
   rolloutRollbackAction
 } from "./lib/deployment-intent";
 import {
-  buildBlockedOperationsQuarantineRequest,
-  buildDeadLetterAcknowledgeRequest,
-  buildDeadLetterBatchRequeueRequest,
-  buildDeadLetterRequeueRequest,
-  buildPendingRuntimeRetargetRequest,
   airgapExportAction,
+  blockedOperationsQuarantineAction,
+  deadLetterAcknowledgeAction,
+  deadLetterBatchRequeueAction,
+  deadLetterRequeueAction,
   deadLetterRequeueUnavailableNotice,
+  ddilOfflineModeAction,
+  ddilOnlineModeAction,
   evidenceExportAction,
+  pendingRuntimeRetargetAction,
   pendingRuntimeRetargetUnavailableNotice
 } from "./lib/field-ops-proof";
 import { buildHubFlowState } from "./lib/hub-flow-state";
@@ -608,11 +610,13 @@ export function App(): JSX.Element {
   }
 
   function enterOfflineMode(): void {
-    void run("Enter DDIL offline mode", () => controlApi.setOffline(token));
+    const action = ddilOfflineModeAction();
+    void run(action.title, () => controlApi.setOffline(token));
   }
 
   function restoreOnlineMode(): void {
-    void run("Restore online mode", () => controlApi.setOnline(token));
+    const action = ddilOnlineModeAction();
+    void run(action.title, () => controlApi.setOnline(token));
   }
 
   function syncPendingOperations(): void {
@@ -629,51 +633,36 @@ export function App(): JSX.Element {
   }
 
   function quarantineBlockedOperations(): void {
-    void run(
-      "Quarantine blocked DDIL operations",
-      () => controlApi.quarantineBlocked(buildBlockedOperationsQuarantineRequest(), token),
-      true
-    );
+    const action = blockedOperationsQuarantineAction();
+    void run(action.title, () => controlApi.quarantineBlocked(action.request, token), true);
   }
 
   function acknowledgeDeadLetteredOperations(): void {
-    void run(
-      "Acknowledge quarantined DDIL operations",
-      () => controlApi.acknowledgeDeadLetters(buildDeadLetterAcknowledgeRequest(), token),
-      true
-    );
+    const action = deadLetterAcknowledgeAction();
+    void run(action.title, () => controlApi.acknowledgeDeadLetters(action.request, token), true);
   }
 
   function requeueDeadLetteredOperations(): void {
-    void run(
-      "Requeue quarantined DDIL operations",
-      () => controlApi.requeueDeadLetters(buildDeadLetterBatchRequeueRequest(), token),
-      true
-    );
+    const action = deadLetterBatchRequeueAction();
+    void run(action.title, () => controlApi.requeueDeadLetters(action.request, token), true);
   }
 
   function requeueDeadLetteredOperation(operation: Record<string, unknown>): void {
-    const request = buildDeadLetterRequeueRequest(operation);
-    if (!request) {
+    const action = deadLetterRequeueAction(operation);
+    if (!action) {
       setToast(deadLetterRequeueUnavailableNotice());
       return;
     }
-    void run(
-      "Requeue quarantined DDIL intent",
-      () => controlApi.requeueDeadLetters(request, token),
-      true
-    );
+    void run(action.title, () => controlApi.requeueDeadLetters(action.request, token), true);
   }
 
   function retargetPendingRuntime(operation: Record<string, unknown>): void {
-    const request = buildPendingRuntimeRetargetRequest(operation);
-    if (!request) {
+    const action = pendingRuntimeRetargetAction(operation);
+    if (!action) {
       setToast(pendingRuntimeRetargetUnavailableNotice());
       return;
     }
-    void run("Retarget pending runtime", () =>
-      controlApi.retargetRuntime(request, token)
-    );
+    void run(action.title, () => controlApi.retargetRuntime(action.request, token));
   }
 
   function queueDeploymentIntent(): void {

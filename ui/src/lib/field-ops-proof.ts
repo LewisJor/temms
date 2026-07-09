@@ -4,8 +4,12 @@ import type { GateTone, RuntimeRepairProof } from "./workbench-types";
 
 const FIELD_OPS_ACTOR = "operator:mission-package-workbench";
 
-export interface FieldOpsExportAction {
+export interface FieldOpsRequestAction {
   request: JsonObject;
+  title: string;
+}
+
+export interface FieldOpsModeAction {
   title: string;
 }
 
@@ -75,6 +79,15 @@ export function buildDeadLetterRequeueRequest(
   };
 }
 
+export function deadLetterRequeueAction(operation: Record<string, unknown>): FieldOpsRequestAction | undefined {
+  const request = buildDeadLetterRequeueRequest(operation);
+  if (!request) return undefined;
+  return {
+    request,
+    title: "Requeue quarantined DDIL intent"
+  };
+}
+
 export function deadLetterRequeueUnavailableNotice(): Toast {
   return {
     tone: "info",
@@ -90,10 +103,24 @@ export function buildBlockedOperationsQuarantineRequest(): Record<string, unknow
   };
 }
 
+export function blockedOperationsQuarantineAction(): FieldOpsRequestAction {
+  return {
+    request: buildBlockedOperationsQuarantineRequest(),
+    title: "Quarantine blocked DDIL operations"
+  };
+}
+
 export function buildDeadLetterAcknowledgeRequest(): Record<string, unknown> {
   return {
     actor: FIELD_OPS_ACTOR,
     reason: "operator reviewed quarantined DDIL intents"
+  };
+}
+
+export function deadLetterAcknowledgeAction(): FieldOpsRequestAction {
+  return {
+    request: buildDeadLetterAcknowledgeRequest(),
+    title: "Acknowledge quarantined DDIL operations"
   };
 }
 
@@ -102,6 +129,25 @@ export function buildDeadLetterBatchRequeueRequest(): Record<string, unknown> {
     actor: FIELD_OPS_ACTOR,
     reason: "operator requeued remediated DDIL intents",
     require_ready: true
+  };
+}
+
+export function deadLetterBatchRequeueAction(): FieldOpsRequestAction {
+  return {
+    request: buildDeadLetterBatchRequeueRequest(),
+    title: "Requeue quarantined DDIL operations"
+  };
+}
+
+export function ddilOfflineModeAction(): FieldOpsModeAction {
+  return {
+    title: "Enter DDIL offline mode"
+  };
+}
+
+export function ddilOnlineModeAction(): FieldOpsModeAction {
+  return {
+    title: "Restore online mode"
   };
 }
 
@@ -115,7 +161,7 @@ export function buildEvidenceExportRequest(mode: EvidenceExportMode): JsonObject
   return { decision_limit: 100, include_benchmarks: true };
 }
 
-export function evidenceExportAction(mode: EvidenceExportMode): FieldOpsExportAction {
+export function evidenceExportAction(mode: EvidenceExportMode): FieldOpsRequestAction {
   return {
     request: buildEvidenceExportRequest(mode),
     title: `Evidence ${mode}`
@@ -128,7 +174,7 @@ export function buildAirgapExportRequest(includePackages: boolean): JsonObject {
   };
 }
 
-export function airgapExportAction(includePackages: boolean): FieldOpsExportAction {
+export function airgapExportAction(includePackages: boolean): FieldOpsRequestAction {
   return {
     request: buildAirgapExportRequest(includePackages),
     title: includePackages ? "Export air-gap bundle with packages" : "Export air-gap bundle"
@@ -150,6 +196,15 @@ export function buildPendingRuntimeRetargetRequest(
     runtime_target_id: runtimeTargetId,
     actor: FIELD_OPS_ACTOR,
     reason: "operator selected measured best runtime target"
+  };
+}
+
+export function pendingRuntimeRetargetAction(operation: Record<string, unknown>): FieldOpsRequestAction | undefined {
+  const request = buildPendingRuntimeRetargetRequest(operation);
+  if (!request) return undefined;
+  return {
+    request,
+    title: "Retarget pending runtime"
   };
 }
 

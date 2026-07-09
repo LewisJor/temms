@@ -535,10 +535,17 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "buildBlockedOperationsQuarantineRequest",
   "buildDeadLetterAcknowledgeRequest",
   "buildDeadLetterBatchRequeueRequest",
+  "blockedOperationsQuarantineAction",
+  "deadLetterAcknowledgeAction",
+  "deadLetterBatchRequeueAction",
+  "deadLetterRequeueAction",
+  "ddilOfflineModeAction",
+  "ddilOnlineModeAction",
   "buildEvidenceExportRequest",
   "buildAirgapExportRequest",
   "evidenceExportAction",
   "airgapExportAction",
+  "pendingRuntimeRetargetAction",
   "deadLetterRequeueUnavailableNotice",
   "pendingRuntimeRetargetUnavailableNotice",
   "This quarantined DDIL intent does not include a payload hash.",
@@ -810,6 +817,19 @@ if (
 if (fieldOpsProofModule.buildDeadLetterRequeueRequest({}) !== undefined) {
   throw new Error("field ops single requeue request should be unavailable without a payload hash");
 }
+const requeueActionFixture = fieldOpsProofModule.deadLetterRequeueAction({
+  payload_sha256: "deadbeef"
+});
+if (
+  requeueActionFixture?.title !== "Requeue quarantined DDIL intent" ||
+  requeueActionFixture?.request.payload_sha256s?.[0] !== "deadbeef" ||
+  requeueActionFixture?.request.require_ready !== true
+) {
+  throw new Error("field ops single requeue action should preserve title, payload hash, and ready gate");
+}
+if (fieldOpsProofModule.deadLetterRequeueAction({}) !== undefined) {
+  throw new Error("field ops single requeue action should be unavailable without a payload hash");
+}
 const requeueUnavailableNotice = fieldOpsProofModule.deadLetterRequeueUnavailableNotice();
 if (
   requeueUnavailableNotice.tone !== "info" ||
@@ -825,12 +845,26 @@ if (
 ) {
   throw new Error("field ops quarantine request should preserve Workbench actor and quarantine reason");
 }
+const quarantineBatchActionFixture = fieldOpsProofModule.blockedOperationsQuarantineAction();
+if (
+  quarantineBatchActionFixture.title !== "Quarantine blocked DDIL operations" ||
+  quarantineBatchActionFixture.request.reason !== "operator quarantined blocked DDIL preflight"
+) {
+  throw new Error("field ops quarantine action should preserve title and request reason");
+}
 const acknowledgeBatchRequestFixture = fieldOpsProofModule.buildDeadLetterAcknowledgeRequest();
 if (
   acknowledgeBatchRequestFixture?.actor !== "operator:mission-package-workbench" ||
   acknowledgeBatchRequestFixture?.reason !== "operator reviewed quarantined DDIL intents"
 ) {
   throw new Error("field ops acknowledge request should preserve Workbench actor and review reason");
+}
+const acknowledgeBatchActionFixture = fieldOpsProofModule.deadLetterAcknowledgeAction();
+if (
+  acknowledgeBatchActionFixture.title !== "Acknowledge quarantined DDIL operations" ||
+  acknowledgeBatchActionFixture.request.reason !== "operator reviewed quarantined DDIL intents"
+) {
+  throw new Error("field ops acknowledge action should preserve title and request reason");
 }
 const batchRequeueRequestFixture = fieldOpsProofModule.buildDeadLetterBatchRequeueRequest();
 if (
@@ -839,6 +873,19 @@ if (
   batchRequeueRequestFixture?.require_ready !== true
 ) {
   throw new Error("field ops batch requeue request should preserve Workbench actor and ready gate");
+}
+const batchRequeueActionFixture = fieldOpsProofModule.deadLetterBatchRequeueAction();
+if (
+  batchRequeueActionFixture.title !== "Requeue quarantined DDIL operations" ||
+  batchRequeueActionFixture.request.require_ready !== true
+) {
+  throw new Error("field ops batch requeue action should preserve title and ready gate");
+}
+if (fieldOpsProofModule.ddilOfflineModeAction().title !== "Enter DDIL offline mode") {
+  throw new Error("field ops offline action should preserve DDIL offline title");
+}
+if (fieldOpsProofModule.ddilOnlineModeAction().title !== "Restore online mode") {
+  throw new Error("field ops online action should preserve DDIL online title");
 }
 const summaryExportRequestFixture = fieldOpsProofModule.buildEvidenceExportRequest("summary");
 if (summaryExportRequestFixture?.summary !== true || summaryExportRequestFixture?.summary_limit !== 20) {
@@ -893,6 +940,20 @@ if (remediationRetargetRequestFixture?.runtime_target_id !== "temms-jetson-ort-t
 }
 if (fieldOpsProofModule.buildPendingRuntimeRetargetRequest({ payload_sha256: "missing-runtime" }) !== undefined) {
   throw new Error("field ops runtime retarget request should be unavailable without a runtime target candidate");
+}
+const retargetActionFixture = fieldOpsProofModule.pendingRuntimeRetargetAction({
+  payload_sha256: "pending-hash",
+  runtime_workbench_best_runtime_target_id: "temms-jetson-trt"
+});
+if (
+  retargetActionFixture?.title !== "Retarget pending runtime" ||
+  retargetActionFixture?.request.payload_sha256 !== "pending-hash" ||
+  retargetActionFixture?.request.runtime_target_id !== "temms-jetson-trt"
+) {
+  throw new Error("field ops runtime retarget action should preserve title, payload hash, and runtime target");
+}
+if (fieldOpsProofModule.pendingRuntimeRetargetAction({ payload_sha256: "pending-hash" }) !== undefined) {
+  throw new Error("field ops runtime retarget action should be unavailable without a runtime target");
 }
 const retargetUnavailableNotice = fieldOpsProofModule.pendingRuntimeRetargetUnavailableNotice();
 if (
