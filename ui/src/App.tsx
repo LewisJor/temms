@@ -59,12 +59,12 @@ import {
   missionYamlImportErrorNotice
 } from "./lib/mission-yaml-import";
 import {
-  buildMissionPackageStageRequest,
-  buildMissionPackagePlanRequest,
   missionPackageContextInvalidation,
   missionPackageDownloadAdoption,
+  missionPackageDownloadAction,
   missionPackagePlanAdoption,
-  missionPackageStagePlan
+  missionPackagePlanAction,
+  missionPackageStageAction
 } from "./lib/mission-package";
 import { buildHubFormAction } from "./lib/hub-form-actions";
 import { useHubStageNavigation } from "./lib/hub-stage-navigation";
@@ -442,18 +442,12 @@ export function App(): JSX.Element {
     setToast(result.toast);
   }
 
-  function missionPackagePlanPayload() {
-    return buildMissionPackagePlanRequest({
-      draft: missionDraft,
-      readinessContext
-    });
-  }
-
   function planMissionPackageArtifact(): void {
+    const action = missionPackagePlanAction({ draft: missionDraft, readinessContext });
     void run(
-      "Plan mission package",
+      action.title,
       async () => {
-        const plan = await planMissionPackage(token, missionPackagePlanPayload());
+        const plan = await planMissionPackage(token, action.request);
         const adoption = missionPackagePlanAdoption(plan);
         setMissionPackagePlan(adoption.plan);
         setLastMissionPackageHandoff(adoption.handoff);
@@ -464,10 +458,11 @@ export function App(): JSX.Element {
   }
 
   function downloadMissionPackageArtifact(): void {
+    const action = missionPackageDownloadAction({ draft: missionDraft, readinessContext });
     void run(
-      "Download mission package",
+      action.title,
       async () => {
-        const artifact = await downloadMissionPackage(token, missionPackagePlanPayload());
+        const artifact = await downloadMissionPackage(token, action.request);
         const adoption = missionPackageDownloadAdoption(artifact);
         setMissionPackagePlan(adoption.plan);
         setLastMissionPackageHandoff(adoption.handoff);
@@ -479,23 +474,23 @@ export function App(): JSX.Element {
   }
 
   function stageMissionPackageRollout(): void {
-    const stagePlan = missionPackageStagePlan({
+    const action = missionPackageStageAction({
       manifest: missionPackageManifest,
       stageStatus: missionPackageStageStatus
     });
-    if (stagePlan.blocker) {
-      setToast({ tone: "info", ...stagePlan.blocker });
-      navigateHubStage(stagePlan.blockedStage);
+    if (action.blocker) {
+      setToast({ tone: "info", ...action.blocker });
+      navigateHubStage(action.blockedStage);
       return;
     }
     void run(
-      stagePlan.runTitle,
+      action.runTitle,
       async () => {
         const stage = await stageMissionPackage(
           token,
-          buildMissionPackageStageRequest(missionPackageManifest)
+          action.request
         );
-        navigateHubStage(stagePlan.successStage, { workflowTarget: stagePlan.successWorkflowTarget });
+        navigateHubStage(action.successStage, { workflowTarget: action.successWorkflowTarget });
         return stage;
       },
       true

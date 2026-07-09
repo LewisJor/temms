@@ -287,6 +287,8 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "operator:mission-package-workbench",
   "buildMissionPackageManifest",
   "buildMissionPackagePlanRequest",
+  "missionPackagePlanAction",
+  "missionPackageDownloadAction",
   "missionPackageContextInvalidation",
   "missionPackagePlanAdoption",
   "missionPackageDownloadAdoption",
@@ -294,6 +296,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "missionPackageStageBlocker",
   "missionPackageStagePlan",
   "buildMissionPackageStageRequest",
+  "missionPackageStageAction",
   "missionPackageStageStatus",
   "hasPlannedDeploymentIntent",
   "hasMissionPackageDeploymentIntent",
@@ -2164,7 +2167,7 @@ if (
 ) {
   throw new Error("deployment intent queue action should bind the selected mission edge path");
 }
-const planRequestFixture = missionPackageModule.buildMissionPackagePlanRequest({
+const planActionContextFixture = {
   draft: {
     ...missionDraftFixture,
     yaml: "schema_version: temms-edge-mission/v1\nmission:\n  goal: Detect vehicles locally while disconnected.\n"
@@ -2176,7 +2179,8 @@ const planRequestFixture = missionPackageModule.buildMissionPackagePlanRequest({
     runtime_target_id: "temms-rpi5-tflite",
     slot: "vision"
   }
-});
+};
+const planRequestFixture = missionPackageModule.buildMissionPackagePlanRequest(planActionContextFixture);
 const expectedPlanRequestFields = {
   confidence_threshold: 0.7,
   ddil_mode: "queue_signed_intents",
@@ -2204,6 +2208,23 @@ Object.entries(expectedPlanRequestFields).forEach(([key, value]) => {
 });
 if (!String(planRequestFixture.mission_yaml || "").includes("temms-edge-mission/v1")) {
   throw new Error("mission package plan request should preserve source mission YAML");
+}
+const missionPackagePlanActionFixture = missionPackageModule.missionPackagePlanAction(planActionContextFixture);
+if (
+  missionPackagePlanActionFixture.title !== "Plan mission package" ||
+  missionPackagePlanActionFixture.request.model_id !== "model-yolov8-lowlight-001" ||
+  missionPackagePlanActionFixture.request.require_best_runtime !== true ||
+  missionPackagePlanActionFixture.request.min_runtime_fit !== 95
+) {
+  throw new Error("mission package plan action should preserve title and runtime-gated plan request");
+}
+const missionPackageDownloadActionFixture = missionPackageModule.missionPackageDownloadAction(planActionContextFixture);
+if (
+  missionPackageDownloadActionFixture.title !== "Download mission package" ||
+  missionPackageDownloadActionFixture.request.device_id !== "edge-rpi5" ||
+  missionPackageDownloadActionFixture.request.require_capability_lock !== true
+) {
+  throw new Error("mission package download action should preserve title and capability-locked request");
 }
 const missionPackagePlanResponseFixture = {
   package_identity: { package_identity_sha256: "a".repeat(64) },
@@ -2523,6 +2544,20 @@ if (
   stageRequestFixture.mission_package !== stageablePackageStatusFixture
 ) {
   throw new Error("mission package stage request should preserve actor, reason, rollout id, and manifest payload");
+}
+const stagePackageActionFixture = missionPackageModule.missionPackageStageAction({
+  manifest: stageablePackageStatusFixture,
+  stageStatus: stageablePackageStatus
+});
+if (
+  stagePackageActionFixture.blocker !== undefined ||
+  stagePackageActionFixture.runTitle !== "Stage package rollout" ||
+  stagePackageActionFixture.request.rollout_id !== "rollout-model-yolov8-lowlight-001-temms-rpi5-tflite-edge-rpi5" ||
+  stagePackageActionFixture.request.mission_package !== stageablePackageStatusFixture ||
+  stagePackageActionFixture.successStage !== "deploy" ||
+  stagePackageActionFixture.successWorkflowTarget !== "rollouts"
+) {
+  throw new Error("mission package stage action should preserve request, title, and deploy routing");
 }
 const readyStageOptions = {
   ddilDetail: "ready for replay",

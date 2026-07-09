@@ -26,6 +26,25 @@ export interface MissionPackageStagePlan {
   successWorkflowTarget: WorkflowTarget;
 }
 
+export interface MissionPackagePlanContext {
+  draft: MissionDraft;
+  minRuntimeFit?: number;
+  readinessContext: ReadinessQuery;
+  requireBestRuntime?: boolean;
+  requireCapabilityLock?: boolean;
+  requireGo?: boolean;
+  requireProofSignature?: boolean;
+}
+
+export interface MissionPackagePlanAction {
+  request: MissionPackagePlanRequest;
+  title: string;
+}
+
+export interface MissionPackageStageAction extends MissionPackageStagePlan {
+  request: MissionPackageStageRequest;
+}
+
 export interface MissionPackageAdoption {
   fileName?: string;
   handoff: MissionPackageDownloadHandoff | undefined;
@@ -76,15 +95,7 @@ export function buildMissionPackagePlanRequest({
   requireCapabilityLock = true,
   requireGo = false,
   requireProofSignature = true
-}: {
-  draft: MissionDraft;
-  minRuntimeFit?: number;
-  readinessContext: ReadinessQuery;
-  requireBestRuntime?: boolean;
-  requireCapabilityLock?: boolean;
-  requireGo?: boolean;
-  requireProofSignature?: boolean;
-}): MissionPackagePlanRequest {
+}: MissionPackagePlanContext): MissionPackagePlanRequest {
   const latencyBudget = optionalNumber(draft.latencyBudgetMs);
   const minThroughput = optionalNumber(draft.throughputMinIps);
   const confidenceThreshold = optionalNumber(draft.confidenceThreshold);
@@ -105,6 +116,20 @@ export function buildMissionPackagePlanRequest({
     slot: draft.slot || readinessContext.slot,
     switch_policy: draft.switchPolicy || undefined,
     min_runtime_fit: minRuntimeFit
+  };
+}
+
+export function missionPackagePlanAction(context: MissionPackagePlanContext): MissionPackagePlanAction {
+  return {
+    request: buildMissionPackagePlanRequest(context),
+    title: "Plan mission package"
+  };
+}
+
+export function missionPackageDownloadAction(context: MissionPackagePlanContext): MissionPackagePlanAction {
+  return {
+    request: buildMissionPackagePlanRequest(context),
+    title: "Download mission package"
   };
 }
 
@@ -426,6 +451,19 @@ export function buildMissionPackageStageRequest(manifest: JsonObject): MissionPa
     mission_package: manifest,
     reason: "mission package deployment handoff",
     rollout_id: missionPackageRolloutId(manifest)
+  };
+}
+
+export function missionPackageStageAction({
+  manifest,
+  stageStatus
+}: {
+  manifest: JsonObject;
+  stageStatus: MissionPackageStageStatus;
+}): MissionPackageStageAction {
+  return {
+    ...missionPackageStagePlan({ manifest, stageStatus }),
+    request: buildMissionPackageStageRequest(manifest)
   };
 }
 
