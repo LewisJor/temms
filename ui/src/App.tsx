@@ -85,12 +85,13 @@ import {
   syncPendingOperationsWithReconciliation
 } from "./lib/hub-actions";
 import {
-  buildEdgeProofQuery,
   downloadJson,
+  edgeProofDownloadAction,
   edgeProofComponentDigestStatus,
   edgeProofComponentDigestVerificationFailureStatus,
   edgeProofComponentDigestVerificationPendingStatus,
   edgeProofDownloadAdoption,
+  edgeProofGenerateAction,
   edgeProofGeneratedAdoption,
   edgeProofReadinessAdoptionForContext,
   edgeProofTraceStatus,
@@ -505,10 +506,11 @@ export function App(): JSX.Element {
   }
 
   function generateEdgeProofArtifact(): void {
+    const action = edgeProofGenerateAction(readinessContext);
     void run(
-      "Generate edge runtime proof",
+      action.title,
       async () => {
-        const proof = await loadEdgeRuntimeProof(token, buildEdgeProofQuery(readinessContext));
+        const proof = await loadEdgeRuntimeProof(token, action.query);
         const adoption = edgeProofGeneratedAdoption(proof);
         adoptEdgeProofReadiness(adoption.proof);
         setLastEdgeProof(adoption.proof);
@@ -520,10 +522,11 @@ export function App(): JSX.Element {
   }
 
   function downloadEdgeProofArtifact(): void {
+    const action = edgeProofDownloadAction(readinessContext);
     void run(
-      "Download edge runtime proof",
+      action.title,
       async () => {
-        const artifact = await downloadEdgeRuntimeProof(token, buildEdgeProofQuery(readinessContext));
+        const artifact = await downloadEdgeRuntimeProof(token, action.query);
         const adoption = edgeProofDownloadAdoption(artifact);
         adoptEdgeProofReadiness(adoption.proof);
         setLastEdgeProof(adoption.proof);

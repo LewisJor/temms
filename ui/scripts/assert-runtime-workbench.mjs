@@ -647,6 +647,10 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "EdgeProofArtifactAdoption",
   "edgeProofGeneratedAdoption",
   "edgeProofDownloadAdoption",
+  "edgeProofGenerateAction",
+  "edgeProofDownloadAction",
+  "title: \"Generate edge runtime proof\"",
+  "title: \"Download edge runtime proof\"",
   "handoff: undefined",
   "fileName: artifact.fileName",
   "edgeProofComponentDigestVerificationPendingStatus",
@@ -1159,6 +1163,38 @@ Object.entries(expectedEdgeProofQuery).forEach(([key, value]) => {
     throw new Error(`edge proof query ${key} mismatch: ${edgeProofQueryFixture[key]}`);
   }
 });
+const edgeProofGenerateActionFixture = edgeProofWorkflowModule.edgeProofGenerateAction({
+  device_id: "edge-thermal-01",
+  model_id: "model-thermal-detector-001",
+  package_id: "pkg-thermal-models-20260708",
+  runtime_target_id: "temms-jetson-ort-trt",
+  slot: "thermal"
+});
+if (
+  edgeProofGenerateActionFixture.title !== "Generate edge runtime proof" ||
+  edgeProofGenerateActionFixture.query.source_action !== "edge-runtime-mission" ||
+  edgeProofGenerateActionFixture.query.require_go !== true ||
+  edgeProofGenerateActionFixture.query.min_runtime_fit !== 95 ||
+  edgeProofGenerateActionFixture.query.require_best_runtime !== true ||
+  edgeProofGenerateActionFixture.query.require_capability_lock !== true
+) {
+  throw new Error("edge proof generate action should preserve title and strict edge runtime query policy");
+}
+const edgeProofDownloadActionFixture = edgeProofWorkflowModule.edgeProofDownloadAction({
+  device_id: "edge-thermal-01",
+  model_id: "model-thermal-detector-001",
+  package_id: "pkg-thermal-models-20260708",
+  runtime_target_id: "temms-jetson-ort-trt",
+  slot: "thermal"
+});
+if (
+  edgeProofDownloadActionFixture.title !== "Download edge runtime proof" ||
+  edgeProofDownloadActionFixture.query.device_id !== "edge-thermal-01" ||
+  edgeProofDownloadActionFixture.query.runtime_target_id !== "temms-jetson-ort-trt" ||
+  edgeProofDownloadActionFixture.query.require_capability_lock !== true
+) {
+  throw new Error("edge proof download action should preserve title and path-bound proof query");
+}
 const matchingEdgeProofReadiness = {
   gates: [{ gate_id: "runtime-fit", status: "go" }],
   selection: {

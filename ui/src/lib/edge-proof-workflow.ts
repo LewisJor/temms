@@ -47,6 +47,11 @@ export interface EdgeProofArtifactAdoption {
   proof: JsonObject;
 }
 
+export interface EdgeProofRequestAction {
+  query: EdgeProofQuery;
+  title: string;
+}
+
 export function edgeProofGeneratedAdoption(proof: JsonObject): EdgeProofArtifactAdoption {
   return {
     handoff: undefined,
@@ -74,6 +79,20 @@ export function buildEdgeProofQuery(context: ReadinessQuery): EdgeProofQuery {
     min_runtime_fit: EDGE_PROOF_MIN_RUNTIME_FIT,
     require_best_runtime: true,
     require_capability_lock: true
+  };
+}
+
+export function edgeProofGenerateAction(context: ReadinessQuery): EdgeProofRequestAction {
+  return {
+    query: buildEdgeProofQuery(context),
+    title: "Generate edge runtime proof"
+  };
+}
+
+export function edgeProofDownloadAction(context: ReadinessQuery): EdgeProofRequestAction {
+  return {
+    query: buildEdgeProofQuery(context),
+    title: "Download edge runtime proof"
   };
 }
 
