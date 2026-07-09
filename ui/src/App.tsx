@@ -54,8 +54,7 @@ import {
   type MissionDraft
 } from "./lib/mission-spec";
 import {
-  buildMissionYamlImportResult,
-  missionYamlImportAdoption,
+  missionYamlImportAction,
   missionYamlImportErrorNotice
 } from "./lib/mission-yaml-import";
 import {
@@ -414,7 +413,7 @@ export function App(): JSX.Element {
   }
 
   function importMissionYaml(yaml: string, fileName: string): void {
-    const result = buildMissionYamlImportResult({
+    const adoption = missionYamlImportAction({
       currentDraft: missionDraft,
       devices: snapshot.devices,
       fileName,
@@ -422,7 +421,6 @@ export function App(): JSX.Element {
       runtimeTargets: snapshot.runtimeTargets,
       yaml
     });
-    const adoption = missionYamlImportAdoption(result);
     if (adoption.selectedModelId) setSelectedModelId(adoption.selectedModelId);
     if (adoption.selectedDeviceId) setSelectedDeviceId(adoption.selectedDeviceId);
     if (adoption.selectedRuntimeId) setSelectedRuntimeId(adoption.selectedRuntimeId);

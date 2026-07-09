@@ -53,6 +53,33 @@ export function missionYamlImportErrorNotice(fileName: string): Toast {
   };
 }
 
+export function missionYamlImportAction({
+  currentDraft,
+  devices,
+  fileName,
+  models,
+  runtimeTargets,
+  yaml
+}: {
+  currentDraft: MissionDraft;
+  devices: Device[];
+  fileName: string;
+  models: ModelRecord[];
+  runtimeTargets: RuntimeTarget[];
+  yaml: string;
+}): MissionYamlImportAdoption {
+  return missionYamlImportAdoption(
+    buildMissionYamlImportResult({
+      currentDraft,
+      devices,
+      fileName,
+      models,
+      runtimeTargets,
+      yaml
+    })
+  );
+}
+
 export function buildMissionYamlImportResult({
   currentDraft,
   devices,

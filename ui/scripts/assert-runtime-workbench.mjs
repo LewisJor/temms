@@ -595,6 +595,7 @@ collectTextFiles(docsBuildPath).forEach((path) => {
 
 [
   "buildMissionYamlImportResult",
+  "missionYamlImportAction",
   "missionYamlImportAdoption",
   "missionYamlImportErrorNotice",
   "packagePlan: undefined",
@@ -2097,6 +2098,34 @@ if (
   missionYamlAdoptionFixture.toast.detail !== missionYamlImportFixture.toastDetail
 ) {
   throw new Error("mission YAML adoption should expose an operator-facing import toast");
+}
+const missionYamlImportActionFixture = missionYamlImportModule.missionYamlImportAction({
+  currentDraft: missionDraftFixture,
+  devices: [{ device_id: "edge-thermal-01" }],
+  fileName: "thermal-mission.yaml",
+  models: [modelFixture],
+  runtimeTargets: [{ runtime_target_id: "temms-jetson-tensorrt" }],
+  yaml: `
+mission:
+  goal: Track thermal vehicles while disconnected.
+  sensor: camera.thermal
+  slot: thermal
+selection:
+  package_id: pkg-vision-models-20240115
+  device_id: edge-thermal-01
+  runtime_target_id: temms-jetson-tensorrt
+`
+});
+if (
+  missionYamlImportActionFixture.stage !== "mission" ||
+  missionYamlImportActionFixture.packagePlan !== undefined ||
+  missionYamlImportActionFixture.packageHandoff !== undefined ||
+  missionYamlImportActionFixture.selectedModelId !== modelFixture.id ||
+  missionYamlImportActionFixture.selectedDeviceId !== "edge-thermal-01" ||
+  missionYamlImportActionFixture.selectedRuntimeId !== "temms-jetson-tensorrt" ||
+  missionYamlImportActionFixture.toast.title !== "Mission YAML imported"
+) {
+  throw new Error("mission YAML import action should hydrate selection and clear stale package state");
 }
 const missionYamlImportErrorNoticeFixture = missionYamlImportModule.missionYamlImportErrorNotice(
   "bad-mission.yaml"
