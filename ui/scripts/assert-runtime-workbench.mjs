@@ -290,6 +290,8 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "buildMissionPackagePlanRequest",
   "missionPackagePlanAction",
   "missionPackageDownloadAction",
+  "missionPackageManifestCopyAction",
+  "label: \"Mission package manifest\"",
   "missionPackageContextInvalidation",
   "missionPackagePlanAdoption",
   "missionPackageDownloadAdoption",
@@ -2330,6 +2332,15 @@ if (manifestFixture.model_handling?.confidence_threshold !== 0.7) {
 }
 if (manifestFixture.selection?.runtime_target_id !== "temms-rpi5-tflite") {
   throw new Error("mission package manifest should bind selected runtime target");
+}
+const manifestCopyActionFixture = missionPackageModule.missionPackageManifestCopyAction(manifestFixture);
+if (
+  manifestCopyActionFixture.label !== "Mission package manifest" ||
+  !manifestCopyActionFixture.command.includes('"schema_version": "temms-edge-mission-package/v1"') ||
+  !manifestCopyActionFixture.command.includes('\n  "selection": {') ||
+  JSON.parse(manifestCopyActionFixture.command).selection.runtime_target_id !== "temms-rpi5-tflite"
+) {
+  throw new Error("mission package manifest copy action should preserve label and pretty JSON manifest");
 }
 const invalidNumberPlanRequest = missionPackageModule.buildMissionPackagePlanRequest({
   draft: {

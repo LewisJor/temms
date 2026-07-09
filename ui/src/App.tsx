@@ -62,6 +62,7 @@ import {
   missionPackageContextInvalidation,
   missionPackageDownloadAdoption,
   missionPackageDownloadAction,
+  missionPackageManifestCopyAction,
   missionPackagePlanAdoption,
   missionPackagePlanAction,
   missionPackageStageAction
@@ -498,10 +499,8 @@ export function App(): JSX.Element {
   }
 
   function copyMissionPackageManifest(): void {
-    void copyCommand(
-      "Mission package manifest",
-      JSON.stringify(missionPackageManifest, null, 2)
-    );
+    const action = missionPackageManifestCopyAction(missionPackageManifest);
+    void copyCommand(action.label, action.command);
   }
 
   function generateEdgeProofArtifact(): void {

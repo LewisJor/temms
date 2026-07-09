@@ -45,6 +45,11 @@ export interface MissionPackageStageAction extends MissionPackageStagePlan {
   request: MissionPackageStageRequest;
 }
 
+export interface MissionPackageManifestCopyAction {
+  command: string;
+  label: string;
+}
+
 export interface MissionPackageAdoption {
   fileName?: string;
   handoff: MissionPackageDownloadHandoff | undefined;
@@ -130,6 +135,13 @@ export function missionPackageDownloadAction(context: MissionPackagePlanContext)
   return {
     request: buildMissionPackagePlanRequest(context),
     title: "Download mission package"
+  };
+}
+
+export function missionPackageManifestCopyAction(manifest: JsonObject): MissionPackageManifestCopyAction {
+  return {
+    command: JSON.stringify(manifest, null, 2),
+    label: "Mission package manifest"
   };
 }
 
