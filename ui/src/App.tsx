@@ -80,6 +80,7 @@ import { runtimeWorkbenchRowRemediationCommand } from "./lib/runtime-remediation
 import {
   copyOperatorCommand,
   loadSnapshotAfterReconciliation,
+  syncPendingOperationsAction,
   syncPendingOperationsWithReconciliation
 } from "./lib/hub-actions";
 import {
@@ -616,8 +617,9 @@ export function App(): JSX.Element {
   }
 
   function syncPendingOperations(): void {
+    const action = syncPendingOperationsAction();
     void run(
-      "Sync pending DDIL operations",
+      action.title,
       async () => {
         const result = await syncPendingOperationsWithReconciliation(token);
         setSnapshot(result.snapshot);

@@ -560,6 +560,8 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "copyOperatorCommand",
   "Command opened in the payload panel.",
   "syncPendingOperationsWithReconciliation",
+  "syncPendingOperationsAction",
+  "title: \"Sync pending DDIL operations\"",
   "controlApi.syncPending",
   "loadSnapshotAfterReconciliation",
   "return { payload, snapshot }"
@@ -765,6 +767,10 @@ if (
   ddilSyncResult.snapshot !== reconciledSnapshotFixture
 ) {
   throw new Error("hub actions DDIL sync should run sync before loading the reconciled snapshot");
+}
+const ddilSyncActionFixture = hubActionsModule.syncPendingOperationsAction();
+if (ddilSyncActionFixture.title !== "Sync pending DDIL operations") {
+  throw new Error("hub actions DDIL sync action should preserve the operator-facing title");
 }
 const activeSlotFixture = [
   { active_model: "model-rgb", slot: "vision" },

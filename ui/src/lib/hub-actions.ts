@@ -12,6 +12,10 @@ export interface SyncPendingOperationsResult {
   snapshot: HubSnapshot;
 }
 
+export interface SyncPendingOperationsAction {
+  title: string;
+}
+
 export async function copyOperatorCommand({
   command,
   label,
@@ -48,6 +52,12 @@ export async function syncPendingOperationsWithReconciliation(
   const payload = await syncPending(token);
   const snapshot = await loadReconciledSnapshot(token);
   return { payload, snapshot };
+}
+
+export function syncPendingOperationsAction(): SyncPendingOperationsAction {
+  return {
+    title: "Sync pending DDIL operations"
+  };
 }
 
 export async function loadSnapshotAfterReconciliation(token: string): Promise<HubSnapshot> {
