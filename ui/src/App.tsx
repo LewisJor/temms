@@ -100,12 +100,12 @@ import {
   buildPackagePromotionRequest,
   deploymentIntentQueueAction,
   edgeRecommendationSelection,
-  buildRolloutApprovalRequest,
-  buildRolloutPlanAdvanceRequest,
-  buildRolloutPlanPauseRequest,
-  buildRolloutPlanResumeRequest,
-  buildRolloutRollbackRequest,
-  rolloutApplyAction
+  rolloutApplyAction,
+  rolloutApprovalAction,
+  rolloutPlanAdvanceAction,
+  rolloutPlanPauseAction,
+  rolloutPlanResumeAction,
+  rolloutRollbackAction
 } from "./lib/deployment-intent";
 import {
   buildAirgapExportRequest,
@@ -572,9 +572,8 @@ export function App(): JSX.Element {
   }
 
   function approveRollout(id: string): void {
-    void run(`Approve ${id}`, () =>
-      hubApi.approveRollout(id, buildRolloutApprovalRequest(), token)
-    );
+    const action = rolloutApprovalAction(id);
+    void run(action.title, () => hubApi.approveRollout(id, action.request, token));
   }
 
   function applyRollout(id: string): void {
@@ -584,27 +583,23 @@ export function App(): JSX.Element {
   }
 
   function rollbackRollout(id: string): void {
-    void run(`Rollback ${id}`, () =>
-      hubApi.rollbackRollout(id, buildRolloutRollbackRequest(), token)
-    );
+    const action = rolloutRollbackAction(id);
+    void run(action.title, () => hubApi.rollbackRollout(id, action.request, token));
   }
 
   function advanceRolloutPlan(id: string): void {
-    void run(`Advance ${id}`, () =>
-      hubApi.advanceRolloutPlan(id, buildRolloutPlanAdvanceRequest(), token)
-    );
+    const action = rolloutPlanAdvanceAction(id);
+    void run(action.title, () => hubApi.advanceRolloutPlan(id, action.request, token));
   }
 
   function pauseRolloutPlan(id: string): void {
-    void run(`Pause ${id}`, () =>
-      hubApi.pauseRolloutPlan(id, buildRolloutPlanPauseRequest(), token)
-    );
+    const action = rolloutPlanPauseAction(id);
+    void run(action.title, () => hubApi.pauseRolloutPlan(id, action.request, token));
   }
 
   function resumeRolloutPlan(id: string): void {
-    void run(`Resume ${id}`, () =>
-      hubApi.resumeRolloutPlan(id, buildRolloutPlanResumeRequest(), token)
-    );
+    const action = rolloutPlanResumeAction(id);
+    void run(action.title, () => hubApi.resumeRolloutPlan(id, action.request, token));
   }
 
   function exportEvidence(mode: EvidenceExportMode): void {

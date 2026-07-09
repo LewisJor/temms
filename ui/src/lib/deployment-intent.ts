@@ -22,6 +22,11 @@ export interface RolloutApplyAction {
   title: string;
 }
 
+export interface RolloutOperatorAction {
+  request: JsonObject;
+  title: string;
+}
+
 export function edgeRecommendationSelection(
   recommendation: EdgeRecommendation
 ): EdgeRecommendationSelection {
@@ -126,6 +131,13 @@ export function buildRolloutApprovalRequest(): JsonObject {
   };
 }
 
+export function rolloutApprovalAction(rolloutId: string): RolloutOperatorAction {
+  return {
+    request: buildRolloutApprovalRequest(),
+    title: `Approve ${rolloutId}`
+  };
+}
+
 export function buildRolloutApplyRequest({
   rollout,
   selectedModel
@@ -161,9 +173,23 @@ export function buildRolloutRollbackRequest(): JsonObject {
   };
 }
 
+export function rolloutRollbackAction(rolloutId: string): RolloutOperatorAction {
+  return {
+    request: buildRolloutRollbackRequest(),
+    title: `Rollback ${rolloutId}`
+  };
+}
+
 export function buildRolloutPlanAdvanceRequest(): JsonObject {
   return {
     actor: WORKBENCH_ACTOR
+  };
+}
+
+export function rolloutPlanAdvanceAction(planId: string): RolloutOperatorAction {
+  return {
+    request: buildRolloutPlanAdvanceRequest(),
+    title: `Advance ${planId}`
   };
 }
 
@@ -174,10 +200,24 @@ export function buildRolloutPlanPauseRequest(): JsonObject {
   };
 }
 
+export function rolloutPlanPauseAction(planId: string): RolloutOperatorAction {
+  return {
+    request: buildRolloutPlanPauseRequest(),
+    title: `Pause ${planId}`
+  };
+}
+
 export function buildRolloutPlanResumeRequest(): JsonObject {
   return {
     actor: WORKBENCH_ACTOR,
     reason: "operator resumed rollout plan from Mission Package Workbench"
+  };
+}
+
+export function rolloutPlanResumeAction(planId: string): RolloutOperatorAction {
+  return {
+    request: buildRolloutPlanResumeRequest(),
+    title: `Resume ${planId}`
   };
 }
 

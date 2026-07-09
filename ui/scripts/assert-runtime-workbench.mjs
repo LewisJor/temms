@@ -512,8 +512,15 @@ collectTextFiles(docsBuildPath).forEach((path) => {
   "edgeRecommendationSelection",
   "deploymentIntentQueueAction",
   "rolloutApplyAction",
+  "rolloutApprovalAction",
+  "rolloutRollbackAction",
+  "rolloutPlanAdvanceAction",
+  "rolloutPlanPauseAction",
+  "rolloutPlanResumeAction",
   "title: \"Queue DDIL deployment intent\"",
   "title: `Apply ${rolloutId}`",
+  "title: `Approve ${rolloutId}`",
+  "title: `Rollback ${rolloutId}`",
   "workflowTarget: \"deployment\"",
   "modelId: recommendation.model_id ? String(recommendation.model_id) : undefined",
   "runtimeTargetId: recommendation.runtime_target_id ? String(recommendation.runtime_target_id) : undefined"
@@ -1801,6 +1808,13 @@ if (
 ) {
   throw new Error("rollout approval request should preserve approver actor and mission policy reason");
 }
+const rolloutApprovalActionFixture = deploymentIntentModule.rolloutApprovalAction("rollout-thermal");
+if (
+  rolloutApprovalActionFixture.title !== "Approve rollout-thermal" ||
+  rolloutApprovalActionFixture.request.actor !== "operator:approver-ui"
+) {
+  throw new Error("rollout approval action should preserve approval title and request actor");
+}
 const rolloutApplyRequestFixture = deploymentIntentModule.buildRolloutApplyRequest({
   rollout: { model_id: "model-from-rollout" },
   selectedModel: { id: "model-from-selection" }
@@ -1833,14 +1847,42 @@ if (
 if (deploymentIntentModule.buildRolloutRollbackRequest().reason !== "operator requested rollback from Mission Package Workbench") {
   throw new Error("rollout rollback request should preserve mission workbench rollback reason");
 }
+const rolloutRollbackActionFixture = deploymentIntentModule.rolloutRollbackAction("rollout-thermal");
+if (
+  rolloutRollbackActionFixture.title !== "Rollback rollout-thermal" ||
+  rolloutRollbackActionFixture.request.reason !== "operator requested rollback from Mission Package Workbench"
+) {
+  throw new Error("rollout rollback action should preserve rollback title and reason");
+}
 if (deploymentIntentModule.buildRolloutPlanAdvanceRequest().actor !== "operator:mission-package-workbench") {
   throw new Error("rollout plan advance request should use the mission package workbench actor");
+}
+const rolloutPlanAdvanceActionFixture = deploymentIntentModule.rolloutPlanAdvanceAction("plan-thermal");
+if (
+  rolloutPlanAdvanceActionFixture.title !== "Advance plan-thermal" ||
+  rolloutPlanAdvanceActionFixture.request.actor !== "operator:mission-package-workbench"
+) {
+  throw new Error("rollout plan advance action should preserve advance title and actor");
 }
 if (deploymentIntentModule.buildRolloutPlanPauseRequest().reason !== "operator paused rollout plan from Mission Package Workbench") {
   throw new Error("rollout plan pause request should preserve pause reason");
 }
+const rolloutPlanPauseActionFixture = deploymentIntentModule.rolloutPlanPauseAction("plan-thermal");
+if (
+  rolloutPlanPauseActionFixture.title !== "Pause plan-thermal" ||
+  rolloutPlanPauseActionFixture.request.reason !== "operator paused rollout plan from Mission Package Workbench"
+) {
+  throw new Error("rollout plan pause action should preserve pause title and reason");
+}
 if (deploymentIntentModule.buildRolloutPlanResumeRequest().reason !== "operator resumed rollout plan from Mission Package Workbench") {
   throw new Error("rollout plan resume request should preserve resume reason");
+}
+const rolloutPlanResumeActionFixture = deploymentIntentModule.rolloutPlanResumeAction("plan-thermal");
+if (
+  rolloutPlanResumeActionFixture.title !== "Resume plan-thermal" ||
+  rolloutPlanResumeActionFixture.request.reason !== "operator resumed rollout plan from Mission Package Workbench"
+) {
+  throw new Error("rollout plan resume action should preserve resume title and reason");
 }
 const bundledMissionYamlImport = await build({
   bundle: true,
