@@ -10,38 +10,63 @@ echo "  TEMMS Sim Environment"
 echo "==============================="
 echo ""
 
+export TEMMS_PACKAGE_SIGNING_KEY="${TEMMS_PACKAGE_SIGNING_KEY:-temms-local-demo-signing-key}"
+export TEMMS_ROLLOUT_REQUIRE_SIGNATURE="${TEMMS_ROLLOUT_REQUIRE_SIGNATURE:-true}"
+export TEMMS_DEMO_SEED_HUB="${TEMMS_DEMO_SEED_HUB:-1}"
+
 # 1. Generate real ONNX models if needed
 # Check if models are still the old 295-byte dummies
 DAYLIGHT_MODEL="/app/examples/package-example/models/yolov8n-daylight.onnx"
 if [ ! -f "$DAYLIGHT_MODEL" ] || [ "$(wc -c < "$DAYLIGHT_MODEL")" -lt 1000 ]; then
-    echo "[1/5] Generating real ONNX models..."
+    echo "[1/6] Generating real ONNX models..."
     python /app/scripts/generate_real_models.py --output-dir /app/examples/package-example
 else
-    echo "[1/5] Real ONNX models already present, skipping generation."
+    echo "[1/6] Real ONNX models already present, skipping generation."
 fi
 
 # 2. Initialize TEMMS
 echo ""
-echo "[2/5] Initializing TEMMS..."
+echo "[2/6] Initializing TEMMS..."
 temms init --config /etc/temms/temms.yaml --data-dir /var/lib/temms 2>&1 || true
 
 # 3. Import example model package (skip hash verify since we just generated them)
 echo ""
-echo "[3/5] Importing model package..."
+echo "[3/6] Importing model package..."
 temms import /app/examples/package-example/ --config /etc/temms/temms.yaml --no-verify --allow-unsigned-package 2>&1 || echo "  (package may already be imported)"
 
 # 4. Create vision slot
 echo ""
-echo "[4/5] Creating vision slot..."
-temms slot create vision \
+echo "[4/6] Creating vision slot..."
+slot_create_log="/tmp/temms-slot-create.log"
+if temms slot create vision \
     --description "Primary vision model" \
     --required \
     --default yolov8-daylight \
-    --config /etc/temms/temms.yaml 2>&1 || echo "  (slot may already exist)"
+    --config /etc/temms/temms.yaml >"$slot_create_log" 2>&1; then
+    cat "$slot_create_log"
+else
+    if grep -q "UNIQUE constraint failed: slots.name" "$slot_create_log"; then
+        echo "  Slot vision already exists."
+    else
+        cat "$slot_create_log"
+        exit 1
+    fi
+fi
 
-# 5. Copy policies to config directory
+# 5. Seed Hub Lite with signed, released demo inventory
 echo ""
-echo "[5/5] Loading policies..."
+if [ "${TEMMS_DEMO_SEED_HUB:-1}" != "0" ]; then
+    echo "[5/6] Seeding signed Hub demo inventory..."
+    python /app/scripts/seed_docker_hub_demo.py \
+        --package-source /app/examples/package-example \
+        --data-dir /var/lib/temms 2>&1 || echo "  (Hub demo inventory may already be seeded)"
+else
+    echo "[5/6] Hub demo inventory seeding disabled."
+fi
+
+# 6. Copy policies to config directory
+echo ""
+echo "[6/6] Loading policies..."
 cp /app/examples/policies/*.yaml /etc/temms/policies/ 2>/dev/null || true
 echo "  Copied policies to /etc/temms/policies/"
 

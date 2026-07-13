@@ -12,6 +12,8 @@ ONLINE_PORT="${TEMMS_ACCEPTANCE_ONLINE_PORT:-18081}"
 AIRGAP_PORT="${TEMMS_ACCEPTANCE_AIRGAP_PORT:-18082}"
 ONLINE_PACKAGE_ID="${ONLINE_PACKAGE_ID:-pkg-online-x86}"
 AIRGAP_PACKAGE_ID="${AIRGAP_PACKAGE_ID:-pkg-airgap-rpi}"
+ONLINE_MODEL_ID="${ONLINE_MODEL_ID:-model-online-v1}"
+AIRGAP_MODEL_ID="${AIRGAP_MODEL_ID:-model-airgap-v1}"
 ONLINE_ROLLOUT_ID="${ONLINE_ROLLOUT_ID:-rollout-online}"
 AIRGAP_ROLLOUT_ID="${AIRGAP_ROLLOUT_ID:-rollout-airgap}"
 PYTHON_CMD_TEXT="${PYTHON_CMD:-python3}"
@@ -65,6 +67,8 @@ create_acceptance_packages() {
     SIGNING_KEY="${SIGNING_KEY}" \
     ONLINE_PACKAGE_ID="${ONLINE_PACKAGE_ID}" \
     AIRGAP_PACKAGE_ID="${AIRGAP_PACKAGE_ID}" \
+    ONLINE_MODEL_ID="${ONLINE_MODEL_ID}" \
+    AIRGAP_MODEL_ID="${AIRGAP_MODEL_ID}" \
     "${PYTHON_CMD[@]}" - <<'PY'
 import hashlib
 import json
@@ -158,16 +162,16 @@ root = Path(os.environ["PACKAGE_DIR"])
 online = package(
     root / f"{os.environ['ONLINE_PACKAGE_ID']}.temms",
     package_id=os.environ["ONLINE_PACKAGE_ID"],
-    model_id="model-online-v1",
+    model_id=os.environ["ONLINE_MODEL_ID"],
     profile="x86_64-cpu",
     model_format="onnx",
 )
 airgap = package(
     root / f"{os.environ['AIRGAP_PACKAGE_ID']}.temms",
     package_id=os.environ["AIRGAP_PACKAGE_ID"],
-    model_id="model-airgap-v1",
+    model_id=os.environ["AIRGAP_MODEL_ID"],
     profile="rpi5-tflite",
-    model_format="onnx",
+    model_format="tflite",
 )
 print(online)
 print(airgap)
@@ -200,6 +204,8 @@ main() {
     AIRGAP_EDGE_URL="http://localhost:${AIRGAP_PORT}" \
     ONLINE_PACKAGE_ID="${ONLINE_PACKAGE_ID}" \
     AIRGAP_PACKAGE_ID="${AIRGAP_PACKAGE_ID}" \
+    ONLINE_MODEL_ID="${ONLINE_MODEL_ID}" \
+    AIRGAP_MODEL_ID="${AIRGAP_MODEL_ID}" \
     ONLINE_PACKAGE_PATH="/acceptance-packages/${ONLINE_PACKAGE_ID}.temms.tar.zst" \
     AIRGAP_PACKAGE_PATH="/acceptance-packages/${AIRGAP_PACKAGE_ID}.temms.tar.zst" \
     ONLINE_ROLLOUT_ID="${ONLINE_ROLLOUT_ID}" \

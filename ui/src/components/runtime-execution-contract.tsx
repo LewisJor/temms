@@ -1,0 +1,312 @@
+import { GitBranch } from "lucide-react";
+import type { DeploymentReadiness, Device, JsonObject, RuntimeTarget, RuntimeValidation } from "../types";
+import { deviceId, displayGateState, runtimeTargetId, toneForReadinessStatus } from "../lib/hub-format";
+import { asRecord, numberOf, stringOf } from "../lib/json";
+import {
+  artifactLaneDetail,
+  artifactLaneTone,
+  artifactLaneValue,
+  capabilityLockDetail,
+  capabilityLockTone,
+  capabilityLockValue,
+  compactMetricDetail,
+  formatMetricNumber,
+  productionAdmissionDetail,
+  productionAdmissionTone,
+  productionAdmissionValue,
+  runtimeFitScoreForProof,
+  runtimeInventoryLabel,
+  runtimeInventoryTone,
+  runtimeLaneDetail,
+  runtimeLaneFor,
+  runtimeLaneTone,
+  runtimeLaneValue
+} from "../lib/runtime-fit";
+import {
+  candidateRuntimeId,
+  executionContractHeadline,
+  executionContractTone,
+  runtimeDecisionActionLabel,
+  runtimeDecisionCandidates,
+  runtimeDecisionGates,
+  runtimeTargetAssessments
+} from "../lib/runtime-decision";
+import type {
+  EdgeRuntimeFit,
+  ModelRecord,
+  ReadinessVerdict,
+  RuntimeFitDisplay,
+  RuntimeRemediationContext
+} from "../lib/workbench-types";
+import { EmptyState } from "./deploy-lists";
+import {
+  ExecutionPathNode,
+  RuntimeCandidateRow,
+  TargetRuntimeAssessmentRow
+} from "./runtime-contract-rows";
+import { Badge, Button, CapabilityMetric } from "./ui";
+
+export function EdgeExecutionContractPanel({
+  device,
+  edgeExecutionContract,
+  edgeRuntimeFit,
+  model,
+  onCopyRemediation,
+  onSelectRuntimeTarget,
+  readiness,
+  readinessVerdict,
+  resourceEnvelopeFit,
+  runtime,
+  runtimeDecision,
+  runtimeFitDisplay,
+  runtimeValidation
+}: {
+  device: Device | undefined;
+  edgeExecutionContract: JsonObject;
+  edgeRuntimeFit: EdgeRuntimeFit;
+  model: ModelRecord | undefined;
+  onCopyRemediation: (label: string, command: string) => void;
+  onSelectRuntimeTarget: (runtimeTargetIdValue: string) => void;
+  readiness: DeploymentReadiness | undefined;
+  readinessVerdict: ReadinessVerdict;
+  resourceEnvelopeFit: EdgeRuntimeFit;
+  runtime: RuntimeTarget | undefined;
+  runtimeDecision: JsonObject;
+  runtimeFitDisplay: RuntimeFitDisplay;
+  runtimeValidation: RuntimeValidation | undefined;
+}): JSX.Element {
+  const contract = Object.keys(edgeExecutionContract).length ? edgeExecutionContract : runtimeDecision;
+  const runtimeFit = asRecord(readiness?.runtime_fit);
+  const decisionFit = asRecord(contract.runtime_fit);
+  const targetSelection = Object.keys(asRecord(contract.target_selection)).length
+    ? asRecord(contract.target_selection)
+    : asRecord(runtimeFit.target_selection);
+  const contractPath = asRecord(contract.path);
+  const remediationContext: RuntimeRemediationContext = {
+    packageId: model?.packageId ?? stringOf(contractPath.package_id, ""),
+    modelId: model?.id ?? stringOf(contractPath.model_id, ""),
+    deviceId: device ? deviceId(device) : stringOf(contractPath.device_id, ""),
+    slot: stringOf(contractPath.slot, "vision")
+  };
+  const selectedRuntimeTargetId = stringOf(
+    targetSelection.selected_runtime_target_id,
+    stringOf(contractPath.runtime_target_id, runtime ? runtimeTargetId(runtime) : "runtime missing")
+  );
+  const bestRuntimeTargetId = stringOf(
+    targetSelection.best_runtime_target_id,
+    selectedRuntimeTargetId
+  );
+  const selectedScore =
+    numberOf(decisionFit.score) ??
+    numberOf(runtimeFit.score) ??
+    runtimeFitScoreForProof(readiness, runtimeFitDisplay);
+  const bestScore = numberOf(targetSelection.best_score);
+  const scoreDelta = numberOf(targetSelection.score_delta);
+  const productionAdmission = Object.keys(asRecord(contract.production_admission)).length
+    ? asRecord(contract.production_admission)
+    : asRecord(readiness?.production_admission);
+  const selectedLane = Object.keys(asRecord(contract.selected_runtime_lane)).length
+    ? asRecord(contract.selected_runtime_lane)
+    : runtimeLaneFor(runtimeFit, runtime);
+  const bestLane = asRecord(contract.best_runtime_lane);
+  const artifactLane = Object.keys(asRecord(contract.artifact_lane)).length
+    ? asRecord(contract.artifact_lane)
+    : asRecord(runtimeFit.artifact_lane);
+  const capabilityLock = Object.keys(asRecord(contract.runtime_capability_lock)).length
+    ? asRecord(contract.runtime_capability_lock)
+    : asRecord(runtimeFit.runtime_capability_lock);
+  const recommendedAction = stringOf(
+    contract.recommended_action,
+    readinessVerdict.label === "go" ? "apply_or_stage" : "review"
+  );
+  const decisionStatus = stringOf(targetSelection.status, stringOf(contract.status, readinessVerdict.label));
+  const actionLabel = runtimeDecisionActionLabel(recommendedAction);
+  const decisionDetail = compactMetricDetail(
+    stringOf(contract.detail, readinessVerdict.nextAction)
+  );
+  const tone = executionContractTone({
+    action: recommendedAction,
+    decisionStatus,
+    productionAdmission,
+    readinessVerdict
+  });
+  const candidates = runtimeDecisionCandidates(contract, runtimeFit, selectedRuntimeTargetId, bestRuntimeTargetId);
+  const targetAssessments = runtimeTargetAssessments(contract, runtimeFit, candidates);
+  const blockingGates = runtimeDecisionGates(contract.blocking_gates);
+  const attentionGates = runtimeDecisionGates(contract.attention_gates);
+  const canSelectBest =
+    bestRuntimeTargetId &&
+    selectedRuntimeTargetId &&
+    bestRuntimeTargetId !== selectedRuntimeTargetId &&
+    !bestRuntimeTargetId.includes("missing");
+
+  return (
+    <section className={`execution-contract execution-contract-${tone}`} aria-labelledby="execution-contract-heading">
+      <div className="execution-contract-header">
+        <div>
+          <span className="section-kicker">Edge execution contract</span>
+          <h2 id="execution-contract-heading">
+            {executionContractHeadline(recommendedAction, decisionStatus, readinessVerdict)}
+          </h2>
+          <p>{decisionDetail}</p>
+        </div>
+        <div className="execution-contract-decision" aria-label="Runtime decision">
+          <Badge value={actionLabel} />
+          <strong>
+            {selectedRuntimeTargetId}
+            {bestRuntimeTargetId && bestRuntimeTargetId !== selectedRuntimeTargetId
+              ? ` -> ${bestRuntimeTargetId}`
+              : ""}
+          </strong>
+          <small>
+            {selectedScore !== undefined ? `${selectedScore}/100 selected` : runtimeFitDisplay.label}
+            {bestScore !== undefined && bestRuntimeTargetId !== selectedRuntimeTargetId
+              ? ` / ${bestScore}/100 best`
+              : ""}
+            {scoreDelta !== undefined && scoreDelta > 0 ? ` / +${formatMetricNumber(scoreDelta)} fit` : ""}
+          </small>
+          {canSelectBest ? (
+            <Button
+              icon={<GitBranch size={16} />}
+              variant="secondary"
+              onClick={() => onSelectRuntimeTarget(bestRuntimeTargetId)}
+            >
+              Use best runtime
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="execution-path" aria-label="Selected model runtime edge path">
+        <ExecutionPathNode label="Model" value={model?.id ?? "missing"} detail={model?.format ?? "artifact"} tone={model ? "good" : "bad"} />
+        <ExecutionPathNode
+          label="Runtime"
+          value={runtime ? runtimeTargetId(runtime) : "missing"}
+          detail={runtimeLaneValue(selectedLane)}
+          tone={runtime ? runtimeLaneTone(selectedLane) : "bad"}
+        />
+        <ExecutionPathNode
+          label="Edge"
+          value={device ? deviceId(device) : "missing"}
+          detail={device?.profile ?? runtimeInventoryLabel(device)}
+          tone={device ? runtimeInventoryTone(device) : "bad"}
+        />
+      </div>
+
+      <div className="execution-contract-grid" aria-label="On-device runtime capabilities">
+        <CapabilityMetric
+          label="Fit score"
+          value={selectedScore !== undefined ? `${selectedScore}/100` : runtimeFitDisplay.label}
+          detail={runtimeFitDisplay.detail}
+          tone={runtimeFitDisplay.tone}
+        />
+        <CapabilityMetric
+          label="Runtime lane"
+          value={runtimeLaneValue(selectedLane)}
+          detail={bestRuntimeTargetId !== selectedRuntimeTargetId && Object.keys(bestLane).length
+            ? `best lane: ${runtimeLaneValue(bestLane)}`
+            : runtimeLaneDetail(selectedLane)}
+          tone={runtimeLaneTone(selectedLane)}
+        />
+        <CapabilityMetric
+          label="Artifact path"
+          value={artifactLaneValue(artifactLane)}
+          detail={artifactLaneDetail(artifactLane)}
+          tone={artifactLaneTone(artifactLane)}
+        />
+        <CapabilityMetric
+          label="Capability lock"
+          value={capabilityLockValue(capabilityLock)}
+          detail={capabilityLockDetail(capabilityLock)}
+          tone={capabilityLockTone(capabilityLock)}
+        />
+        <CapabilityMetric
+          label="Resources"
+          value={resourceEnvelopeFit.label}
+          detail={resourceEnvelopeFit.detail}
+          tone={resourceEnvelopeFit.tone}
+        />
+        <CapabilityMetric
+          label="Admission"
+          value={productionAdmissionValue(productionAdmission)}
+          detail={productionAdmissionDetail(productionAdmission)}
+          tone={productionAdmissionTone(productionAdmission)}
+        />
+      </div>
+
+      <div className="execution-evidence-grid">
+        <div className="execution-runtime-board" aria-label="Target runtime coverage">
+          <div className="execution-subheader">
+            <strong>Target runtime coverage</strong>
+            <span>{targetAssessments.length ? `${targetAssessments.length} assessed` : "pending"}</span>
+          </div>
+          <div className="execution-candidate-list">
+            {targetAssessments.length ? (
+              targetAssessments.slice(0, 6).map((assessment) => (
+                <TargetRuntimeAssessmentRow
+                  key={`${candidateRuntimeId(assessment)}-${stringOf(assessment.status, "status")}`}
+                  assessment={assessment}
+                  bestRuntimeTargetId={bestRuntimeTargetId}
+                  context={remediationContext}
+                  onCopyRemediation={onCopyRemediation}
+                  selectedRuntimeTargetId={selectedRuntimeTargetId}
+                />
+              ))
+            ) : (
+              <EmptyState title="No target coverage" detail="Runtime target assessments will appear after readiness evaluates this model and edge." />
+            )}
+          </div>
+        </div>
+
+        <div className="execution-runtime-board" aria-label="Measured runtime candidates">
+          <div className="execution-subheader">
+            <strong>Measured runtime candidates</strong>
+            <span>{candidates.length ? `${candidates.length} ranked` : "pending"}</span>
+          </div>
+          <div className="execution-candidate-list">
+            {candidates.length ? (
+              candidates.map((candidate) => (
+                <RuntimeCandidateRow
+                  key={`${candidateRuntimeId(candidate)}-${stringOf(candidate.rank, "rank")}`}
+                  bestRuntimeTargetId={bestRuntimeTargetId}
+                  candidate={candidate}
+                  selectedRuntimeTargetId={selectedRuntimeTargetId}
+                />
+              ))
+            ) : (
+              <EmptyState title="No measured candidates" detail="Record on-device benchmark and validation evidence for this model/runtime path." />
+            )}
+          </div>
+        </div>
+
+        <div className="execution-gate-board" aria-label="Runtime blockers and evidence gaps">
+          <div className="execution-subheader">
+            <strong>Runtime blockers and evidence gaps</strong>
+            <span>{blockingGates.length + attentionGates.length || "clear"}</span>
+          </div>
+          <div className="execution-gate-list">
+            {[...blockingGates, ...attentionGates].length ? (
+              [...blockingGates, ...attentionGates].slice(0, 5).map((gate) => (
+                <div className={`execution-gate execution-gate-${toneForReadinessStatus(stringOf(gate.status, ""))}`} key={`${stringOf(gate.gate_id, "gate")}-${stringOf(gate.status, "status")}`}>
+                  <span>{stringOf(gate.label, stringOf(gate.gate_id, "Gate"))}</span>
+                  <strong>{displayGateState(stringOf(gate.state, stringOf(gate.status, "review")))}</strong>
+                  <small>{compactMetricDetail(stringOf(gate.detail, "Review gate evidence"))}</small>
+                </div>
+              ))
+            ) : (
+              <div className="execution-gate execution-gate-good">
+                <span>Runtime gates</span>
+                <strong>Aligned</strong>
+                <small>
+                  {runtimeValidation
+                    ? `${selectedRuntimeTargetId} validation and admission evidence are available`
+                    : edgeRuntimeFit.detail}
+                </small>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}

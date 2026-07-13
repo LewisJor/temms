@@ -12,6 +12,8 @@ services:
       TEMMS_DATA_DIR: /var/lib/temms
       TEMMS_ROLLOUT_REQUIRE_SIGNATURE: "true"
       TEMMS_PACKAGE_SIGNING_KEY: ${TEMMS_ACCEPTANCE_SIGNING_KEY:-change-me}
+      TEMMS_DEMO_SEED_HUB: "1"
+      TEMMS_DEMO_DEVICE_ID: edge-sim
     ports:
       - "${TEMMS_ACCEPTANCE_HUB_PORT:-18080}:8080"
     volumes:
@@ -38,6 +40,9 @@ services:
       TEMMS_HUB_AUTO_APPLY: "true"
       TEMMS_ROLLOUT_REQUIRE_SIGNATURE: "true"
       TEMMS_PACKAGE_SIGNING_KEY: ${TEMMS_ACCEPTANCE_SIGNING_KEY:-change-me}
+      TEMMS_DEMO_SEED_HUB: "1"
+      TEMMS_DEMO_DEVICE_ID: edge-online
+      TEMMS_DEMO_SITE: acceptance-online
     ports:
       - "${TEMMS_ACCEPTANCE_ONLINE_PORT:-18081}:8080"
     volumes:
@@ -62,6 +67,10 @@ services:
       TEMMS_DEVICE_PROFILE: rpi5-tflite
       TEMMS_ROLLOUT_REQUIRE_SIGNATURE: "true"
       TEMMS_PACKAGE_SIGNING_KEY: ${TEMMS_ACCEPTANCE_SIGNING_KEY:-change-me}
+      TEMMS_DEMO_SEED_HUB: "1"
+      TEMMS_DEMO_DEVICE_ID: edge-airgap
+      TEMMS_DEMO_SITE: acceptance-airgap
+      TEMMS_INFERENCE_SIMULATE_RUNTIME: "1"
     ports:
       - "${TEMMS_ACCEPTANCE_AIRGAP_PORT:-18082}:8080"
     volumes:

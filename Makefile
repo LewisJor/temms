@@ -1,8 +1,8 @@
 .PHONY: help install dev-install sim-install test clean format lint build \
-       docker-up docker-down docker-clean docker-build docker-build-runtime docker-buildx docker-logs \
-       generate-models sim-weather sim-override sim-visual sim-headless test-e2e \
+       docker-up docker-down docker-clean docker-build docker-build-runtime docker-buildx docker-logs docker-product-smoke \
+       generate-models product-demo sim-weather sim-override sim-visual sim-headless test-e2e \
        mvp-smoke mvp-acceptance docker-acceptance docker-acceptance-up \
-       docker-acceptance-down init-local run-daemon
+       docker-acceptance-down init-local run-daemon ui-install ui-build ui-ci ui-dev ui-smoke ui-typecheck
 
 # ==============================================================================
 #  TEMMS — Makefile
@@ -19,6 +19,7 @@ help:
 	@echo ""
 	@echo "  Getting Started:"
 	@echo "    make dev-install       Install TEMMS + dev dependencies"
+	@echo "    make product-demo      Run the canonical signed/adaptive/evidence demo"
 	@echo "    make test              Run all tests"
 	@echo "    make mvp-smoke         Run signed Hub Lite air-gap and online rollout smoke tests"
 	@echo "    make mvp-acceptance    Run multi-edge MVP acceptance flow"
@@ -29,6 +30,7 @@ help:
 	@echo "    make docker-buildx     Build multi-arch agent image with buildx bake"
 	@echo "    make docker-acceptance     Run containerized Hub + two edge acceptance"
 	@echo "    make docker-acceptance-up  Start Hub + two edge agent containers"
+	@echo "    make docker-product-smoke  Verify live Mission Package Workbench routes"
 	@echo "    make docker-down       Stop all containers"
 	@echo "    make docker-clean      Nuke volumes, start fresh"
 	@echo "    make docker-logs       Tail daemon logs"
@@ -42,6 +44,11 @@ help:
 	@echo "  Code Quality:"
 	@echo "    make format            Format with black"
 	@echo "    make lint              Lint with ruff + mypy"
+	@echo "    make ui-install        Install React Hub UI dependencies"
+	@echo "    make ui-build          Build the React Hub UI into src/temms/ui/static"
+	@echo "    make ui-ci             Typecheck, build, and smoke the React Hub UI"
+	@echo "    make ui-smoke          Verify the built Runtime workbench UI contract"
+	@echo "    make ui-dev            Run the React Hub UI dev server"
 	@echo "    make clean             Remove build artifacts"
 	@echo ""
 
@@ -68,7 +75,7 @@ test-e2e:
 	pytest tests/integration/test_e2e_docker.py -v
 
 mvp-smoke:
-	uv run pytest tests/integration/test_hub_lite_mvp_flow.py tests/integration/test_hub_lite_online_sync.py tests/integration/test_mvp_multi_vm_acceptance.py -q
+	uv run pytest tests/integration/test_canonical_product_loop.py tests/integration/test_hub_lite_mvp_flow.py tests/integration/test_hub_lite_online_sync.py tests/integration/test_mvp_multi_vm_acceptance.py -q
 
 mvp-acceptance:
 	uv run pytest tests/integration/test_mvp_multi_vm_acceptance.py -q
@@ -95,6 +102,26 @@ clean:
 build:
 	python -m build
 
+# ---- React Hub UI ----
+
+ui-install:
+	cd ui && npm install
+
+ui-build:
+	cd ui && npm run build
+
+ui-typecheck:
+	cd ui && npm run typecheck
+
+ui-ci:
+	npm run ui:ci
+
+ui-smoke:
+	cd ui && npm run smoke:workbench
+
+ui-dev:
+	cd ui && npm run dev
+
 # ---- Docker / Simulation ----
 
 docker-build:
@@ -112,7 +139,7 @@ docker-up:
 	@echo "  ┌────────────────────────────────────────┐"
 	@echo "  │  Services starting...                   │"
 	@echo "  │                                         │"
-	@echo "  │  TEMMS UI:    http://localhost:8080/ui/  │"
+	@echo "  │  TEMMS Hub:   http://localhost:8080/ui/hub │"
 	@echo "  │  TEMMS API:   http://localhost:8080/v1/  │"
 	@printf "  │  MLflow UI:   http://localhost:%-9s │\n" "$(MLFLOW_HOST_PORT)"
 	@echo "  │  API Docs:    http://localhost:8080/docs │"
@@ -146,10 +173,16 @@ docker-clean:
 docker-logs:
 	docker compose logs -f temms-daemon
 
+docker-product-smoke:
+	python scripts/mission_package_smoke.py --hub-url http://localhost:8080
+
 # ---- Simulation runners ----
 
 generate-models:
 	python scripts/generate_real_models.py
+
+product-demo:
+	uv run python scripts/canonical_product_demo.py
 
 # Visual sim with live GUI window (needs: pip install -e ".[sim-visual]")
 sim-visual:

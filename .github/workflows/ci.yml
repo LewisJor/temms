@@ -19,6 +19,31 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  frontend:
+    name: React Hub UI contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI dependencies
+        run: npm --prefix ui ci
+
+      - name: Typecheck, build, and smoke React Hub
+        run: make ui-ci
+
+      - name: Verify committed Hub assets are current
+        run: git diff --exit-code -- src/temms/ui/static/hub
+
   python:
     name: Python tests and package build
     runs-on: ubuntu-latest
@@ -48,6 +73,7 @@ jobs:
         run: |
           uv run pytest \
             tests/unit \
+            tests/integration/test_canonical_product_loop.py \
             tests/integration/test_hub_lite_mvp_flow.py \
             tests/integration/test_hub_lite_online_sync.py \
             tests/integration/test_mvp_multi_vm_acceptance.py \
@@ -158,6 +184,7 @@ jobs:
       - name: Start TEMMS compose stack
         env:
           MLFLOW_HOST_PORT: "5001"
+          TEMMS_EXTRAS: inference
         run: docker compose up --build -d
 
       - name: Run compose smoke checks

@@ -132,6 +132,34 @@ These are the standard condition paths used throughout TEMMS:
 | `operational.mission.phase` | string | patrol, transit, engage, rtb |
 | `operational.mission.priority` | string | routine, normal, high, critical |
 | `operational.threat.level` | string | none, low, medium, high |
+| `operational.connectivity.offline` | bool | True when local offline/DDIL mode is active |
+| `operational.connectivity.mode` | string | online or offline |
+| `operational.connectivity.network_available` | bool | False when local offline/DDIL mode is active |
+
+### Runtime Collector Health
+
+The daemon publishes collector health alongside collected values, so degraded
+local sensors can drive policy decisions even when they fail to report a normal
+measurement.
+
+| Path | Type | Description |
+|------|------|-------------|
+| `runtime.collectors.<collector>.healthy` | bool | False when the named collector failed during the latest collection pass |
+| `runtime.collectors.<collector>.last_error` | string/null | Last collection error, or null after a healthy pass |
+| `runtime.collectors.<collector>.reported_count` | int | Number of condition values reported by the collector |
+
+### Runtime Inference Health
+
+The inference API publishes per-slot runtime health when an active model fails
+during request handling. If the slot policy has a `fallback_chain`, TEMMS tries
+that chain, hot-swaps to the first model that loads, retries the request once,
+and records the failure in the fallback decision snapshot.
+
+| Path | Type | Description |
+|------|------|-------------|
+| `runtime.inference.<slot>.healthy` | bool | False after an active inference failure, true after a successful serve |
+| `runtime.inference.<slot>.last_error` | string/null | Last active inference error, or null after recovery |
+| `runtime.inference.<slot>.failed_model` | string/null | Model id that most recently failed during inference |
 
 ## Examples
 

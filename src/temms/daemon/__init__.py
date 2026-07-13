@@ -1,13 +1,13 @@
-"""
-TEMMS Daemon module.
+"""TEMMS daemon package exports."""
 
-Provides the main daemon service that orchestrates:
-- Inference server
-- Condition collection
-- Policy evaluation
-- Model switching
-"""
-
-from temms.daemon.service import TEMMSDaemon, DaemonConfig
+from typing import Any
 
 __all__ = ["TEMMSDaemon", "DaemonConfig"]
+
+
+def __getattr__(name: str) -> Any:
+    if name in __all__:
+        from temms.daemon.service import DaemonConfig, TEMMSDaemon
+
+        return {"DaemonConfig": DaemonConfig, "TEMMSDaemon": TEMMSDaemon}[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

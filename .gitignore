@@ -10,7 +10,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+/lib/
 lib64/
 parts/
 sdist/
@@ -23,6 +23,7 @@ wheels/
 # Virtual environments
 venv/
 .venv/
+.venv_pdf/
 env/
 ENV/
 
@@ -43,6 +44,7 @@ docs/_build/
 # TEMMS specific
 local.temms.yaml
 local-data/
+temms-canonical-evidence.json
 *.db
 *.db-journal
 
@@ -53,9 +55,17 @@ Thumbs.db
 # Logs
 *.log
 
+# Frontend
+node_modules/
+ui/node_modules/
+ui/*.tsbuildinfo
+ui/vite.config.js
+ui/vite.config.d.ts
+
 # Temporary files
 *.tmp
 *.bak
 
 # AI Files
+.claude/
 temms-mvp-acceptance/

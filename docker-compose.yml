@@ -37,7 +37,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        TEMMS_EXTRAS: sim
+        TEMMS_EXTRAS: ${TEMMS_EXTRAS:-sim}
     container_name: temms-daemon
     ports:
       - "8080:8080"
@@ -48,6 +48,12 @@ services:
     environment:
       - TEMMS_LOG_LEVEL=INFO
       - MLFLOW_TRACKING_URI=http://mlflow-server:5000
+      - TEMMS_DEVICE_ID=edge-sim
+      - TEMMS_DEVICE_PROFILE=x86_64-cpu
+      - TEMMS_EDGE_HEARTBEAT_INTERVAL_S=30
+      - TEMMS_PACKAGE_SIGNING_KEY=temms-local-demo-signing-key
+      - TEMMS_ROLLOUT_REQUIRE_SIGNATURE=true
+      - TEMMS_DEMO_SEED_HUB=1
     networks:
       - temms-local
     depends_on:

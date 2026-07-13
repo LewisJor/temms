@@ -39,6 +39,8 @@ class ModelArtifact(BaseModel):
     runtime_constraints: Dict[str, Any] = Field(default_factory=dict)
     runtime_options: Dict[str, Any] = Field(default_factory=dict)
     benchmark: Dict[str, Any] = Field(default_factory=dict)
+    performance_slo: Dict[str, Any] = Field(default_factory=dict)
+    resource_requirements: Dict[str, Any] = Field(default_factory=dict)
     provenance: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -253,6 +255,8 @@ class PackageImporter:
                     "runtime_constraints": model_artifact.runtime_constraints,
                     "runtime_options": model_artifact.runtime_options,
                     "benchmark": model_artifact.benchmark,
+                    "performance_slo": model_artifact.performance_slo,
+                    "resource_requirements": model_artifact.resource_requirements,
                     "provenance": model_artifact.provenance,
                 }
             )

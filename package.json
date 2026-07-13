@@ -1,0 +1,23 @@
+{
+  "name": "temms",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TEMMS mission-first edge MLOps runtime and React Hub UI",
+  "scripts": {
+    "dev": "npm --prefix ui run dev",
+    "build": "npm --prefix ui run build",
+    "preview": "npm --prefix ui run preview",
+    "typecheck": "npm --prefix ui run typecheck",
+    "smoke:workbench": "npm --prefix ui run smoke:workbench",
+    "ui:dev": "npm --prefix ui run dev",
+    "ui:build": "npm --prefix ui run build",
+    "ui:ci": "npm run ui:typecheck && npm run ui:build && npm run ui:smoke",
+    "ui:preview": "npm --prefix ui run preview",
+    "ui:typecheck": "npm --prefix ui run typecheck",
+    "ui:smoke": "npm --prefix ui run smoke:workbench"
+  },
+  "engines": {
+    "node": ">=20",
+    "npm": ">=10"
+  }
+}

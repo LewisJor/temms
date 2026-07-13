@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from temms.conditions.store import ConditionStore
 from temms.core.cache import CachedModel, ModelCache
@@ -21,6 +21,21 @@ if TYPE_CHECKING:
     from temms.inference.runtime import InferenceRuntime
 
 logger = logging.getLogger(__name__)
+
+
+class ActivationPreflightBlocked(RuntimeError):
+    """Raised when edge readiness refuses a local activation."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        readiness: dict[str, Any] | None = None,
+        blocking_gates: list[dict[str, Any]] | None = None,
+    ):
+        super().__init__(message)
+        self.readiness = readiness or {}
+        self.blocking_gates = blocking_gates or []
 
 
 @dataclass
@@ -67,12 +82,14 @@ class AdaptiveInferenceController:
         policy_engine: PolicyEngine,
         model_cache: ModelCache,
         inference_runtime: InferenceRuntime,
+        activation_preflight: Callable[..., dict[str, Any] | None] | None = None,
     ):
         self.slot_manager = slot_manager
         self.condition_store = condition_store
         self.policy_engine = policy_engine
         self.model_cache = model_cache
         self.inference_runtime = inference_runtime
+        self.activation_preflight = activation_preflight
 
     async def evaluate_slot(self, slot_name: str, apply: bool = True) -> AdaptiveDecision:
         """Evaluate one slot and optionally apply the selected activation."""
@@ -219,14 +236,25 @@ class AdaptiveInferenceController:
             )
 
         try:
+            activation_preflight = self._activation_preflight(
+                slot_name=slot_name,
+                model_id=model.id,
+                trigger_type=trigger_type,
+                trigger_detail=trigger_detail,
+                conditions=conditions,
+            )
             self.slot_manager.update_slot_state(slot_name, SlotState.LOADING)
             await self.inference_runtime.load_model(slot_name, model.id)
+            audit_metadata = self._model_audit_metadata(model.id)
+            if activation_preflight:
+                audit_metadata["activation_preflight"] = activation_preflight
             self.slot_manager.activate_model(
                 slot_name=slot_name,
                 model_id=model.id,
                 trigger_type=trigger_type,
                 trigger_detail=trigger_detail,
                 conditions=conditions,
+                audit_metadata=audit_metadata,
             )
             logger.info(
                 "Adaptive activation: slot=%s %s -> %s trigger=%s/%s",
@@ -248,6 +276,7 @@ class AdaptiveInferenceController:
                 applied=True,
             )
         except Exception as exc:
+            preflight_blocked = isinstance(exc, ActivationPreflightBlocked)
             logger.error("Selected model load failed for %s: %s", slot_name, exc)
             return await self._fallback(
                 slot_name=slot_name,
@@ -256,6 +285,7 @@ class AdaptiveInferenceController:
                 from_model=from_model,
                 conditions=conditions,
                 load_error=str(exc),
+                preserve_slot_state_on_failure=preflight_blocked,
             )
 
     async def _fallback(
@@ -266,6 +296,7 @@ class AdaptiveInferenceController:
         from_model: str | None,
         conditions: dict[str, Any],
         load_error: str,
+        preserve_slot_state_on_failure: bool = False,
     ) -> AdaptiveDecision:
         fallback_chain = self.policy_engine.get_fallback_chain(slot_name)
         attempted = []
@@ -279,13 +310,31 @@ class AdaptiveInferenceController:
                 continue
             attempted.append(model.id)
             try:
+                activation_preflight = self._activation_preflight(
+                    slot_name=slot_name,
+                    model_id=model.id,
+                    trigger_type="fallback",
+                    trigger_detail=trigger_detail,
+                    conditions=conditions,
+                )
                 await self.inference_runtime.load_model(slot_name, model.id)
+                audit_metadata = {
+                    **self._model_audit_metadata(model.id),
+                    "fallback": {
+                        "selected_model": selected_model,
+                        "attempted": attempted,
+                        "failures": failures,
+                    },
+                }
+                if activation_preflight:
+                    audit_metadata["activation_preflight"] = activation_preflight
                 self.slot_manager.activate_model(
                     slot_name=slot_name,
                     model_id=model.id,
                     trigger_type="fallback",
                     trigger_detail=f"fallback after {trigger_detail}",
                     conditions=conditions,
+                    audit_metadata=audit_metadata,
                 )
                 return AdaptiveDecision(
                     slot=slot_name,
@@ -303,7 +352,10 @@ class AdaptiveInferenceController:
             except Exception as exc:
                 failures.append(f"{model.id}: {exc}")
 
-        self.slot_manager.update_slot_state(slot_name, SlotState.ERROR)
+        self.slot_manager.update_slot_state(
+            slot_name,
+            SlotState.RUNNING if preserve_slot_state_on_failure else SlotState.ERROR,
+        )
         return AdaptiveDecision(
             slot=slot_name,
             status="failed",
@@ -318,7 +370,77 @@ class AdaptiveInferenceController:
         )
 
     def _resolve_model(self, model_id_or_name: str) -> CachedModel | None:
-        return (
-            self.model_cache.get_model(model_id_or_name)
-            or self.model_cache.find_model(model_id_or_name)
+        return self.model_cache.get_model(model_id_or_name) or self.model_cache.find_model(
+            model_id_or_name
         )
+
+    def _activation_preflight(
+        self,
+        *,
+        slot_name: str,
+        model_id: str,
+        trigger_type: str,
+        trigger_detail: str,
+        conditions: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if self.activation_preflight is None:
+            return None
+        return self.activation_preflight(
+            slot_name=slot_name,
+            model_id=model_id,
+            trigger_type=trigger_type,
+            trigger_detail=trigger_detail,
+            conditions=conditions,
+        )
+
+    def _model_audit_metadata(self, model_id: str) -> dict[str, Any]:
+        """Return compact model/package context for decision evidence."""
+        model = self.model_cache.get_model(model_id)
+        if model is None:
+            return {"model_id": model_id}
+
+        package_metadata: dict[str, Any] = {"package_id": model.package_id}
+        get_package = getattr(self.model_cache, "get_package", None)
+        package = get_package(model.package_id) if callable(get_package) else None
+        if package is not None:
+            manifest = package.manifest or {}
+            import_audit = manifest.get("_temms_import")
+            if not isinstance(import_audit, dict):
+                import_audit = {}
+            signature = import_audit.get("signature")
+            signature_summary = None
+            if isinstance(signature, dict):
+                signature_summary = {
+                    "schema_version": signature.get("schema_version"),
+                    "algorithm": signature.get("algorithm"),
+                    "signer": signature.get("signer"),
+                    "key_fingerprint": signature.get("key_fingerprint"),
+                    "signed_at": signature.get("signed_at"),
+                    "manifest_sha256": signature.get("manifest_sha256"),
+                }
+
+            package_metadata.update(
+                {
+                    "name": package.name,
+                    "version": package.version,
+                    "source_registry": manifest.get("source_registry"),
+                    "mlflow_run_id": manifest.get("mlflow_run_id"),
+                    "provenance": manifest.get("provenance", {}),
+                    "compatibility": manifest.get("compatibility", {}),
+                    "signature_verified": import_audit.get("signature_verified"),
+                    "signature": signature_summary,
+                }
+            )
+
+        return {
+            "model_id": model.id,
+            "model_name": model.name,
+            "model_version": model.version,
+            "model_format": model.format.value,
+            "model_sha256": model.sha256,
+            "package_id": model.package_id,
+            "package": package_metadata,
+            "provenance": model.metadata.get("provenance", {}),
+            "runtime_constraints": model.metadata.get("runtime_constraints", {}),
+            "benchmark": model.metadata.get("benchmark", {}),
+        }

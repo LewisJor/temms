@@ -7,9 +7,7 @@ can actually load and run inference on.
 Requires: onnx, onnxruntime, pillow
 """
 
-import asyncio
 import json
-import shutil
 from pathlib import Path
 
 import numpy as np
@@ -26,10 +24,9 @@ from temms.core.package import PackageImporter
 from temms.core.package_catalog import package_source_sha256
 from temms.core.signing import sign_package, validate_package
 from temms.inference.runtime import InferenceRuntime
-from temms.slots.manager import SlotManager, SlotState
+from temms.slots.manager import SlotManager
 from temms.conditions.store import ConditionStore
 from temms.policy.engine import PolicyEngine
-from temms.policy.schema import SlotPolicy
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -210,6 +207,28 @@ def real_package(tmp_path):
                 "metadata": {
                     "input_shape": [1, 3, 32, 32],
                     "classes": 10,
+                },
+                "input_schema": {
+                    "shape": [1, 3, 32, 32],
+                    "dtype": "float32",
+                },
+                "output_schema": {
+                    "shape": [1, 10],
+                    "dtype": "float32",
+                },
+                "runtime_constraints": {
+                    "device_profiles": ["x86_64-cpu", "arm64-cpu"],
+                    "runtimes": ["onnxruntime"],
+                    "providers": ["CPUExecutionProvider"],
+                },
+                "benchmark": {
+                    "latency_ms_p95": 3.0,
+                    "source": "real-inference-test",
+                },
+                "provenance": {
+                    "source": "real-inference-test",
+                    "run_id": f"real-inference-{seed}",
+                    "artifact_sha256": sha256,
                 },
             }
         )

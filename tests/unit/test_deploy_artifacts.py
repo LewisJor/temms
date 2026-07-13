@@ -104,10 +104,10 @@ class TestDeployArtifacts:
             "TEMMS Sim Environment"
         )
 
-    def test_docker_compose_sim_opts_into_sim_dependencies(self):
+    def test_docker_compose_defaults_to_sim_dependencies(self):
         compose = (ROOT / "docker-compose.yml").read_text()
 
-        assert "TEMMS_EXTRAS: sim" in compose
+        assert "TEMMS_EXTRAS: ${TEMMS_EXTRAS:-sim}" in compose
         assert "python:3.11-slim" in compose
         assert "python:3.10-slim" not in compose
 
@@ -123,9 +123,10 @@ class TestDeployArtifacts:
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
 
         assert 'FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"' in workflow
-        assert workflow.count("actions/checkout@v6") == 3
+        assert workflow.count("actions/checkout@v6") == 4
         assert workflow.count("actions/setup-python@v6") == 3
         assert workflow.count("astral-sh/setup-uv@v7") == 3
+        assert "TEMMS_EXTRAS: inference" in workflow
         assert "actions/upload-artifact@v6" in workflow
         assert "actions/checkout@v4" not in workflow
         assert "actions/setup-python@v5" not in workflow

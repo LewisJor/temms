@@ -13,6 +13,8 @@ operation, and deployment validation.
 :caption: Start Here
 
 QUICKSTART
+functional-testing
+product-summary
 architecture-overview
 architecture
 ```
