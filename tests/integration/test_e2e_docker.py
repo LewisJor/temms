@@ -112,32 +112,31 @@ class TestConditionInjection:
 
 
 class TestWebUI:
-    """Verify Web UI is accessible."""
+    """Verify the Mission Package Workbench Hub UI is served and the retired
+    diagnostic routes redirect to it."""
 
-    def test_dashboard_loads(self, client):
-        r = client.get("/ui/")
+    # Diagnostic routes retired in the Mission Package Workbench pivot (PR #10).
+    # They must redirect operators to the single Hub shell rather than 404 or
+    # render legacy dashboards.
+    RETIRED_UI_ROUTES = (
+        "/ui/",
+        "/ui/slots",
+        "/ui/conditions",
+        "/ui/decisions",
+        "/ui/models",
+        "/ui/import",
+    )
+
+    def test_hub_loads(self, client):
+        r = client.get("/ui/hub")
         assert r.status_code == 200
         assert "TEMMS" in r.text
 
-    def test_slots_page_loads(self, client):
-        r = client.get("/ui/slots")
-        assert r.status_code == 200
-
-    def test_conditions_page_loads(self, client):
-        r = client.get("/ui/conditions")
-        assert r.status_code == 200
-
-    def test_decisions_page_loads(self, client):
-        r = client.get("/ui/decisions")
-        assert r.status_code == 200
-
-    def test_models_page_loads(self, client):
-        r = client.get("/ui/models")
-        assert r.status_code == 200
-
-    def test_import_page_loads(self, client):
-        r = client.get("/ui/import")
-        assert r.status_code == 200
+    @pytest.mark.parametrize("path", RETIRED_UI_ROUTES)
+    def test_retired_route_redirects_to_hub(self, client, path):
+        r = client.get(path, follow_redirects=False)
+        assert r.status_code == 307
+        assert r.headers["location"] == "/ui/hub"
 
 
 class TestAPIEndpoints:
