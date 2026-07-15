@@ -312,10 +312,30 @@ def build_edge_mission_package_plan(
         if isinstance(readiness.get("runtime_workbench"), dict)
         else {}
     )
+    production_admission = (
+        readiness.get("production_admission")
+        if isinstance(readiness.get("production_admission"), dict)
+        else {}
+    )
     mission_payload = edge_runtime_mission or readiness
+    # A mission-package plan is a pre-deployment artifact: its go/no-go must
+    # reflect whether the selected edge runtime PATH is admissible for
+    # production (the production-admission verdict over blocking gates), not the
+    # operator readiness rollup. That rollup stays at "attention" on a freshly
+    # provisioned stack whenever advisory post-deployment gates are still open
+    # (no rollout created yet, mission replay not exported yet), even though the
+    # path itself is deployable. Fall back to the rollup status when a readiness
+    # payload carries no production-admission verdict.
+    deploy_status = str(
+        production_admission.get("status")
+        or mission_payload.get("status")
+        or readiness.get("status")
+        or "unknown"
+    )
+    gate_payload = {**mission_payload, "status": deploy_status}
     gate_failures = proof_gate_failures(
         "edge-runtime-mission",
-        mission_payload,
+        gate_payload,
         require_go=require_go,
         min_runtime_fit=min_runtime_fit,
         require_best_runtime=require_best_runtime,
@@ -368,7 +388,7 @@ def build_edge_mission_package_plan(
     capability_lock = capability_lock_for_proof_gate(readiness)
     runtime_plan = _refs(
         {
-            "status": readiness.get("status"),
+            "status": deploy_status,
             "runtime_target_id": selection.get("runtime_target_id"),
             "runtime_fit_score": runtime_fit.get("score"),
             "runtime_fit_tier": runtime_fit.get("tier"),

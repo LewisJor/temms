@@ -393,6 +393,98 @@ def test_edge_mission_package_plan_binds_mission_runtime_and_policy():
     assert hub_lite_module.canonical_json_hash(unsigned) == recorded_hash
 
 
+def test_edge_mission_package_plan_go_when_only_post_deploy_gates_pending():
+    """A freshly provisioned, deployable path plans "go" even though the
+    operator readiness rollup is still "attention" because a rollout has not
+    been created and no mission replay has been exported yet. The plan verdict
+    must track production admission (blocking gates), not those advisory gates.
+    """
+    capability_lock = {
+        "schema_version": "temms-runtime-capability-lock/v1",
+        "status": "locked",
+        "capability_sha256": "b" * 64,
+    }
+    target_selection = {
+        "status": "best",
+        "selected_runtime_target_id": "temms-x86_64-cpu",
+        "best_runtime_target_id": "temms-x86_64-cpu",
+        "score_delta": 0,
+    }
+    readiness = {
+        "schema_version": "temms-deployment-readiness/v1",
+        # Operator rollup is held at "attention" by the evidence_chain gate.
+        "status": "attention",
+        "headline": "Deployment is stageable with operator action",
+        "next_action": "Create a rollout or staged rollout plan for the selected model",
+        "checked_at": "2026-07-13T20:00:00Z",
+        "selection": {
+            "package_id": "pkg-vision",
+            "model_id": "model-vision",
+            "device_id": "edge-1",
+            "runtime_target_id": "temms-x86_64-cpu",
+            "slot": "vision",
+        },
+        # The selected edge runtime path is admissible for production: no
+        # blocking gate fails, so apply is permitted.
+        "production_admission": {
+            "schema_version": "temms-production-admission/v1",
+            "status": "go",
+            "apply_allowed": True,
+            "blocking_gate_count": 0,
+            "blocking_gates": [],
+        },
+        "runtime_fit": {
+            "score": 97,
+            "tier": "optimal",
+            "runtime_capability_lock": capability_lock,
+            "target_selection": target_selection,
+        },
+        "edge_runtime_mission": {
+            "schema_version": "temms-edge-runtime-mission/v1",
+            "status": "attention",
+            "path": {
+                "package_id": "pkg-vision",
+                "model_id": "model-vision",
+                "device_id": "edge-1",
+                "runtime_target_id": "temms-x86_64-cpu",
+                "slot": "vision",
+            },
+            "metrics": {
+                "runtime_fit": {
+                    "status": "go",
+                    "score": 97,
+                    "tier": "optimal",
+                }
+            },
+        },
+        "edge_execution_contract": {
+            "schema_version": "temms-edge-execution-contract/v1",
+            "recommended_action": "apply_or_stage",
+        },
+    }
+
+    plan = hub_lite_module.build_edge_mission_package_plan(
+        readiness,
+        {
+            "goal": "Detect vehicles locally during link loss.",
+            "mission_yaml": "schema_version: temms-edge-mission/v1",
+            "sensor": "camera.rgb",
+            "slot": "vision",
+        },
+        require_go=True,
+        min_runtime_fit=95,
+        require_best_runtime=True,
+        require_capability_lock=True,
+        require_proof_signature=True,
+    )
+
+    assert plan["runtime_plan"]["status"] == "go"
+    assert plan["proof_gate"]["status"] == "passed"
+    assert plan["proof_gate"]["failures"] == []
+    # The embedded operator readiness summary still reflects the follow-up work.
+    assert plan["readiness"]["status"] == "attention"
+
+
 def test_edge_mission_package_plan_hydrates_yaml_in_core_planner():
     readiness = {
         "schema_version": "temms-deployment-readiness/v1",
