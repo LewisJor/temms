@@ -25,6 +25,7 @@ architecture
 
 edge-operations
 offline-ddil-mode
+swap-contract
 deployment-lifecycle
 operational-notes
 run-on-linux-vm
