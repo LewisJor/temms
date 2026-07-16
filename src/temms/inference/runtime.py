@@ -76,33 +76,6 @@ class LoadedModel:
     inference_count: int = 0
     last_inference: Optional[datetime] = None
     warmed: bool = False
-    # In-flight request accounting. ``inflight`` counts requests currently
-    # executing against this model instance; ``retired`` marks a model that has
-    # been swapped out and must be unloaded once the last in-flight request
-    # drains. Together they guarantee a request started before a swap always
-    # completes on the model it began on (swap-contract Tier 1).
-    inflight: int = 0
-    retired: bool = False
-
-
-@dataclass
-class InferenceResult:
-    """Outcome of a single inference, carrying model attribution.
-
-    ``model_id`` is the model that actually produced ``predictions`` (the
-    currently-serving instance), which may differ from the caller's expected
-    model if a swap completed between request admission and execution.
-    """
-    predictions: List[Any]
-    model_id: str
-    expected_model_id: Optional[str] = None
-
-    @property
-    def swapped_during_request(self) -> bool:
-        return (
-            self.expected_model_id is not None
-            and self.model_id != self.expected_model_id
-        )
 
 
 @dataclass
@@ -240,24 +213,16 @@ class InferenceRuntime:
                 if not new_loaded.warmed:
                     self._warmup(new_loaded)
 
-                # Brief lock for atomic swap. The old model is retired, not
-                # unloaded here: requests already executing against it must be
-                # allowed to finish. The last in-flight request (or this call,
-                # if there are none) performs the unload.
+                # Brief lock for an atomic pointer swap. The old instance is
+                # NOT explicitly unloaded here: any request already executing
+                # holds its own reference to it, so it is freed (and its native
+                # session released) only once the last in-flight request
+                # returns. This drains in-flight requests without a bespoke
+                # refcount subsystem — CPython reference counting is the
+                # mechanism (swap-contract: in-flight completion).
                 with slot_runtime.lock:
-                    old_loaded = slot_runtime.loaded_model
                     slot_runtime.loaded_model = new_loaded
                     slot_runtime.loading_model = None
-                    drain_old = None
-                    if old_loaded is not None:
-                        old_loaded.retired = True
-                        if old_loaded.inflight == 0:
-                            drain_old = old_loaded
-
-                # Unload the retired model outside the lock only if it had no
-                # in-flight requests; otherwise the draining request unloads it.
-                if drain_old is not None:
-                    self._unload_retired(slot_name, drain_old)
 
                 logger.info(
                     f"Loaded model {model_id} into slot {slot_name}"
@@ -406,105 +371,54 @@ class InferenceRuntime:
     async def infer(
         self,
         slot_name: str,
-        model_id: str,
-        input_data: bytes,
-        content_type: str = "application/octet-stream",
-    ) -> List[Any]:
-        """Run inference and return only the predictions (see ``infer_result``)."""
-        result = await self.infer_result(slot_name, model_id, input_data, content_type)
-        return result.predictions
-
-    async def infer_result(
-        self,
-        slot_name: str,
         model_id: Optional[str],
         input_data: bytes,
         content_type: str = "application/octet-stream",
-    ) -> InferenceResult:
+    ) -> List[Any]:
         """
-        Run inference on a slot's currently-serving model, with attribution.
+        Run inference on a slot's currently-serving model.
 
-        Uses copy-on-read locking: under a brief lock it grabs a reference to
-        the loaded model and increments its in-flight counter, then releases the
-        lock and runs inference on that reference. This lets a hot-swap proceed
-        concurrently while guaranteeing:
+        Copy-on-read: under a brief lock it grabs a reference to the loaded
+        model, then releases the lock and runs inference on that reference. A
+        concurrent hot-swap only reassigns the slot's pointer, so:
 
-        - A request is always served by whichever model is loaded at admission;
+        - A request is served by whichever model is loaded when it is admitted;
           it never errors because a swap is in progress (the old model serves
           until the atomic pointer swap, the new one after).
-        - The model instance a request began on is never unloaded mid-flight;
-          the retired model is unloaded only once its in-flight count drains.
-        - The result is attributed to the model that actually served it, which
-          the caller records rather than assuming the pre-read active model.
+        - The instance a request began on stays alive for the whole request:
+          the local reference below keeps it (and its native session) from being
+          freed until the request returns.
 
-        ``model_id`` is treated as the expected/preferred model for attribution
-        only, not a hard gate.
-
-        Args:
-            slot_name: Slot to run inference on
-            model_id: Expected model ID (attribution hint; may be ``None``)
-            input_data: Raw input bytes
-            content_type: MIME type of input
-
-        Returns:
-            InferenceResult with predictions and the served model id
+        ``model_id`` is an attribution hint, not a hard gate — the request is
+        served by whatever is loaded.
 
         Raises:
-            RuntimeError: If the slot has no model loaded at all
+            RuntimeError: If the slot has no model loaded at all.
         """
         slot_runtime = self._get_slot_runtime(slot_name)
 
-        def _infer() -> InferenceResult:
-            # Brief lock: grab a reference and register as in-flight so the
-            # instance cannot be unloaded while this request runs.
+        def _infer() -> List[Any]:
             with slot_runtime.lock:
                 loaded = slot_runtime.loaded_model
                 if loaded is None:
                     raise RuntimeError(f"No model loaded in slot {slot_name}")
-                loaded.inflight += 1
 
-            try:
-                # Run inference WITHOUT holding the lock.
-                input_name = self._get_model_input_name(loaded.runtime)
-                processed_input = self._preprocess_input(
-                    input_data,
-                    content_type,
-                    loaded.model_info,
-                    input_name=input_name,
-                )
-                outputs = loaded.runtime.infer(processed_input)
-                loaded.inference_count += 1
-                loaded.last_inference = datetime.now()
-                predictions = self._postprocess_output(outputs)
-            finally:
-                # Release the in-flight hold; if this was the last request on a
-                # retired model, unload it now.
-                drain = None
-                with slot_runtime.lock:
-                    loaded.inflight -= 1
-                    if loaded.retired and loaded.inflight == 0:
-                        drain = loaded
-                if drain is not None:
-                    self._unload_retired(slot_name, drain)
-
-            return InferenceResult(
-                predictions=predictions,
-                model_id=loaded.model_id,
-                expected_model_id=model_id,
+            # Run inference WITHOUT holding the lock. `loaded` keeps the instance
+            # alive across a concurrent swap.
+            input_name = self._get_model_input_name(loaded.runtime)
+            processed_input = self._preprocess_input(
+                input_data,
+                content_type,
+                loaded.model_info,
+                input_name=input_name,
             )
+            outputs = loaded.runtime.infer(processed_input)
+            loaded.inference_count += 1
+            loaded.last_inference = datetime.now()
+            return self._postprocess_output(outputs)
 
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, _infer)
-
-    def _unload_retired(self, slot_name: str, loaded: LoadedModel) -> None:
-        """Unload a retired model instance once its requests have drained."""
-        try:
-            loaded.runtime.unload()
-            logger.info(
-                f"Unloaded retired model {loaded.model_id} from slot {slot_name}"
-            )
-        except Exception as e:
-            logger.warning(f"Error unloading retired model {loaded.model_id}: {e}")
 
     def _warmup(self, loaded: LoadedModel) -> None:
         """Run a single warmup inference so the model serves warm.

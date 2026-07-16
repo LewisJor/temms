@@ -1589,6 +1589,103 @@ class TestTEMMSDaemonAsync:
             "model_id"
         ] == "safe-default-v1"
 
+    async def test_auto_start_restores_persisted_active_model_over_default(
+        self,
+        slot_manager,
+        condition_store,
+        policy_engine,
+        model_cache,
+        model_storage,
+        temp_dir,
+    ):
+        """Crash recovery: startup restores the last fully-activated model, not
+        the configured default (swap-contract: deterministic recovery)."""
+        for model_id, name in [("safe-default-v1", "safe-default"), ("restored-v1", "restored")]:
+            model_bytes = f"{model_id}-bytes".encode()
+            model_path = temp_dir / f"{model_id}.onnx"
+            model_path.write_bytes(model_bytes)
+            model_cache.add_cached_model(
+                model_id=model_id,
+                name=name,
+                version="1",
+                format=ModelFormat.ONNX,
+                path=model_path,
+                sha256=hashlib.sha256(model_bytes).hexdigest(),
+                size_bytes=len(model_bytes),
+                package_id="pkg-recovery",
+            )
+        slot_manager.create_slot(
+            "vision",
+            "Vision slot",
+            default_model="safe-default",
+            candidates=["safe-default", "restored"],
+        )
+        # Simulate a prior run that had swapped to the non-default model and
+        # committed it before the process died.
+        slot_manager.activate_model("vision", "restored-v1", "policy", "pre-crash")
+        assert slot_manager.get_slot("vision").state == SlotState.RUNNING
+
+        config = DaemonConfig(
+            db_path=temp_dir / "temms.db",
+            model_dir=temp_dir / "models",
+            policy_dir=temp_dir / "policies",
+            telemetry_path=temp_dir / "telemetry.jsonl",
+            hub_state_path=temp_dir / "hub_lite_recovery.json",
+            hub_device_id="edge-1",
+        )
+        daemon = TEMMSDaemon(
+            config=config,
+            slot_manager=slot_manager,
+            condition_store=condition_store,
+            policy_engine=policy_engine,
+            model_cache=model_cache,
+            model_storage=model_storage,
+            collectors=[],
+        )
+        daemon.hub_lite.enroll_device(
+            "edge-1",
+            profile="x86_64-cpu",
+            inventory={
+                "runtimes": {
+                    "onnxruntime": {"available": True, "providers": ["CPUExecutionProvider"]}
+                },
+                "memory": {"available_mb": 256.0},
+                "storage": {"available_mb": 2048.0},
+            },
+        )
+        daemon.hub_lite.upsert_package(
+            {
+                "package_id": "pkg-recovery",
+                "name": "recovery-models",
+                "version": "1",
+                "device_profiles": ["x86_64-cpu"],
+                "metadata": {
+                    "validation": {"signature_verified": True, "strict_metadata": True},
+                    "models": [
+                        {
+                            "id": model_id,
+                            "runtime_constraints": {"runtimes": ["onnxruntime"]},
+                            "resource_requirements": {
+                                "min_memory_available_mb": 128.0,
+                                "min_storage_available_mb": 64.0,
+                            },
+                        }
+                        for model_id in ("safe-default-v1", "restored-v1")
+                    ],
+                },
+            }
+        )
+        _release_package(daemon.hub_lite, "pkg-recovery")
+        daemon.inference_runtime.load_model = AsyncMock(return_value=True)
+
+        await daemon._auto_start_slots()
+
+        # The persisted active model is restored, not the default.
+        daemon.inference_runtime.load_model.assert_awaited_once_with("vision", "restored-v1")
+        assert slot_manager.get_slot("vision").active_model_id == "restored-v1"
+        decision = slot_manager.get_decision_log("vision", limit=1)[0]
+        assert decision["trigger_detail"] == "restore_active_model"
+
     async def test_condition_loop_triggers_policy_hot_swap_with_source_metadata(
         self,
         slot_manager,

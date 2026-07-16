@@ -649,22 +649,37 @@ class TEMMSDaemon:
         logger.info(f"Loaded {len(self.policy_engine.list_policies())} policies")
 
     async def _auto_start_slots(self) -> None:
-        """Start slots that have default models."""
+        """Load each slot's startup model into the (empty) runtime.
+
+        Crash recovery: prefer the persisted ``active_model_id`` over the
+        configured ``default_model``. ``active_model_id`` is committed only after
+        a swap fully succeeds (load + warm + atomic DB commit), so it is always a
+        fully-activated model, never a half-swap — it is the deterministic
+        recovery anchor. On a fresh process the runtime holds nothing, so a slot
+        that the store records as running is re-hydrated rather than skipped.
+        """
         slots = self.slot_manager.list_slots()
 
         for slot in slots:
-            if slot.state != SlotState.STOPPED:
+            # Skip only if this slot is already serving in the current process.
+            if self.inference_runtime.get_slot_info(slot.name).get("has_model"):
                 continue
 
-            if slot.default_model is None:
-                continue
-
-            # Find model in cache
-            model = self.model_cache.find_model(slot.default_model)
+            # Choose the startup model: last fully-activated first, else default.
+            model = None
+            trigger_detail = "default_model"
+            if slot.active_model_id:
+                model = self.model_cache.get_model(slot.active_model_id)
+                if model is not None:
+                    trigger_detail = "restore_active_model"
+            if model is None and slot.default_model is not None:
+                model = self.model_cache.find_model(slot.default_model)
             if model is None:
-                logger.warning(
-                    f"Default model for slot {slot.name} not found: {slot.default_model}"
-                )
+                if slot.active_model_id or slot.default_model:
+                    logger.warning(
+                        f"Startup model for slot {slot.name} not found "
+                        f"(active={slot.active_model_id}, default={slot.default_model})"
+                    )
                 continue
 
             try:
@@ -673,7 +688,7 @@ class TEMMSDaemon:
                     slot_name=slot.name,
                     model_id=model.id,
                     trigger_type="startup",
-                    trigger_detail="default_model",
+                    trigger_detail=trigger_detail,
                     conditions=conditions,
                 )
 
@@ -689,18 +704,20 @@ class TEMMSDaemon:
                     slot_name=slot.name,
                     model_id=model.id,
                     trigger_type="startup",
-                    trigger_detail="default_model",
+                    trigger_detail=trigger_detail,
                     conditions=conditions,
                     audit_metadata=audit_metadata,
                 )
 
-                logger.info(f"Auto-started slot {slot.name} with model {model.id}")
+                logger.info(
+                    f"Auto-started slot {slot.name} with model {model.id} ({trigger_detail})"
+                )
                 self._emit_telemetry(
                     "slot.startup",
                     {
                         "slot": slot.name,
                         "model_id": model.id,
-                        "trigger": "default_model",
+                        "trigger": trigger_detail,
                         "model": audit_metadata,
                     },
                 )
