@@ -56,6 +56,35 @@ existing fits the DDIL/edge/provenance constraint).
 - TEMMS does **not** compete with Triton/TF Serving on serving throughput. It
   orchestrates them.
 
+## Validation environment (now: a Mac; hardware later)
+
+Everything must be **validatable on a single Apple Silicon Mac (arm64, ~16 GB
+RAM)** for now. Real edge hardware comes only after the behavior is simulated
+exhaustively. This is a hard constraint on what we build and how we prove it:
+
+- **Real inference** runs in-process on **ONNX Runtime** (CoreML + CPU execution
+  providers on this Mac) — the reference adapter. This is the near-term backend.
+- **Deterministic behavior/DDIL logic** runs on the simulation runtime
+  (`TEMMS_INFERENCE_SIMULATE_RUNTIME=1`) — concurrency, swaps, offline/replay,
+  hysteresis, recovery — with no real model quirks.
+- **Multi-edge / fleet DDIL scenarios** run as Docker containers (hub + edge
+  agents) on the same Mac. No physical fleet required to exercise rollout,
+  air-gap bundles, or reconnect.
+- **Fault injection** is host-level and Mac-runnable: `kill -9`, disk-full on
+  evidence/state writes, clock jumps, flapping/garbage sensor values.
+
+Implications:
+- **Triton is not validatable on macOS/arm64** — no Mac build. It stays a
+  documented adapter seam, built only when a Linux/Jetson target is real. In-
+  process ORT is what we prove now.
+- **16 GB RAM** means large-model (multi-GB/VLA) behavior is *simulated* via the
+  `fits()` capacity abstraction and small stand-in models — never validated with
+  real multi-GB artifacts on this box. Reinforces descoping the bespoke
+  footprint estimator.
+- The bar for "done" on any DDIL feature is a **repeatable single-Mac
+  simulation** that exercises it (ideally in the soak/chaos harness, #13), not a
+  hardware demo.
+
 ## Litmus test for any new work
 
 Before building anything, ask: *does a mature tool already do this, and does it
