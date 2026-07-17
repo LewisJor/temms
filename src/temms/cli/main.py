@@ -3442,13 +3442,11 @@ def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _canonical_json_hash(payload: dict[str, Any]) -> str:
-    import hashlib
+    # Single source of truth: the number-canonicalizing hash in core, so CLI
+    # offline verification agrees with the daemon and the UI on every digest.
+    from temms.core.mission_package import canonical_json_hash
 
-    return hashlib.sha256(
-        json_dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode(
-            "utf-8"
-        )
-    ).hexdigest()
+    return canonical_json_hash(payload)
 
 
 def _edge_runtime_proof_component_digests(proof: dict[str, Any]) -> dict[str, Any]:
