@@ -1,0 +1,58 @@
+{
+  "config": {
+    "duration_s": 120.0,
+    "min_dwell_s": 5.0,
+    "seed": 1234
+  },
+  "errors": [],
+  "faults_injected": {
+    "clock_jump": 1351,
+    "contradictory_sensor": 4969,
+    "flap": 34117,
+    "garbage_sensor": 7413,
+    "restart": 249,
+    "stale_sensor": 3490
+  },
+  "generated_at": "2026-07-17T16:18:34.844056Z",
+  "invariants": [
+    {
+      "detail": "0 errors over 2125377 inferences",
+      "name": "zero_silent_inference_errors",
+      "passed": true
+    },
+    {
+      "detail": "38.0 swaps/min (dwell=5.0s)",
+      "name": "bounded_swap_frequency",
+      "passed": true
+    },
+    {
+      "detail": "249 ok / 0 failed",
+      "name": "clean_recovery_on_restart",
+      "passed": true
+    },
+    {
+      "detail": "0 errors",
+      "name": "no_harness_errors",
+      "passed": true
+    }
+  ],
+  "passed": true,
+  "recovery": {
+    "failed": 0,
+    "ok": 249
+  },
+  "schema_version": "temms-reliability-report/v1",
+  "swap_latency_ms": {
+    "count": 76,
+    "max": 4.581,
+    "p50": 2.42,
+    "p95": 3.85
+  },
+  "totals": {
+    "decisions": 49989,
+    "inference_errors": 0,
+    "inferences": 2125377,
+    "iterations": 49989,
+    "swaps": 76
+  }
+}

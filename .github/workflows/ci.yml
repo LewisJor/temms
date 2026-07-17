@@ -77,6 +77,7 @@ jobs:
             tests/integration/test_hub_lite_mvp_flow.py \
             tests/integration/test_hub_lite_online_sync.py \
             tests/integration/test_mvp_multi_vm_acceptance.py \
+            tests/integration/test_soak_smoke.py \
             -q
 
   docker:

@@ -11,7 +11,9 @@ source_suffix = {
 }
 
 master_doc = "index"
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+# reliability-report.md is a machine-generated artifact (make soak); it is
+# linked from reliability.md rather than being a narrative page in the toctree.
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "reliability-report.md"]
 
 html_theme = "furo"
 html_title = "TEMMS"

@@ -1,7 +1,7 @@
 .PHONY: help install dev-install sim-install test clean format lint build \
        docker-up docker-down docker-clean docker-build docker-build-runtime docker-buildx docker-logs docker-product-smoke \
        generate-models product-demo sim-weather sim-override sim-visual sim-headless test-e2e \
-       mvp-smoke mvp-acceptance docker-acceptance docker-acceptance-up \
+       mvp-smoke mvp-acceptance soak soak-short docker-acceptance docker-acceptance-up \
        docker-acceptance-down init-local run-daemon ui-install ui-build ui-ci ui-dev ui-smoke ui-typecheck
 
 # ==============================================================================
@@ -79,6 +79,15 @@ mvp-smoke:
 
 mvp-acceptance:
 	uv run pytest tests/integration/test_mvp_multi_vm_acceptance.py -q
+
+# ---- Soak & chaos reliability harness (#13) ----
+
+soak-short:
+	uv run pytest tests/integration/test_soak_smoke.py -q
+
+soak:
+	uv run python scripts/soak.py --duration $${SOAK_DURATION:-120} \
+		--report docs/reliability-report.json --markdown docs/reliability-report.md
 
 test-sim:
 	pytest tests/test_sim_weather.py tests/test_sim_scenarios.py -v
