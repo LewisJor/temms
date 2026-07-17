@@ -17,6 +17,9 @@ spec:
   rules:                           # Required. At least one rule.
     - name: <rule-name>            # Required. Appears in decision logs.
       priority: <integer>          # Required. Higher = evaluated first.
+      min_dwell_s: <number>        # Optional. Default 0. Anti-flap hysteresis:
+                                   # conditions must hold continuously for this
+                                   # many seconds before the rule may switch.
       conditions:                  # Required. When to activate this rule.
         all: [...]                 # All conditions must be true (AND)
         any: [...]                 # At least one must be true (OR)

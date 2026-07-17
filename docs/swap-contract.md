@@ -68,9 +68,23 @@ load/activate calls and reports readiness.
 ## Anti-flap hysteresis
 
 A sensor oscillating across a policy threshold must not thrash swaps. Dwell is a
-policy concern (a condition must hold for a minimum time / N evaluations before
-it can trigger a switch), specified with the decision engine in
-`src/temms/policy/`, not in the swap layer. (Tracked in issue #12.)
+policy concern, not a swap-layer one: each rule carries `min_dwell_s`, and a
+matched rule fires only after its conditions have held **continuously** for that
+many seconds. A matched-but-not-yet-dwelled rule is "pending" and evaluation
+falls through to lower-priority rules or the default model, so a transient
+threshold crossing never triggers a switch.
+
+- Timing uses a **monotonic** clock (`time.monotonic`), so wall-clock jumps —
+  common under DDIL — cannot prematurely satisfy or reset a dwell window.
+- `min_dwell_s: 0` (default) preserves immediate switching; existing policies
+  are unaffected.
+- The per-rule dwell status (`min_dwell_s`, `satisfied_for_s`, `eligible`,
+  `pending`) is recorded in the decision explanation for the evidence chain.
+
+Implemented in `src/temms/policy/schema.py` (`PolicyRule.min_dwell_s`) and
+`src/temms/policy/engine.py` (`_apply_dwell`). Tests:
+`tests/unit/test_policy_engine.py::TestSwitchHysteresis` — including a 1 Hz
+flapping sensor that never thrashes a swap.
 
 ## Capacity / admission
 
