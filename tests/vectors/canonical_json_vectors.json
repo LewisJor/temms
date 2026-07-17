@@ -1,0 +1,95 @@
+{
+  "schema_version": "temms-canonical-json/v1",
+  "vectors": [
+    {
+      "name": "empty_object",
+      "input": {},
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "name": "empty_array",
+      "input": [],
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "integer_valued_floats",
+      "input": {
+        "a": 12.0,
+        "b": 4096.0,
+        "c": -3.0
+      },
+      "sha256": "c5478cf3fa2c1896fa8679d5b36a2317d44b9bb3e0f9b5a25fc60c4bfdadaa76"
+    },
+    {
+      "name": "genuine_floats",
+      "input": {
+        "confidence": 0.72,
+        "ratio": 0.5
+      },
+      "sha256": "366d878092ce4a397b20b2549f76c9d106aa2f00a305a14fffb233fa0ce4cad1"
+    },
+    {
+      "name": "booleans_are_not_numbers",
+      "input": {
+        "t": true,
+        "f": false,
+        "n": null
+      },
+      "sha256": "22e00dc2f7b01420f940fbdbfbdf34fa0667cc6500186495023ba37722cbd05e"
+    },
+    {
+      "name": "key_ordering",
+      "input": {
+        "z": 1.0,
+        "a": 2.0,
+        "m": {
+          "y": 3.0,
+          "b": 4.0
+        }
+      },
+      "sha256": "1b40eaf8e14bceb66fd919e3cc2448d42be66c0da4f4f156099c12f5099ff394"
+    },
+    {
+      "name": "nested_mixed",
+      "input": {
+        "a": [
+          3.0,
+          {
+            "k": 4.0,
+            "v": 0.25
+          }
+        ],
+        "z": "x"
+      },
+      "sha256": "b0b14d42fe4685d372dfeb58fecadc189447ca99d96ecd8d4e83f64d668a5c72"
+    },
+    {
+      "name": "unicode_strings",
+      "input": {
+        "label": "fog->lowlight",
+        "sat": "\u1f6f0"
+      },
+      "sha256": "33a58e3a76bc16551a2ccea4a7e9d50cfefcb53a1e6e5c1ab4f232837d7e9120"
+    },
+    {
+      "name": "mission_slo",
+      "input": {
+        "latency_budget_ms": 12.0,
+        "min_throughput_ips": 85.0,
+        "confidence_threshold": 0.72,
+        "require_go": true
+      },
+      "sha256": "7ded38d7b7423cd24e369a93397c462be6c31ce1b4432bbde6d6f10bb9822fef"
+    },
+    {
+      "name": "edge_inventory_memory",
+      "input": {
+        "memory": {
+          "available_mb": 4096.0,
+          "total_mb": 8192.0
+        }
+      },
+      "sha256": "623b100175bd98dfdbba934bde1b0113118c9e2ccba13c8e7e85e7b74367ab47"
+    }
+  ]
+}
