@@ -1,22 +1,30 @@
 # TEMMS
 
-TEMMS is an edge runtime for adaptive inference. It runs next to your inference
-application, watches local operating conditions, and switches the active model
-for each inference slot when policy says another model is a better fit.
+TEMMS is an optimized edge model management system for **DDIL** environments
+(Denied, Disrupted, Intermittent, Limited connectivity). It runs next to your
+inference application, watches local operating conditions, and switches the
+active model for each inference slot when policy says another model is a better
+fit — deterministically, and with a signed evidence trail.
 
 It is designed for disconnected or degraded edge systems where model choice
 depends on local state: visibility, lighting, battery, thermals, available
 runtime, mission phase, or operator input.
 
+> **Direction:** TEMMS integrates the commodity (serving via ONNX Runtime,
+> registry via MLflow) and builds only the differentiator — the DDIL policy,
+> provenance, and evidence layer. See [`docs/direction.md`](docs/direction.md).
+
 ## Features
 
 - Slot-based inference endpoints
-- YAML policies for condition-based model selection
+- YAML policies for condition-based model selection, with anti-flap dwell
+  hysteresis (`min_dwell_s`)
 - Local condition store with source priority
 - Operator overrides
-- Hot-swap model activation
+- Hot-swap model activation (old model serves until the new one is warmed)
 - Fallback chains when a selected model fails to load
 - Offline mode with buffered control operations
+- Ed25519-signed packages with offline (public-key-only) verification
 - Decision log and evidence bundle export
 - Hub product UI for model inventory, runtime compatibility, rollout approval,
   activation, and evidence export

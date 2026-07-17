@@ -1,17 +1,21 @@
 # TEMMS Documentation
 
-TEMMS is an edge runtime for adaptive inference control. It runs next to an
-inference stack, evaluates local conditions, switches models, records evidence,
-and keeps serving when connectivity is degraded or unavailable.
+TEMMS is an optimized edge model management system for **DDIL** environments
+(Denied, Disrupted, Intermittent, Limited connectivity). It is a deterministic,
+auditable control plane that runs next to an inference stack, evaluates local
+conditions, switches models under policy, records signed evidence, and keeps
+serving when connectivity is degraded or unavailable.
 
-The docs are organized around the deployable pieces in this repository: the
-edge daemon, Hub Lite model/package workflows, policy evaluation, offline
-operation, and deployment validation.
+Start with **[Direction](direction.md)** for the north star and the
+integrate-vs-build boundary. The rest of the docs are organized around the
+deployable pieces: the edge daemon, Hub Lite model/package workflows, policy
+evaluation, offline operation, and deployment validation.
 
 ```{toctree}
 :maxdepth: 2
 :caption: Start Here
 
+direction
 QUICKSTART
 functional-testing
 product-summary
