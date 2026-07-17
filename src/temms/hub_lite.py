@@ -6510,13 +6510,9 @@ def edge_runtime_proof_runtime_fit_score(
         return None
 
 
-def canonical_json_hash(payload: dict[str, Any]) -> str:
-    """Return the canonical SHA256 used for portable proof envelopes."""
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode(
-            "utf-8"
-        )
-    ).hexdigest()
+# canonical_json_hash is defined once in core.mission_package (the single source
+# of truth for TEMMS digests) and re-exported here for existing importers.
+canonical_json_hash = _mission_package.canonical_json_hash
 
 
 def edge_runtime_proof_component_digests(proof: dict[str, Any]) -> dict[str, Any]:

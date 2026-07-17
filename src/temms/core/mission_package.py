@@ -146,12 +146,42 @@ MISSION_PACKAGE_YAML_FLOAT_FIELDS = {
 }
 
 
+def _canonicalize_hash_numbers(value: Any) -> Any:
+    """Normalize numbers so a digest is stable across JSON number round-trips.
+
+    JSON has no int/float distinction and JavaScript has only IEEE-754 doubles,
+    so an integer-valued float (e.g. ``12.0`` or ``4096.0``) collapses to an int
+    (``12``) after a Python -> JSON -> JS -> JSON -> Python round-trip. Without
+    normalization the recomputed digest would differ, which breaks any non-Python
+    verifier (the React UI staging a mission package, or a future native port).
+    Coerce integer-valued floats to ints so every client computes the same hash.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, dict):
+        return {key: _canonicalize_hash_numbers(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_canonicalize_hash_numbers(item) for item in value]
+    return value
+
+
 def canonical_json_hash(payload: dict[str, Any]) -> str:
-    """Return the canonical SHA256 used for portable proof envelopes."""
+    """Return the canonical SHA256 used for portable proof envelopes.
+
+    This is the single source of truth for TEMMS proof/package digests. Numbers
+    are canonicalized so the digest is identical whether computed in Python or by
+    a JSON/JS client, making mission-package and proof digests verifiable by any
+    client (the UI, the CLI, and a future native port).
+    """
     return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode(
-            "utf-8"
-        )
+        json.dumps(
+            _canonicalize_hash_numbers(payload),
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
     ).hexdigest()
 
 
