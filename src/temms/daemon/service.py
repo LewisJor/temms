@@ -684,29 +684,12 @@ class TEMMSDaemon:
 
             try:
                 conditions = self.condition_store.get_snapshot()
-                activation_preflight = self._activation_preflight(
+                audit_metadata = await self._load_and_activate(
                     slot_name=slot.name,
                     model_id=model.id,
                     trigger_type="startup",
                     trigger_detail=trigger_detail,
                     conditions=conditions,
-                )
-
-                # Load model
-                self.slot_manager.update_slot_state(slot.name, SlotState.LOADING)
-                await self.inference_runtime.load_model(slot.name, model.id)
-
-                # Activate
-                audit_metadata = self._model_audit_metadata(model.id)
-                if activation_preflight:
-                    audit_metadata["activation_preflight"] = activation_preflight
-                self.slot_manager.activate_model(
-                    slot_name=slot.name,
-                    model_id=model.id,
-                    trigger_type="startup",
-                    trigger_detail=trigger_detail,
-                    conditions=conditions,
-                    audit_metadata=audit_metadata,
                 )
 
                 logger.info(
@@ -1516,32 +1499,13 @@ class TEMMSDaemon:
         old_model_id = slot.active_model_id
 
         try:
-            activation_preflight = self._activation_preflight(
+            audit_metadata = await self._load_and_activate(
                 slot_name=slot_name,
                 model_id=new_model_id,
                 trigger_type=trigger_type,
                 trigger_detail=trigger_detail,
                 conditions=conditions,
-            )
-            # Set loading state
-            self.slot_manager.update_slot_state(slot_name, SlotState.LOADING)
-
-            # Load new model (hot-swap)
-            await self.inference_runtime.load_model(slot_name, new_model_id)
-
-            # Activate model
-            audit_metadata = self._model_audit_metadata(new_model_id)
-            if activation_preflight:
-                audit_metadata["activation_preflight"] = activation_preflight
-            if decision_metadata:
-                audit_metadata.update(decision_metadata)
-            self.slot_manager.activate_model(
-                slot_name=slot_name,
-                model_id=new_model_id,
-                trigger_type=trigger_type,
-                trigger_detail=trigger_detail,
-                conditions=conditions,
-                audit_metadata=audit_metadata,
+                extra_audit=decision_metadata,
             )
 
             logger.info(
@@ -1643,10 +1607,9 @@ class TEMMSDaemon:
                 "attempted": attempted,
                 "failures": failures,
             }
-            audit_metadata = self._model_audit_metadata(model.id)
-            if activation_preflight:
-                audit_metadata["activation_preflight"] = activation_preflight
-            audit_metadata["fallback"] = fallback_metadata
+            audit_metadata = self._build_activation_audit(
+                model.id, activation_preflight, extra={"fallback": fallback_metadata}
+            )
             fallback_trigger = (
                 f"fallback after {trigger_detail}" if trigger_detail else "primary_failed"
             )
@@ -1689,6 +1652,61 @@ class TEMMSDaemon:
                 "conditions": conditions,
             },
         )
+
+    def _build_activation_audit(
+        self,
+        model_id: str,
+        activation_preflight: Optional[Dict[str, Any]],
+        *,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Assemble the audit_metadata recorded alongside a model activation."""
+        audit_metadata = self._model_audit_metadata(model_id)
+        if activation_preflight:
+            audit_metadata["activation_preflight"] = activation_preflight
+        if extra:
+            audit_metadata.update(extra)
+        return audit_metadata
+
+    async def _load_and_activate(
+        self,
+        *,
+        slot_name: str,
+        model_id: str,
+        trigger_type: str,
+        trigger_detail: str,
+        conditions: Dict[str, Any],
+        extra_audit: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Preflight, hot-load, and activate a model on a slot.
+
+        Shared by startup auto-start and policy-driven switches: both mark the
+        slot LOADING, load the model, then record the activation with its audit
+        metadata. Raises ActivationPreflightBlocked or the underlying load error;
+        callers own the failure and telemetry paths. Returns the recorded
+        audit_metadata so callers can attach it to success telemetry.
+        """
+        activation_preflight = self._activation_preflight(
+            slot_name=slot_name,
+            model_id=model_id,
+            trigger_type=trigger_type,
+            trigger_detail=trigger_detail,
+            conditions=conditions,
+        )
+        self.slot_manager.update_slot_state(slot_name, SlotState.LOADING)
+        await self.inference_runtime.load_model(slot_name, model_id)
+        audit_metadata = self._build_activation_audit(
+            model_id, activation_preflight, extra=extra_audit
+        )
+        self.slot_manager.activate_model(
+            slot_name=slot_name,
+            model_id=model_id,
+            trigger_type=trigger_type,
+            trigger_detail=trigger_detail,
+            conditions=conditions,
+            audit_metadata=audit_metadata,
+        )
+        return audit_metadata
 
     def _activation_preflight(
         self,
