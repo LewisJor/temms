@@ -17,6 +17,7 @@ evaluation, offline operation, and deployment validation.
 
 direction
 QUICKSTART
+demo-runbook
 functional-testing
 product-summary
 architecture-overview
