@@ -43,5 +43,6 @@ run-on-linux-vm
 hub-lite
 mlflow-packaging
 package-signing
+evidence-chain
 policy-reference
 ```

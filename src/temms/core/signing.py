@@ -709,3 +709,23 @@ def generate_ed25519_keypair() -> tuple[str, str, str]:
         serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
     ).decode("ascii")
     return private_pem, public_pem, _ed25519_public_fingerprint(private.public_key())
+
+
+def ed25519_sign(data: bytes, key: str) -> str:
+    """Sign raw bytes with an Ed25519 private key; return a base64 signature."""
+    private = _load_ed25519_private(key)
+    if private is None:
+        raise ValueError("Ed25519 signing requires an Ed25519 private key")
+    return base64.b64encode(private.sign(data)).decode("ascii")
+
+
+def ed25519_verify(data: bytes, signature_b64: str, key: str) -> bool:
+    """Verify a base64 Ed25519 signature over raw bytes with a public (or private) key."""
+    public = _load_ed25519_public(key)
+    if public is None:
+        raise ValueError("Ed25519 verification requires an Ed25519 public key")
+    try:
+        public.verify(base64.b64decode(signature_b64, validate=True), data)
+    except (InvalidSignature, binascii.Error, ValueError):
+        return False
+    return True
