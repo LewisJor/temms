@@ -163,9 +163,9 @@ daemon has a package signing key, that proof carries an attestation with the
 payload hash, signer, and key fingerprint, and the local `verify-edge-proof`
 command can fail closed with `--require-proof-signature`. It keeps copyable
 `edge-runtime-mission` plus local verification commands for the selected
-model/runtime/device path. The legacy diagnostic pages remain available for
-standalone agent debugging, but Hub-enabled daemons redirect those diagnostic
-GET pages back to `/ui/hub` so they are not competing demo paths.
+model/runtime/device path. The React Hub is the only UI; the retired
+server-rendered diagnostic pages (`/ui/slots`, `/ui/conditions`, etc.) redirect
+to `/ui/hub`.
 
 Run a headless scenario:
 
