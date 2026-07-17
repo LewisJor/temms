@@ -57,6 +57,7 @@ def build_evidence_bundle(
         "models": [model.to_dict() for model in state.model_cache.list_models()],
         "packages": [_package_to_dict(package) for package in state.model_cache.list_packages()],
         "decisions": decisions,
+        "decision_chain": _decision_chain_evidence(state),
         "telemetry": {
             "count": len(telemetry_events),
             "events": telemetry_events,
@@ -2998,6 +2999,35 @@ def _pending_operations(
         )
         operations.append(operation)
     return operations
+
+
+def _decision_chain_evidence(state: Any) -> dict[str, Any]:
+    """Return the tamper-evident decision-chain summary (signed if a key exists).
+
+    The decision entries themselves are already in the bundle under ``decisions``
+    (each carries ``entry_hash``/``prev_hash``); this block records the verified
+    head so an offline auditor can confirm nothing was deleted, reordered, or
+    mutated, and — when the daemon holds a signing key — that the head is
+    authentic (issue #27).
+    """
+    slot_manager = getattr(state, "slot_manager", None)
+    verify = getattr(slot_manager, "verify_decision_chain", None)
+    if not callable(verify):
+        return {}
+    verification = verify()
+    block: dict[str, Any] = {
+        "schema_version": "temms-decision-chain/v1",
+        "head_hash": slot_manager.decision_chain_head(),
+        "length": verification.get("length", 0),
+        "verification": verification,
+    }
+    _, signing_key = _pending_operation_signature_policy(state)
+    if signing_key:
+        try:
+            block["head_signature"] = slot_manager.sign_decision_chain_head(signing_key)
+        except Exception:
+            block["head_signature_error"] = "could not sign decision chain head"
+    return block
 
 
 def _pending_operation_signature_policy(state: Any) -> tuple[bool, str | None]:
