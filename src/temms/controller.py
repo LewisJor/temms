@@ -243,7 +243,13 @@ class AdaptiveInferenceController:
                 trigger_detail=trigger_detail,
                 conditions=conditions,
             )
-            self.slot_manager.update_slot_state(slot_name, SlotState.LOADING)
+            # Only surface LOADING on a cold start (no model is serving yet). On
+            # a hot-swap the previous model keeps serving until the new one is
+            # loaded and warmed, so the slot must stay RUNNING to avoid a window
+            # where inference is rejected even though a model is available
+            # (swap-contract Tier 1).
+            if from_model is None:
+                self.slot_manager.update_slot_state(slot_name, SlotState.LOADING)
             await self.inference_runtime.load_model(slot_name, model.id)
             audit_metadata = self._model_audit_metadata(model.id)
             if activation_preflight:

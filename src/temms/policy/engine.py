@@ -3,10 +3,11 @@ Policy evaluation engine.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
+from typing import Callable, List, Optional, Dict, Any
 from pathlib import Path
 import logging
 import re
+import time
 
 from temms.policy.schema import SlotPolicy, PolicyRule, Condition, ConditionGroup
 from temms.conditions.store import ConditionStore
@@ -28,15 +29,26 @@ class PolicyEvalResult:
 class PolicyEngine:
     """Evaluates policies against current conditions."""
 
-    def __init__(self, condition_store: ConditionStore):
+    def __init__(
+        self,
+        condition_store: ConditionStore,
+        time_fn: Optional[Callable[[], float]] = None,
+    ):
         """
         Initialize policy engine.
 
         Args:
             condition_store: ConditionStore instance
+            time_fn: monotonic clock source for dwell/hysteresis timing. Defaults
+                to time.monotonic (immune to wall-clock jumps — important under
+                DDIL). Injectable for deterministic tests.
         """
         self.condition_store = condition_store
         self.loaded_policies: Dict[str, SlotPolicy] = {}
+        self._time_fn = time_fn or time.monotonic
+        # rule id -> monotonic timestamp when its conditions became (and have
+        # since stayed) continuously satisfied. Cleared when they stop matching.
+        self._rule_satisfied_since: Dict[str, float] = {}
 
     def load_policy(self, policy: SlotPolicy) -> None:
         """Load a policy into the engine."""
@@ -78,12 +90,17 @@ class PolicyEngine:
         all_rules.sort(key=lambda x: x[1].priority, reverse=True)
 
         evaluated_rules: list[dict[str, Any]] = []
+        now = self._time_fn()
 
         # Evaluate rules in priority order
         for policy, rule in all_rules:
             matched, explanation = self._explain_rule(policy, rule)
+            eligible = self._apply_dwell(policy, rule, matched, now, explanation)
             evaluated_rules.append(explanation)
-            if matched:
+            # A rule whose conditions match but has not yet dwelled long enough is
+            # "pending": it does not fire, damping flapping. Evaluation falls
+            # through to lower-priority rules / the default model.
+            if eligible:
                 logger.info(
                     f"Policy rule matched: {policy.metadata.name}/{rule.name} "
                     f"-> {rule.action.switch_to}"
@@ -129,8 +146,46 @@ class PolicyEngine:
             }
         )
 
+    def _apply_dwell(
+        self,
+        policy: SlotPolicy,
+        rule: PolicyRule,
+        matched: bool,
+        now: float,
+        explanation: dict[str, Any],
+    ) -> bool:
+        """Gate a matched rule on its dwell window, annotating the explanation.
+
+        Returns whether the rule is *eligible* to fire: its conditions match AND
+        have held continuously for at least ``min_dwell_s``. A matched rule that
+        has not dwelled long enough is "pending" and does not fire.
+        """
+        rule_id = f"{policy.metadata.name}/{rule.name}"
+        dwell = float(rule.min_dwell_s or 0.0)
+
+        if not matched:
+            self._rule_satisfied_since.pop(rule_id, None)
+            explanation["dwell"] = {
+                "min_dwell_s": dwell,
+                "satisfied_for_s": 0.0,
+                "eligible": False,
+                "pending": False,
+            }
+            return False
+
+        since = self._rule_satisfied_since.setdefault(rule_id, now)
+        satisfied_for = max(0.0, now - since)
+        eligible = satisfied_for >= dwell
+        explanation["dwell"] = {
+            "min_dwell_s": dwell,
+            "satisfied_for_s": satisfied_for,
+            "eligible": eligible,
+            "pending": not eligible,
+        }
+        return eligible
+
     def _evaluate_rule(self, rule: PolicyRule) -> bool:
-        """Evaluate a single rule."""
+        """Evaluate a single rule (ignores dwell; conditions only)."""
         matched, _ = self._explain_condition_group(rule.conditions)
         return matched
 
@@ -290,6 +345,7 @@ class PolicyEngine:
     def clear_policies(self) -> None:
         """Clear all loaded policies before reloading from the active policy store."""
         self.loaded_policies.clear()
+        self._rule_satisfied_since.clear()
 
 
 def _condition_value_evidence(cond_value: Any) -> dict[str, Any]:

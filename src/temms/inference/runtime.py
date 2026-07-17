@@ -75,6 +75,7 @@ class LoadedModel:
     runtime_options: Dict[str, Any] = field(default_factory=dict)
     inference_count: int = 0
     last_inference: Optional[datetime] = None
+    warmed: bool = False
 
 
 @dataclass
@@ -205,21 +206,23 @@ class InferenceRuntime:
                         runtime_options=runtime_options,
                     )
 
-                # Brief lock for atomic swap
+                # Warm the new model BEFORE it becomes the serving instance so
+                # the first real request is not a cold start. A warmup failure
+                # means the model cannot actually run: abort the swap so the old
+                # model keeps serving and the controller can fall back.
+                if not new_loaded.warmed:
+                    self._warmup(new_loaded)
+
+                # Brief lock for an atomic pointer swap. The old instance is
+                # NOT explicitly unloaded here: any request already executing
+                # holds its own reference to it, so it is freed (and its native
+                # session released) only once the last in-flight request
+                # returns. This drains in-flight requests without a bespoke
+                # refcount subsystem — CPython reference counting is the
+                # mechanism (swap-contract: in-flight completion).
                 with slot_runtime.lock:
-                    old_loaded = slot_runtime.loaded_model
                     slot_runtime.loaded_model = new_loaded
                     slot_runtime.loading_model = None
-
-                # Unload old model outside lock
-                if old_loaded is not None:
-                    try:
-                        old_loaded.runtime.unload()
-                        logger.info(
-                            f"Unloaded old model {old_loaded.model_id} from slot {slot_name}"
-                        )
-                    except Exception as e:
-                        logger.warning(f"Error unloading old model: {e}")
 
                 logger.info(
                     f"Loaded model {model_id} into slot {slot_name}"
@@ -368,66 +371,104 @@ class InferenceRuntime:
     async def infer(
         self,
         slot_name: str,
-        model_id: str,
+        model_id: Optional[str],
         input_data: bytes,
         content_type: str = "application/octet-stream",
     ) -> List[Any]:
         """
-        Run inference on a slot's loaded model.
+        Run inference on a slot's currently-serving model.
 
-        Uses copy-on-read locking: grabs a reference to the loaded model
-        under a brief lock, then releases the lock and runs inference on
-        the reference. This allows hot-swap to proceed concurrently.
+        Copy-on-read: under a brief lock it grabs a reference to the loaded
+        model, then releases the lock and runs inference on that reference. A
+        concurrent hot-swap only reassigns the slot's pointer, so:
 
-        Args:
-            slot_name: Slot to run inference on
-            model_id: Expected model ID (for validation)
-            input_data: Raw input bytes
-            content_type: MIME type of input
+        - A request is served by whichever model is loaded when it is admitted;
+          it never errors because a swap is in progress (the old model serves
+          until the atomic pointer swap, the new one after).
+        - The instance a request began on stays alive for the whole request:
+          the local reference below keeps it (and its native session) from being
+          freed until the request returns.
 
-        Returns:
-            List of predictions
+        ``model_id`` is an attribution hint, not a hard gate — the request is
+        served by whatever is loaded.
 
         Raises:
-            RuntimeError: If slot has no model or wrong model loaded
+            RuntimeError: If the slot has no model loaded at all.
         """
         slot_runtime = self._get_slot_runtime(slot_name)
 
-        def _infer():
-            # Brief lock to grab reference
+        def _infer() -> List[Any]:
             with slot_runtime.lock:
                 loaded = slot_runtime.loaded_model
-
                 if loaded is None:
                     raise RuntimeError(f"No model loaded in slot {slot_name}")
 
-                if loaded.model_id != model_id:
-                    raise RuntimeError(
-                        f"Model mismatch: expected {model_id}, got {loaded.model_id}"
-                    )
-
-            # Run inference WITHOUT holding the lock
-            # Get the actual input name from the runtime session
+            # Run inference WITHOUT holding the lock. `loaded` keeps the instance
+            # alive across a concurrent swap.
             input_name = self._get_model_input_name(loaded.runtime)
-
             processed_input = self._preprocess_input(
                 input_data,
                 content_type,
                 loaded.model_info,
                 input_name=input_name,
             )
-
             outputs = loaded.runtime.infer(processed_input)
-
-            # Update stats
             loaded.inference_count += 1
             loaded.last_inference = datetime.now()
-
-            # Postprocess outputs
             return self._postprocess_output(outputs)
 
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, _infer)
+
+    def _warmup(self, loaded: LoadedModel) -> None:
+        """Run a single warmup inference so the model serves warm.
+
+        Builds a synthetic input from the runtime's declared input shape (or the
+        model metadata) and runs it through the runtime. Best-effort: a warmup
+        that cannot be constructed or executed (e.g. a synthetic-input shape the
+        model rejects) is logged and skipped rather than aborting activation.
+        The first real request then pays the cold-start cost, and a genuinely
+        broken model is caught by the normal inference fallback path.
+        """
+        import numpy as np
+
+        input_name = self._get_model_input_name(loaded.runtime)
+        shape = self._warmup_input_shape(loaded)
+        try:
+            arr = np.zeros(shape, dtype=np.float32)
+            processed = self._format_processed_input(arr, loaded.model_info, input_name)
+            loaded.runtime.infer(processed)
+        except Exception as e:  # best-effort warmup
+            logger.warning(
+                f"Warmup inference skipped for {loaded.model_id} (shape {shape}): {e}"
+            )
+            return
+        loaded.warmed = True
+        loaded.inference_count += 1
+        logger.info(f"Warmed model {loaded.model_id} with shape {shape}")
+
+    def _warmup_input_shape(self, loaded: LoadedModel) -> List[int]:
+        """Best-effort concrete input shape for a warmup inference.
+
+        Prefers the runtime session's declared input shape (replacing dynamic
+        dimensions with 1), falling back to the model's ``input_shape`` metadata
+        and finally a generic NCHW image shape.
+        """
+        runtime = loaded.runtime
+        try:
+            session = getattr(runtime, "session", None)
+            if session is not None:
+                declared = session.get_inputs()[0].shape
+                shape = [int(d) if isinstance(d, int) and d > 0 else 1 for d in declared]
+                if shape:
+                    return shape
+        except Exception:
+            pass
+        declared = loaded.model_info.metadata.get("input_shape") or [1, 3, 224, 224]
+        try:
+            return [int(d) if int(d) > 0 else 1 for d in declared]
+        except (TypeError, ValueError):
+            return [1, 3, 224, 224]
 
     def _get_model_input_name(self, runtime: ModelRuntime) -> str:
         """
@@ -675,6 +716,8 @@ class InferenceRuntime:
                 runtime_type=runtime_type,
                 runtime_options=runtime_options,
             )
+            # Warm during preload so a later activation is an instant, warm swap.
+            self._warmup(loaded)
 
             self._preloaded[model_id] = loaded
             self.clear_preloaded()

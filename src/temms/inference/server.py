@@ -1962,7 +1962,9 @@ async def infer(
     input_data = await file.read()
     content_type = file.content_type or "application/octet-stream"
 
-    # 4. Run inference
+    # 4. Run inference. The runtime serves whichever model is loaded when the
+    # request is admitted (the old model during a hot-swap, the new one after),
+    # so a swap in progress never turns a request into an error.
     try:
         predictions = await state.inference_runtime.infer(
             slot_name=slot_name,

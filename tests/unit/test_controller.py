@@ -99,6 +99,59 @@ async def test_controller_previews_without_applying(controller_system):
 
 
 @pytest.mark.asyncio
+async def test_hot_swap_never_surfaces_loading_state(controller_system):
+    """A hot-swap keeps the slot RUNNING so inference is never rejected while a
+    model is still available (swap-contract Tier 1)."""
+    slot_manager = controller_system["slot_manager"]
+    states = []
+    original = slot_manager.update_slot_state
+
+    def record(slot_name, state):
+        states.append(state)
+        return original(slot_name, state)
+
+    slot_manager.update_slot_state = record
+
+    decision = await controller_system["controller"].evaluate_slot("vision", apply=True)
+
+    assert decision.status == "activated"
+    from temms.slots.manager import SlotState
+
+    # The old model served throughout: the slot was never flipped to LOADING.
+    assert SlotState.LOADING not in states
+    assert slot_manager.get_slot("vision").state == SlotState.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_cold_start_uses_loading_state(controller_system):
+    """A cold start (no model serving yet) legitimately passes through LOADING."""
+    slot_manager = controller_system["slot_manager"]
+    # Reset the slot to a no-active-model cold-start condition.
+    slot_manager.update_slot_state("vision", __import__(
+        "temms.slots.manager", fromlist=["SlotState"]
+    ).SlotState.STOPPED)
+    slot_manager.execute_and_commit(
+        "UPDATE slots SET active_model_id = NULL WHERE name = ?", ("vision",)
+    )
+
+    states = []
+    original = slot_manager.update_slot_state
+
+    def record(slot_name, state):
+        states.append(state)
+        return original(slot_name, state)
+
+    slot_manager.update_slot_state = record
+
+    decision = await controller_system["controller"].evaluate_slot("vision", apply=True)
+
+    from temms.slots.manager import SlotState
+
+    assert decision.applied is True
+    assert SlotState.LOADING in states
+
+
+@pytest.mark.asyncio
 async def test_controller_falls_back_when_selected_model_fails(controller_system):
     async def load_model(slot_name, model_id):
         if model_id == "model-tiny-v1":

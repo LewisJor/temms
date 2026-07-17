@@ -701,3 +701,97 @@ class TestFallbackChain:
         chain = engine.get_fallback_chain("nonexistent")
 
         assert chain == []
+
+
+# ── Anti-flap hysteresis (min_dwell_s) ───────────────────────────────
+
+
+class _FakeClock:
+    """Controllable monotonic clock for dwell tests."""
+
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self) -> float:
+        return self.t
+
+    def advance(self, seconds: float) -> None:
+        self.t += seconds
+
+
+def _fog_policy(min_dwell_s: float):
+    """Policy: fog (visibility below threshold) -> lowlight, else default."""
+    return _make_policy(
+        name="fog-policy",
+        rules=[
+            PolicyRule(
+                name="fog",
+                priority=100,
+                min_dwell_s=min_dwell_s,
+                conditions=ConditionGroup(
+                    all=[Condition(metric="weather.visibility_m", operator="lt", value=100)]
+                ),
+                action=PolicyAction(switch_to="lowlight"),
+            )
+        ],
+        default_model="daylight",
+    )
+
+
+class TestSwitchHysteresis:
+    """Per-rule min_dwell_s damps flapping sensors (swap-contract hysteresis)."""
+
+    def test_zero_dwell_switches_immediately(self, condition_store):
+        engine = PolicyEngine(condition_store)
+        engine.load_policy(_fog_policy(min_dwell_s=0.0))
+        condition_store.set("weather.visibility_m", 50, "sensor", 100)
+        assert engine.evaluate_slot("vision").switch_to == "lowlight"
+
+    def test_pending_rule_does_not_fire_before_dwell(self, condition_store):
+        clock = _FakeClock()
+        engine = PolicyEngine(condition_store, time_fn=clock)
+        engine.load_policy(_fog_policy(min_dwell_s=5.0))
+        condition_store.set("weather.visibility_m", 50, "sensor", 100)
+
+        # Condition holds, but dwell not yet met -> falls through to default.
+        assert engine.evaluate_slot("vision").switch_to == "daylight"
+        clock.advance(3.0)
+        assert engine.evaluate_slot("vision").switch_to == "daylight"
+        # Dwell satisfied -> the rule fires.
+        clock.advance(2.0)
+        assert engine.evaluate_slot("vision").switch_to == "lowlight"
+
+    def test_flapping_sensor_never_thrashes(self, condition_store):
+        clock = _FakeClock()
+        engine = PolicyEngine(condition_store, time_fn=clock)
+        engine.load_policy(_fog_policy(min_dwell_s=5.0))
+
+        # 1 Hz flap: fog for 1s, clear for 1s, repeated. Never holds 5s.
+        switches = []
+        for i in range(20):
+            visibility = 50 if i % 2 == 0 else 500
+            condition_store.set("weather.visibility_m", visibility, "sensor", 100)
+            switches.append(engine.evaluate_slot("vision").switch_to)
+            clock.advance(1.0)
+
+        # The fog rule never dwells, so the slot never switches to lowlight.
+        assert set(switches) == {"daylight"}
+
+    def test_dwell_resets_when_condition_lapses(self, condition_store):
+        clock = _FakeClock()
+        engine = PolicyEngine(condition_store, time_fn=clock)
+        engine.load_policy(_fog_policy(min_dwell_s=5.0))
+
+        condition_store.set("weather.visibility_m", 50, "sensor", 100)
+        engine.evaluate_slot("vision")  # start dwell at t=0
+        clock.advance(4.0)  # almost there
+        condition_store.set("weather.visibility_m", 500, "sensor", 100)
+        assert engine.evaluate_slot("vision").switch_to == "daylight"  # lapsed
+        # Fog returns; the dwell window restarts from zero.
+        condition_store.set("weather.visibility_m", 50, "sensor", 100)
+        clock.advance(1.0)
+        engine.evaluate_slot("vision")
+        clock.advance(4.9)
+        assert engine.evaluate_slot("vision").switch_to == "daylight"  # not yet
+        clock.advance(0.2)
+        assert engine.evaluate_slot("vision").switch_to == "lowlight"  # now

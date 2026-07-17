@@ -35,6 +35,11 @@ class PolicyRule(BaseModel):
     priority: int = Field(default=50)  # Higher = evaluated first
     conditions: ConditionGroup
     action: PolicyAction
+    # Anti-flap hysteresis: the rule's conditions must hold continuously for at
+    # least this many seconds before the rule may fire a switch. 0 (default)
+    # preserves immediate switching. Dampens a sensor flapping across a
+    # threshold from thrashing model swaps (swap-contract: hysteresis).
+    min_dwell_s: float = Field(default=0.0, ge=0.0)
 
 
 class SlotPolicyMetadata(BaseModel):
