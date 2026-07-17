@@ -1,13 +1,31 @@
 """
 Package validation and signing utilities.
 
-The MVP signer uses HMAC-SHA256 so it works without native crypto dependencies.
-Hub can later swap this envelope to an asymmetric algorithm while keeping the
-same signature.json contract.
+Package signing is asymmetric by default: the Hub signs with an **Ed25519
+private key** and an edge daemon verifies with the **public key only**, so a
+device that can verify a package cannot forge one — the property that makes
+provenance meaningful in a contested/disconnected (DDIL) environment.
+Verification is fully offline (a provisioned public key, no online CA or
+transparency log).
+
+The legacy MVP signer used HMAC-SHA256 (a shared symmetric key). It remains
+verifiable for backward compatibility — ``verify_package_signature`` dispatches
+on the algorithm recorded in ``signature.json`` — but new packages should be
+signed with Ed25519.
+
+Key material is passed as the same ``key`` string used throughout the codebase;
+its *kind* is auto-detected:
+
+- an Ed25519 private key (PEM, or 64-hex / base64 raw 32 bytes) → can sign and
+  verify;
+- an Ed25519 public key (PEM, or raw) → can verify only;
+- any other string → treated as a legacy HMAC shared secret.
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -16,9 +34,73 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
+
 SIGNATURE_FILE = "signature.json"
-SIGNATURE_ALGORITHM = "HMAC-SHA256"
+SIGNATURE_ALGORITHM = "HMAC-SHA256"  # legacy default; kept for compatibility
+ED25519_ALGORITHM = "Ed25519"
 KEY_FINGERPRINT_PREFIX = "sha256:"
+ED25519_FINGERPRINT_PREFIX = "ed25519:"
+
+
+def _load_ed25519_private(key: str) -> Ed25519PrivateKey | None:
+    """Parse an Ed25519 private key from PEM or raw (hex/base64 32 bytes)."""
+    text = key.strip()
+    if "PRIVATE KEY" in text:
+        try:
+            loaded = serialization.load_pem_private_key(text.encode("utf-8"), password=None)
+        except (ValueError, TypeError):
+            return None
+        return loaded if isinstance(loaded, Ed25519PrivateKey) else None
+    raw = _decode_raw_key_bytes(text)
+    if raw is not None and len(raw) == 32:
+        try:
+            return Ed25519PrivateKey.from_private_bytes(raw)
+        except ValueError:
+            return None
+    return None
+
+
+def _load_ed25519_public(key: str) -> Ed25519PublicKey | None:
+    """Parse an Ed25519 public key; also derives it from a private key."""
+    private = _load_ed25519_private(key)
+    if private is not None:
+        return private.public_key()
+    text = key.strip()
+    if "PUBLIC KEY" in text:
+        try:
+            loaded = serialization.load_pem_public_key(text.encode("utf-8"))
+        except (ValueError, TypeError):
+            return None
+        return loaded if isinstance(loaded, Ed25519PublicKey) else None
+    return None
+
+
+def _decode_raw_key_bytes(text: str) -> bytes | None:
+    """Decode a raw 32-byte key given as hex or base64, else None."""
+    for decoder in (
+        lambda s: binascii.unhexlify(s) if len(s) == 64 else None,
+        lambda s: base64.b64decode(s, validate=True),
+    ):
+        try:
+            decoded = decoder(text)
+        except (binascii.Error, ValueError):
+            continue
+        if decoded:
+            return decoded
+    return None
+
+
+def _ed25519_public_fingerprint(public: Ed25519PublicKey) -> str:
+    raw = public.public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    return f"{ED25519_FINGERPRINT_PREFIX}{hashlib.sha256(raw).hexdigest()[:16]}"
 
 
 @dataclass
@@ -43,7 +125,15 @@ def read_signing_key(value: str | None = None, key_file: Path | None = None) -> 
 
 
 def signing_key_fingerprint(key: str) -> str:
-    """Return a stable non-secret fingerprint for audit logs."""
+    """Return a stable non-secret fingerprint for audit logs.
+
+    For Ed25519 keys the fingerprint is derived from the public key, so the
+    signer and any verifier compute the same value. For a legacy HMAC secret it
+    is the hash of the secret string (unchanged).
+    """
+    public = _load_ed25519_public(key)
+    if public is not None:
+        return _ed25519_public_fingerprint(public)
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
     return f"{KEY_FINGERPRINT_PREFIX}{digest[:16]}"
 
@@ -68,16 +158,29 @@ def sign_package(package_path: Path, key: str, signer: str = "temms") -> Path:
         raise ValueError(f"Missing manifest.json in package: {package_path}")
     _ensure_safe_package_tree(package_path)
 
+    private = _load_ed25519_private(key)
+    if private is not None:
+        algorithm = ED25519_ALGORITHM
+    elif _load_ed25519_public(key) is not None:
+        raise ValueError("Signing requires an Ed25519 private key, not a public key")
+    else:
+        algorithm = SIGNATURE_ALGORITHM  # legacy HMAC
+
     payload = {
         "schema_version": "temms-signature/v1",
-        "algorithm": SIGNATURE_ALGORITHM,
+        "algorithm": algorithm,
         "signed_at": datetime.utcnow().isoformat() + "Z",
         "signer": signer,
         "key_fingerprint": signing_key_fingerprint(key),
         "manifest_sha256": sha256_file(package_path / "manifest.json"),
         "files": package_file_hashes(package_path),
     }
-    payload["signature"] = _signature_for_payload(payload, key)
+    if private is not None:
+        payload["signature"] = base64.b64encode(
+            private.sign(_canonical_payload_bytes(payload))
+        ).decode("ascii")
+    else:
+        payload["signature"] = _signature_for_payload(payload, key)
 
     signature_path = package_path / SIGNATURE_FILE
     signature_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
@@ -92,13 +195,15 @@ def verify_package_signature(package_path: Path, key: str) -> dict[str, Any]:
 
     signature = json.loads(signature_path.read_text(encoding="utf-8"))
     algorithm = signature.get("algorithm")
-    if algorithm != SIGNATURE_ALGORITHM:
+    if algorithm == ED25519_ALGORITHM:
+        _verify_ed25519_signature(signature, key)
+    elif algorithm == SIGNATURE_ALGORITHM:
+        expected_signature = signature.get("signature")
+        computed_signature = _signature_for_payload(signature, key)
+        if not hmac.compare_digest(str(expected_signature), computed_signature):
+            raise ValueError("Package signature mismatch")
+    else:
         raise ValueError(f"Unsupported signature algorithm: {algorithm}")
-
-    expected_signature = signature.get("signature")
-    computed_signature = _signature_for_payload(signature, key)
-    if not hmac.compare_digest(str(expected_signature), computed_signature):
-        raise ValueError("Package signature mismatch")
 
     key_fingerprint = signing_key_fingerprint(key)
     declared_fingerprint = signature.get("key_fingerprint")
@@ -565,7 +670,42 @@ def _reject_unsafe_package_tree(package_path: Path, errors: list[str]) -> None:
         errors.append(f"Package path must be a regular file or directory: {rel}")
 
 
-def _signature_for_payload(payload: dict[str, Any], key: str) -> str:
+def _canonical_payload_bytes(payload: dict[str, Any]) -> bytes:
+    """Canonical bytes covered by a signature (the payload minus 'signature')."""
     unsigned = {k: v for k, v in payload.items() if k != "signature"}
-    canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hmac.new(key.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+    return json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _signature_for_payload(payload: dict[str, Any], key: str) -> str:
+    return hmac.new(
+        key.encode("utf-8"), _canonical_payload_bytes(payload), hashlib.sha256
+    ).hexdigest()
+
+
+def _verify_ed25519_signature(signature: dict[str, Any], key: str) -> None:
+    """Verify an Ed25519 package signature with the provided public/private key."""
+    public = _load_ed25519_public(key)
+    if public is None:
+        raise ValueError("Ed25519 signature requires an Ed25519 public key to verify")
+    try:
+        raw_signature = base64.b64decode(str(signature.get("signature")), validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("Malformed Ed25519 signature encoding") from exc
+    try:
+        public.verify(raw_signature, _canonical_payload_bytes(signature))
+    except InvalidSignature as exc:
+        raise ValueError("Package signature mismatch") from exc
+
+
+def generate_ed25519_keypair() -> tuple[str, str, str]:
+    """Return (private_pem, public_pem, fingerprint) for a fresh Ed25519 key."""
+    private = Ed25519PrivateKey.generate()
+    private_pem = private.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode("ascii")
+    public_pem = private.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    ).decode("ascii")
+    return private_pem, public_pem, _ed25519_public_fingerprint(private.public_key())

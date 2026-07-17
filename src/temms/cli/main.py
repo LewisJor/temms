@@ -30,6 +30,49 @@ console = Console()
 app.add_typer(slot.app, name="slot", help="Manage model slots")
 app.add_typer(condition.app, name="condition", help="Manage runtime conditions")
 
+keys_app = typer.Typer(help="Manage Ed25519 package signing keys")
+app.add_typer(keys_app, name="keys")
+
+
+@keys_app.command("generate")
+def keys_generate(
+    out_dir: Path = typer.Option(Path("."), "--out-dir", help="Where to write key files"),
+    name: str = typer.Option("temms-signing", "--name", help="Base name for the key files"),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing key files"),
+) -> None:
+    """Generate an Ed25519 signing keypair.
+
+    The Hub signs packages with the private key; edge daemons are provisioned
+    with the public key only and verify offline. Keep the private key secret.
+    """
+    from temms.core.signing import generate_ed25519_keypair
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    private_path = out_dir / f"{name}.private.pem"
+    public_path = out_dir / f"{name}.public.pem"
+    if not force and (private_path.exists() or public_path.exists()):
+        console.print(f"[red]Key files already exist under {out_dir} (use --force)[/red]")
+        raise typer.Exit(1)
+
+    private_pem, public_pem, fingerprint = generate_ed25519_keypair()
+    private_path.write_text(private_pem, encoding="utf-8")
+    private_path.chmod(0o600)
+    public_path.write_text(public_pem, encoding="utf-8")
+
+    console.print(f"[green]Private key:[/green] {private_path} (keep secret; chmod 600)")
+    console.print(f"[green]Public key: [/green] {public_path} (provision to edge daemons)")
+    console.print(f"[green]Fingerprint:[/green] {fingerprint}")
+
+
+@keys_app.command("fingerprint")
+def keys_fingerprint(
+    key_file: Path = typer.Argument(..., help="Path to a private or public key file"),
+) -> None:
+    """Print the fingerprint of a signing key (private or public)."""
+    from temms.core.signing import signing_key_fingerprint
+
+    console.print(signing_key_fingerprint(key_file.read_text(encoding="utf-8")))
+
 
 @app.command()
 def init(

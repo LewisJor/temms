@@ -37,5 +37,6 @@ run-on-linux-vm
 
 hub-lite
 mlflow-packaging
+package-signing
 policy-reference
 ```
