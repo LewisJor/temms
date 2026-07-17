@@ -8,12 +8,13 @@ applies the hot-swap, and falls back if the selected model cannot load.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
 from temms.conditions.store import ConditionStore
 from temms.core.cache import CachedModel, ModelCache
-from temms.observability import policy_decision_count
+from temms.observability import policy_decision_count, swap_latency_ms
 from temms.policy.engine import PolicyEngine
 from temms.slots.manager import SlotManager, SlotState
 
@@ -250,6 +251,7 @@ class AdaptiveInferenceController:
             # (swap-contract Tier 1).
             if from_model is None:
                 self.slot_manager.update_slot_state(slot_name, SlotState.LOADING)
+            swap_started = time.monotonic()
             await self.inference_runtime.load_model(slot_name, model.id)
             audit_metadata = self._model_audit_metadata(model.id)
             if activation_preflight:
@@ -262,6 +264,7 @@ class AdaptiveInferenceController:
                 conditions=conditions,
                 audit_metadata=audit_metadata,
             )
+            swap_latency_ms.observe((time.monotonic() - swap_started) * 1000.0)
             logger.info(
                 "Adaptive activation: slot=%s %s -> %s trigger=%s/%s",
                 slot_name,

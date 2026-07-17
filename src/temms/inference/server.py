@@ -53,6 +53,7 @@ from temms.daemon.pending_preflight import (
 )
 from temms.observability import (
     inference_request_count,
+    inference_errors_total,
     inference_latency_ms,
     condition_update_count,
     deployment_count,
@@ -1973,6 +1974,7 @@ async def infer(
             content_type=content_type,
         )
     except Exception as e:
+        inference_errors_total.inc()
         logger.error(f"Inference failed for slot {slot_name}: {e}")
         error = str(e)
         _record_inference_runtime_health(
