@@ -158,21 +158,7 @@ class InferenceRuntime:
             RuntimeError: If load fails
         """
         slot_runtime = self._get_slot_runtime(slot_name)
-
-        # Get model info from cache
-        model_info = self.model_cache.get_model(model_id)
-        if model_info is None:
-            raise ValueError(f"Model not found in cache: {model_id}")
-
-        # Get model file path
-        model_dir = self.model_storage.get_model_path(model_id)
-        if model_dir is None:
-            raise ValueError(f"Model files not found: {model_id}")
-
-        # Find model file in directory
-        model_path = self._find_model_file(model_dir, model_info.format)
-        if model_path is None:
-            raise ValueError(f"Model file not found in {model_dir}")
+        model_info, model_path = self._resolve_model_source(model_id)
 
         # Load in thread pool to avoid blocking
         def _load():
@@ -188,30 +174,11 @@ class InferenceRuntime:
                         f"Using preloaded model {model_id} for slot {slot_name}"
                     )
                 else:
-                    # Create loader and load model OUTSIDE the lock
-                    runtime_type = self._format_to_runtime_type(model_info.format)
-                    runtime_options = self._runtime_options_for_model(model_info)
-                    if _simulate_runtime_loads():
-                        runtime = SimulatedModelRuntime(runtime_type).load(model_path)
-                    else:
-                        loader = ModelLoader()
-                        runtime = loader.load_model(model_path, runtime_type, runtime_options)
-
-                    new_loaded = LoadedModel(
-                        model_id=model_id,
-                        runtime=runtime,
-                        model_info=model_info,
-                        loaded_at=datetime.now(),
-                        runtime_type=runtime_type,
-                        runtime_options=runtime_options,
-                    )
-
-                # Warm the new model BEFORE it becomes the serving instance so
-                # the first real request is not a cold start. A warmup failure
-                # means the model cannot actually run: abort the swap so the old
-                # model keeps serving and the controller can fall back.
-                if not new_loaded.warmed:
-                    self._warmup(new_loaded)
+                    # Build the instance OUTSIDE the lock (loads + warms). A
+                    # warmup failure means the model cannot run: it propagates,
+                    # so the swap is aborted, the old model keeps serving, and
+                    # the controller can fall back.
+                    new_loaded = self._construct_loaded_model(model_info, model_path)
 
                 # Brief lock for an atomic pointer swap. The old instance is
                 # NOT explicitly unloaded here: any request already executing
@@ -237,6 +204,49 @@ class InferenceRuntime:
         # Run in executor
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, _load)
+
+    def _resolve_model_source(self, model_id: str) -> tuple[CachedModel, Path]:
+        """Resolve a model's cache entry and on-disk file, or raise ValueError.
+
+        Runs eagerly (before any executor dispatch) so a missing model surfaces
+        as ValueError to the caller rather than a wrapped load error.
+        """
+        model_info = self.model_cache.get_model(model_id)
+        if model_info is None:
+            raise ValueError(f"Model not found in cache: {model_id}")
+        model_dir = self.model_storage.get_model_path(model_id)
+        if model_dir is None:
+            raise ValueError(f"Model files not found: {model_id}")
+        model_path = self._find_model_file(model_dir, model_info.format)
+        if model_path is None:
+            raise ValueError(f"Model file not found in {model_dir}")
+        return model_info, model_path
+
+    def _construct_loaded_model(
+        self, model_info: CachedModel, model_path: Path
+    ) -> LoadedModel:
+        """Load a model instance from disk and warm it.
+
+        Shared by activation and preload so both honor the simulation runtime
+        flag and warm identically. Runs outside any slot lock.
+        """
+        runtime_type = self._format_to_runtime_type(model_info.format)
+        runtime_options = self._runtime_options_for_model(model_info)
+        if _simulate_runtime_loads():
+            runtime = SimulatedModelRuntime(runtime_type).load(model_path)
+        else:
+            runtime = ModelLoader().load_model(model_path, runtime_type, runtime_options)
+
+        loaded = LoadedModel(
+            model_id=model_info.id,
+            runtime=runtime,
+            model_info=model_info,
+            loaded_at=datetime.now(),
+            runtime_type=runtime_type,
+            runtime_options=runtime_options,
+        )
+        self._warmup(loaded)
+        return loaded
 
     def _find_model_file(self, model_dir: Path, format: ModelFormat) -> Optional[Path]:
         """Find the model file in a directory based on format."""
@@ -687,41 +697,14 @@ class InferenceRuntime:
             logger.debug(f"Model {model_id} already preloaded")
             return True
 
-        # Get model info from cache
-        model_info = self.model_cache.get_model(model_id)
-        if model_info is None:
-            raise ValueError(f"Model not found in cache: {model_id}")
-
-        # Get model file path
-        model_dir = self.model_storage.get_model_path(model_id)
-        if model_dir is None:
-            raise ValueError(f"Model files not found: {model_id}")
-
-        # Find model file in directory
-        model_path = self._find_model_file(model_dir, model_info.format)
-        if model_path is None:
-            raise ValueError(f"Model file not found in {model_dir}")
+        model_info, model_path = self._resolve_model_source(model_id)
 
         def _preload():
-            loader = ModelLoader()
-            runtime_type = self._format_to_runtime_type(model_info.format)
-            runtime_options = self._runtime_options_for_model(model_info)
-            runtime = loader.load_model(model_path, runtime_type, runtime_options)
-
-            loaded = LoadedModel(
-                model_id=model_id,
-                runtime=runtime,
-                model_info=model_info,
-                loaded_at=datetime.now(),
-                runtime_type=runtime_type,
-                runtime_options=runtime_options,
-            )
-            # Warm during preload so a later activation is an instant, warm swap.
-            self._warmup(loaded)
-
+            # Build + warm exactly as activation does (honors the simulation
+            # runtime flag), so a preloaded swap and a direct load are identical.
+            loaded = self._construct_loaded_model(model_info, model_path)
             self._preloaded[model_id] = loaded
             self.clear_preloaded()
-
             logger.info(f"Preloaded model {model_id} for slot {slot_name}")
             return True
 

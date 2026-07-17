@@ -124,6 +124,21 @@ async def test_no_error_window_while_swap_in_progress(sim_runtime, monkeypatch):
     assert all(p == [] for p in after)
 
 
+async def test_preload_honors_simulation_runtime(sim_runtime):
+    # preload_model shares the model-construction path with load_model, so it
+    # honors TEMMS_INFERENCE_SIMULATE_RUNTIME (before this was fixed it always
+    # used the real loader and errored on simulated models).
+    await sim_runtime.preload_model("vision", "model-a")
+    preloaded = sim_runtime._preloaded["model-a"]
+    assert isinstance(preloaded.runtime, SimulatedModelRuntime)
+    assert preloaded.warmed is True
+
+    # Activation consumes the preloaded, already-warm instance.
+    await sim_runtime.load_model("vision", "model-a")
+    assert "model-a" not in sim_runtime._preloaded
+    assert sim_runtime.get_slot_info("vision")["model_id"] == "model-a"
+
+
 async def test_in_flight_request_completes_across_swap(sim_runtime, monkeypatch):
     await sim_runtime.load_model("vision", "model-a")
     old = sim_runtime._get_slot_runtime("vision").loaded_model
