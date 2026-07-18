@@ -12,6 +12,7 @@ import json
 
 from temms.core.database import Database
 from temms.core.mission_package import canonical_json_hash
+from temms.observability import model_swaps_total
 
 # Genesis link for the tamper-evident decision chain (issue #27).
 DECISION_CHAIN_GENESIS = "0" * 64
@@ -348,6 +349,12 @@ class SlotManager(Database):
         )
 
         self.conn.commit()
+        model_swaps_total.inc()
+
+    def decision_count(self) -> int:
+        """Return the number of decisions in the chain (cheap; for metrics)."""
+        row = self.fetchone("SELECT COUNT(*) AS n FROM slot_decisions")
+        return int(row["n"]) if row else 0
 
     def verify_decision_chain(self) -> Dict[str, Any]:
         """Verify the decision chain end to end.

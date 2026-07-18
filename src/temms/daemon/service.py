@@ -38,6 +38,7 @@ from temms.observability import (
     condition_update_count,
     policy_decision_count,
     runtime_health_gauge,
+    set_ddil_gauges,
     set_deployment_state,
     uptime_gauge,
 )
@@ -500,6 +501,7 @@ class TEMMSDaemon:
         self._server = None
         self._tasks: List[asyncio.Task] = []
         self._started_at = time.time()
+        self._last_hub_sync_at: Optional[float] = None
 
         self.deployment_state = DeploymentStateStore(config.deployment_state_path)
         self.pending_operations = PendingOperationsStore(config.pending_operations_path)
@@ -941,6 +943,19 @@ class TEMMSDaemon:
                     else 0
                 )
                 uptime_gauge.set(time.time() - self._started_at)
+
+                # DDIL-specific gauges (issue #30).
+                try:
+                    pending = len(self.pending_operations.read_all())
+                except Exception:
+                    pending = 0
+                last_sync = getattr(self, "_last_hub_sync_at", None)
+                set_ddil_gauges(
+                    offline=bool(self.config.offline_mode),
+                    pending_intents=pending,
+                    decision_chain_length=self.slot_manager.decision_count(),
+                    seconds_since_sync=(time.time() - last_sync) if last_sync else None,
+                )
             except Exception as e:
                 logger.error(f"Reconciliation loop error: {e}")
                 self.deployment_state.set_state(DeploymentState.FAILED, "reconciliation_error")
@@ -962,6 +977,8 @@ class TEMMSDaemon:
         while self._running:
             try:
                 await self._hub_sync_once()
+                if self.config.hub_url:
+                    self._last_hub_sync_at = time.time()
             except Exception as e:
                 logger.warning("Hub Lite sync failed: %s", e)
                 self._emit_telemetry("hub.sync_failed", {"detail": str(e)})
