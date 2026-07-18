@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 from temms.inference.runtime import (
     InferenceRuntime,
+    InvalidInputError,
     LoadedModel,
     SimulatedModelRuntime,
     SlotRuntime,
@@ -610,6 +611,32 @@ class TestRuntimeProfiles:
                 },
             )
         ]
+
+
+class TestPreprocessInputFaults:
+    """Undecodable payloads are caller faults, not model failures."""
+
+    def _model_info(self):
+        return SimpleNamespace(
+            metadata={"input_shape": [1, 3, 224, 224]},
+            format=ModelFormat.ONNX,
+        )
+
+    def test_undecodable_image_raises_invalid_input_error(self, model_cache, model_storage):
+        """A corrupt frame must surface as InvalidInputError.
+
+        The server relies on this type to answer 400 without marking the slot
+        unhealthy or running the fallback chain; a bare Exception here would let
+        one bad sensor frame take the whole slot down.
+        """
+        runtime = InferenceRuntime(model_cache, model_storage)
+
+        with pytest.raises(InvalidInputError, match="could not decode image payload"):
+            runtime._preprocess_input(b"definitely-not-an-image", "image/jpeg", self._model_info())
+
+    def test_invalid_input_error_is_not_a_generic_runtime_failure(self):
+        """InvalidInputError stays distinguishable from model/runtime errors."""
+        assert issubclass(InvalidInputError, ValueError)
 
 
 @pytest.mark.asyncio

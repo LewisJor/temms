@@ -40,6 +40,7 @@ from temms.observability import (
     runtime_health_gauge,
     set_ddil_gauges,
     set_deployment_state,
+    swap_latency_ms,
     uptime_gauge,
 )
 
@@ -1711,6 +1712,8 @@ class TEMMSDaemon:
             conditions=conditions,
         )
         self.slot_manager.update_slot_state(slot_name, SlotState.LOADING)
+        # Time the swap the operator actually feels: load + warm through activate.
+        swap_started = time.monotonic()
         await self.inference_runtime.load_model(slot_name, model_id)
         audit_metadata = self._build_activation_audit(
             model_id, activation_preflight, extra=extra_audit
@@ -1723,6 +1726,7 @@ class TEMMSDaemon:
             conditions=conditions,
             audit_metadata=audit_metadata,
         )
+        swap_latency_ms.observe((time.monotonic() - swap_started) * 1000.0)
         return audit_metadata
 
     def _activation_preflight(

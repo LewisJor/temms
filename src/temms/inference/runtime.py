@@ -32,6 +32,16 @@ from temms.core.storage import ModelStorage
 logger = logging.getLogger(__name__)
 
 
+class InvalidInputError(ValueError):
+    """The request payload could not be decoded into model input.
+
+    This is a caller-side fault (a corrupt or unsupported frame), not a model or
+    runtime failure. It must not mark the slot unhealthy or trigger the fallback
+    chain — a degraded sensor emitting one bad frame should never take a slot
+    down or churn models.
+    """
+
+
 def _env_bool(name: str, default: bool = False) -> bool:
     """Parse a boolean environment variable."""
     value = os.environ.get(name)
@@ -529,8 +539,11 @@ class InferenceRuntime:
                 from PIL import Image
                 import io
 
-                image = Image.open(io.BytesIO(input_data))
-                image = image.convert("RGB")
+                try:
+                    image = Image.open(io.BytesIO(input_data))
+                    image = image.convert("RGB")
+                except Exception as exc:  # corrupt/unsupported frame, not a model fault
+                    raise InvalidInputError(f"could not decode image payload: {exc}") from exc
 
                 # Resize to expected shape
                 if len(input_shape) >= 2:

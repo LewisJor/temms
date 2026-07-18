@@ -25,6 +25,10 @@ uptime_gauge = Gauge("temms_uptime_seconds", "TEMMS uptime in seconds")
 # the tamper-evident evidence chain.
 model_swaps_total = Counter("temms_model_swaps_total", "Model activations (swaps) performed")
 inference_errors_total = Counter("temms_inference_errors_total", "Inference requests that errored")
+invalid_input_total = Counter(
+    "temms_invalid_input_total",
+    "Inference requests rejected as undecodable input (caller fault, not model failure)",
+)
 swap_latency_ms = Histogram(
     "temms_swap_latency_ms",
     "Model swap (load + warm + activate) latency in milliseconds",

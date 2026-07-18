@@ -35,7 +35,7 @@ from temms.core.mission_package import (
     edge_mission_package_runtime_capability_lock_hash,
     hydrate_mission_spec_from_yaml,
 )
-from temms.inference.runtime import InferenceRuntime
+from temms.inference.runtime import InferenceRuntime, InvalidInputError
 from temms.hub_lite import (
     EDGE_MISSION_PACKAGE_SCHEMA_VERSION,
     PackageArtifactIntegrityError,
@@ -54,6 +54,7 @@ from temms.daemon.pending_preflight import (
 from temms.observability import (
     inference_request_count,
     inference_errors_total,
+    invalid_input_total,
     inference_latency_ms,
     condition_update_count,
     deployment_count,
@@ -1973,6 +1974,12 @@ async def infer(
             input_data=input_data,
             content_type=content_type,
         )
+    except InvalidInputError as e:
+        # Caller-side fault: a corrupt frame must not mark the slot unhealthy or
+        # trigger the fallback chain, or one bad sensor frame downs the slot.
+        invalid_input_total.inc()
+        logger.warning(f"Rejected undecodable input for slot {slot_name}: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid input: {e}") from e
     except Exception as e:
         inference_errors_total.inc()
         logger.error(f"Inference failed for slot {slot_name}: {e}")
