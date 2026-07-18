@@ -3020,6 +3020,8 @@ def _decision_chain_evidence(state: Any) -> dict[str, Any]:
         "head_hash": slot_manager.decision_chain_head(),
         "length": verification.get("length", 0),
         "verification": verification,
+        # The ordered chain so a recipient can re-verify offline without the DB.
+        "entries": slot_manager.export_decision_chain(),
     }
     _, signing_key = _pending_operation_signature_policy(state)
     if signing_key:
@@ -3028,6 +3030,48 @@ def _decision_chain_evidence(state: Any) -> dict[str, Any]:
         except Exception:
             block["head_signature_error"] = "could not sign decision chain head"
     return block
+
+
+def verify_decision_chain_export(
+    block: dict[str, Any], public_key: str | None = None
+) -> dict[str, Any]:
+    """Re-verify an exported decision chain offline, without the source DB.
+
+    Walks the ordered ``entries``, recomputing each link, and (if a public key
+    and head signature are present) verifies the head signature. This is the
+    "verify after capture, on any machine" path for issue #27.
+    """
+    from temms.core.signing import ed25519_verify
+    from temms.slots.manager import DECISION_CHAIN_GENESIS, SlotManager
+
+    content_keys = (
+        "slot", "from_model", "to_model", "trigger_type", "trigger_detail",
+        "conditions_snapshot", "audit_metadata", "created_at",
+    )
+    entries = block.get("entries") or []
+    prev_hash = DECISION_CHAIN_GENESIS
+    for index, entry in enumerate(entries):
+        if entry.get("prev_hash") != prev_hash:
+            return {"valid": False, "length": len(entries), "broken_at": index,
+                    "reason": "prev_hash link mismatch"}
+        expected = SlotManager._decision_entry_hash(
+            {key: entry.get(key) for key in content_keys}, prev_hash
+        )
+        if expected != entry.get("entry_hash"):
+            return {"valid": False, "length": len(entries), "broken_at": index,
+                    "reason": "entry content does not match its hash"}
+        prev_hash = entry["entry_hash"]
+
+    result: dict[str, Any] = {"valid": True, "length": len(entries), "head_hash": prev_hash}
+    head_sig = block.get("head_signature") or {}
+    if head_sig:
+        result["head_matches_signed_head"] = head_sig.get("head_hash") == prev_hash
+        result["key_fingerprint"] = head_sig.get("key_fingerprint")
+        if public_key and head_sig.get("signature"):
+            result["signature_valid"] = ed25519_verify(
+                str(head_sig.get("head_hash", "")).encode(), head_sig["signature"], public_key
+            )
+    return result
 
 
 def _pending_operation_signature_policy(state: Any) -> tuple[bool, str | None]:

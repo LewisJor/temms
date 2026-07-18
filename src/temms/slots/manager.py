@@ -382,6 +382,32 @@ class SlotManager(Database):
         """Return the current head hash of the decision chain."""
         return self._latest_chain_hash()
 
+    def export_decision_chain(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Return the ordered decision chain (content + hashes) for offline audit.
+
+        Each entry carries exactly the content that was hashed, so a recipient
+        can re-walk and verify the chain on another machine without this DB.
+        """
+        sql = "SELECT * FROM slot_decisions ORDER BY id ASC"
+        params: tuple = ()
+        if limit is not None:
+            sql = "SELECT * FROM slot_decisions ORDER BY id DESC LIMIT ?"
+            params = (limit,)
+        rows = self.fetchall(sql, params)
+        if limit is not None:
+            rows = list(reversed(rows))
+        entries: List[Dict[str, Any]] = []
+        for row in rows:
+            content = self._decision_chain_content(row)
+            entries.append(
+                {
+                    **content,
+                    "prev_hash": row["prev_hash"],
+                    "entry_hash": row["entry_hash"],
+                }
+            )
+        return entries
+
     def sign_decision_chain_head(self, signing_key: str, signer: str = "temms") -> Dict[str, Any]:
         """Sign the current chain head so the log is offline-verifiable (issue #27)."""
         from temms.core.signing import ed25519_sign, signing_key_fingerprint

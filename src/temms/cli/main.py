@@ -324,6 +324,16 @@ def evidence(
         "--replay",
         help="Export a chronological mission replay artifact",
     ),
+    verify_chain: bool = typer.Option(
+        False,
+        "--verify-chain",
+        help="Verify the tamper-evident decision chain and exit",
+    ),
+    public_key: Optional[Path] = typer.Option(
+        None,
+        "--public-key",
+        help="Ed25519 public key file to verify the signed chain head",
+    ),
     summary_limit: int = typer.Option(
         20,
         "--summary-limit",
@@ -405,6 +415,36 @@ def evidence(
             pending_operations=pending_operations,
             deployment_state=deployment_state,
         )
+
+    if verify_chain:
+        from temms.evidence import verify_decision_chain_export
+
+        block = bundle.get("decision_chain") if isinstance(bundle, dict) else None
+        if not block or not block.get("entries"):
+            console.print("[red]No decision chain found in this evidence.[/red]")
+            raise typer.Exit(1)
+        pubkey = public_key.read_text(encoding="utf-8") if public_key else None
+        result = verify_decision_chain_export(block, public_key=pubkey)
+        length = result.get("length", 0)
+        if not result.get("valid"):
+            console.print(f"[red]Decision chain BROKEN[/red] at entry "
+                          f"{result.get('broken_at')}: {result.get('reason')}")
+            raise typer.Exit(2)
+
+        console.print(f"[green]Decision chain intact[/green] — {length} entries, "
+                      f"head {str(result.get('head_hash',''))[:16]}…")
+        if "signature_valid" in result:
+            if result["signature_valid"] and result.get("head_matches_signed_head"):
+                console.print(f"[green]Head signature verified[/green] "
+                              f"(signer {result.get('key_fingerprint')})")
+            else:
+                console.print("[red]Head signature INVALID[/red] "
+                              "(wrong key, or head does not match the signed head)")
+                raise typer.Exit(2)
+        elif block.get("head_signature"):
+            console.print(f"Signed by {block['head_signature'].get('key_fingerprint')} "
+                          "(pass --public-key to verify the signature)")
+        raise typer.Exit(0)
 
     if summary and replay:
         console.print("[red]Error: Use either --summary or --replay, not both.[/red]")

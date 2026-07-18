@@ -10,6 +10,22 @@ echo "  TEMMS Sim Environment"
 echo "==============================="
 echo ""
 
+# Sign with an Ed25519 demo key: real asymmetric, offline-verifiable provenance
+# for packages and the decision chain. Generated once into the data volume; the
+# public key is what an auditor uses to verify. Falls back to the legacy HMAC
+# key only if key generation is unavailable.
+TEMMS_DEMO_KEY_DIR="${TEMMS_DEMO_KEY_DIR:-/var/lib/temms/keys}"
+if [ -z "${TEMMS_PACKAGE_SIGNING_KEY:-}" ] && [ -z "${TEMMS_PACKAGE_SIGNING_KEY_FILE:-}" ]; then
+    mkdir -p "${TEMMS_DEMO_KEY_DIR}"
+    if [ ! -f "${TEMMS_DEMO_KEY_DIR}/demo.private.pem" ]; then
+        temms keys generate --out-dir "${TEMMS_DEMO_KEY_DIR}" --name demo >/dev/null 2>&1 \
+            && echo "  Generated Ed25519 demo signing keypair in ${TEMMS_DEMO_KEY_DIR}"
+    fi
+    if [ -f "${TEMMS_DEMO_KEY_DIR}/demo.private.pem" ]; then
+        export TEMMS_PACKAGE_SIGNING_KEY="$(cat "${TEMMS_DEMO_KEY_DIR}/demo.private.pem")"
+        echo "  Signing with Ed25519 (public key: ${TEMMS_DEMO_KEY_DIR}/demo.public.pem)"
+    fi
+fi
 export TEMMS_PACKAGE_SIGNING_KEY="${TEMMS_PACKAGE_SIGNING_KEY:-temms-local-demo-signing-key}"
 export TEMMS_ROLLOUT_REQUIRE_SIGNATURE="${TEMMS_ROLLOUT_REQUIRE_SIGNATURE:-true}"
 export TEMMS_DEMO_SEED_HUB="${TEMMS_DEMO_SEED_HUB:-1}"

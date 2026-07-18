@@ -51,7 +51,9 @@ services:
       - TEMMS_DEVICE_ID=edge-sim
       - TEMMS_DEVICE_PROFILE=x86_64-cpu
       - TEMMS_EDGE_HEARTBEAT_INTERVAL_S=30
-      - TEMMS_PACKAGE_SIGNING_KEY=temms-local-demo-signing-key
+      # Signing key intentionally unset: the entrypoint generates an Ed25519
+      # demo keypair (real asymmetric, offline-verifiable provenance). Set
+      # TEMMS_PACKAGE_SIGNING_KEY / _FILE here to override.
       - TEMMS_ROLLOUT_REQUIRE_SIGNATURE=true
       - TEMMS_DEMO_SEED_HUB=1
     networks:

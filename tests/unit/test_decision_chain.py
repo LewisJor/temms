@@ -98,6 +98,36 @@ def test_tamper_after_signing_invalidates_the_signed_head(slot_manager):
     # ...but an entry before the head was altered, so verify_decision_chain fails.
 
 
+def test_exported_chain_verifies_offline_without_the_db(slot_manager):
+    from temms.evidence import verify_decision_chain_export
+
+    _seed(slot_manager)
+    private_pem, public_pem, fingerprint = generate_ed25519_keypair()
+    block = {
+        "entries": slot_manager.export_decision_chain(),
+        "head_signature": slot_manager.sign_decision_chain_head(private_pem),
+    }
+
+    result = verify_decision_chain_export(block, public_key=public_pem)
+    assert result["valid"] is True
+    assert result["length"] == 4
+    assert result["signature_valid"] is True
+    assert result["head_matches_signed_head"] is True
+    assert result["key_fingerprint"] == fingerprint
+
+
+def test_exported_chain_detects_tamper_offline(slot_manager):
+    from temms.evidence import verify_decision_chain_export
+
+    _seed(slot_manager)
+    block = {"entries": slot_manager.export_decision_chain()}
+    # Adversary edits an entry in the exported audit file.
+    block["entries"][1]["to_model"] = "EVIL"
+    result = verify_decision_chain_export(block)
+    assert result["valid"] is False
+    assert result["broken_at"] == 1
+
+
 def test_conditions_and_audit_are_covered_by_the_hash(slot_manager):
     _seed(slot_manager)
     # Altering the recorded conditions snapshot must break the chain.
