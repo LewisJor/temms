@@ -180,6 +180,9 @@ def canonical_json_hash(payload: dict[str, Any]) -> str:
             _canonicalize_hash_numbers(payload),
             sort_keys=True,
             separators=(",", ":"),
+            # Emit UTF-8 directly (not \uXXXX escapes) so the bytes match what a
+            # JS/JSON or native client produces for non-ASCII strings.
+            ensure_ascii=False,
             default=str,
         ).encode("utf-8")
     ).hexdigest()

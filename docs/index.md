@@ -45,5 +45,6 @@ hub-lite
 mlflow-packaging
 package-signing
 evidence-chain
+proof-canonicalization
 policy-reference
 ```
