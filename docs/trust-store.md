@@ -50,6 +50,17 @@ Fingerprints are derived from the **public** key, so the signer and every
 verifier compute the same value. `temms keys fingerprint` prints it for a key
 file of either kind.
 
+**Only Ed25519 public keys may enter the store.** A private key is refused
+outright: the store is provisioned onto edge devices, which are the machines
+most likely to be captured, and shipping signing material there would hand an
+adversary the ability to forge the very packages the store exists to
+authenticate. A legacy HMAC secret is refused for the same reason — every holder
+of a shared secret can forge.
+
+The store is also validated when loaded. An unknown `schema_version`, or an
+entry whose recorded fingerprint does not match its own key material, is a hard
+error rather than a key that silently fails to verify later.
+
 ## Rotating a key offline
 
 The store holds many keys at once, which is the whole point: there is never a
@@ -109,7 +120,7 @@ Two deliberate properties:
 
 - **Expiry is evaluated at verification time**, not signing time. An expired key
   is refused even for material it signed while valid — the conservative reading,
-  since an expired key is often an compromised or decommissioned one.
+  since an expired key is often a compromised or decommissioned one.
 - **Trust selection never weakens integrity.** The store only decides *which key
   to try*. Manifest and file-hash checks run exactly as they do on the
   single-key path, so a tampered package fails regardless of who signed it.

@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from temms.core.atomic import write_json_atomic
-from temms.core.signing import signing_key_fingerprint
+from temms.core.signing import classify_ed25519_key, signing_key_fingerprint
 
 TRUST_STORE_SCHEMA_VERSION = "temms-trust-store/v1"
 
@@ -101,13 +101,43 @@ class TrustStore:
         except json.JSONDecodeError as exc:
             raise TrustStoreError(f"trust store at {path} is not valid JSON: {exc}") from exc
 
-        entries = data.get("keys", []) if isinstance(data, dict) else []
+        if not isinstance(data, dict):
+            raise TrustStoreError(f"trust store at {path} must be a JSON object")
+
+        schema = data.get("schema_version")
+        if schema is not None and schema != TRUST_STORE_SCHEMA_VERSION:
+            raise TrustStoreError(
+                f"trust store at {path} declares unsupported schema {schema!r} "
+                f"(expected {TRUST_STORE_SCHEMA_VERSION})"
+            )
+
+        entries = data.get("keys", [])
+        if not isinstance(entries, list):
+            raise TrustStoreError(f"trust store at {path} has a non-list 'keys'")
+
         keys: dict[str, TrustedKey] = {}
         for entry in entries:
             try:
                 trusted = TrustedKey.from_dict(entry)
             except (KeyError, TypeError) as exc:
                 raise TrustStoreError(f"malformed trust store entry in {path}: {entry}") from exc
+
+            # Recompute the fingerprint from the key material. A stored
+            # fingerprint that does not match its own public key — whether from
+            # hand-editing or tampering — would otherwise be selected by
+            # candidates_for() and then fail to verify, blaming the signature
+            # for what is really a corrupted trust store.
+            try:
+                actual = signing_key_fingerprint(trusted.public_key)
+            except Exception as exc:
+                raise TrustStoreError(
+                    f"trust store entry {trusted.fingerprint} in {path} has an unreadable key"
+                ) from exc
+            if actual != trusted.fingerprint:
+                raise TrustStoreError(
+                    f"trust store entry in {path} claims fingerprint {trusted.fingerprint} "
+                    f"but its key is {actual}"
+                )
             keys[trusted.fingerprint] = trusted
         return cls(keys=keys)
 
@@ -132,7 +162,25 @@ class TrustStore:
         expires_at: str | None = None,
         added_at: str | None = None,
     ) -> TrustedKey:
-        """Trust a public key. Re-adding a fingerprint updates its metadata."""
+        """Trust an Ed25519 **public** key. Re-adding a fingerprint updates its metadata.
+
+        Private keys are refused outright. The store is provisioned onto edge
+        devices, which are the machines most likely to be captured — putting
+        signing material there would hand an adversary the ability to forge the
+        very packages this store exists to authenticate.
+        """
+        kind = classify_ed25519_key(public_key)
+        if kind == "private":
+            raise TrustStoreError(
+                "refusing to trust a private key: the trust store is provisioned onto "
+                "edge devices and must contain public keys only"
+            )
+        if kind != "public":
+            raise TrustStoreError(
+                "not an Ed25519 public key (a legacy HMAC secret cannot be a trusted signer, "
+                "since every holder of it could forge signatures)"
+            )
+
         fingerprint = signing_key_fingerprint(public_key)
         if expires_at:
             _parse_timestamp(expires_at, "expires_at")
@@ -173,10 +221,14 @@ class TrustStore:
     ) -> list[TrustedKey]:
         """Trusted keys worth trying for a signature.
 
-        When the signature names its signer we try that key alone — trying the
-        rest would only ever produce a confusing error. Expiry is enforced by
-        the caller so an expired-but-present signer yields a precise message
-        rather than a generic "no trusted key" one.
+        When the signature names its signer we return that key alone — trying
+        the rest would only ever produce a confusing error.
+
+        A named key is returned **even if expired**, so that verify_with_any()
+        can report "this signer's key expired on <date>" instead of the far less
+        useful "nothing verified it". Expiry is therefore applied by
+        verify_with_any(), not here; the unnamed case filters expired keys
+        eagerly because there is no specific signer to explain.
         """
         if declared_fingerprint:
             trusted = self.keys.get(declared_fingerprint)
