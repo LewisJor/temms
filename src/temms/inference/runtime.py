@@ -534,16 +534,27 @@ class InferenceRuntime:
         _ = model_info.metadata.get("input_dtype", "float32")  # Reserved for future use
 
         if content_type.startswith("image/"):
-            # Image preprocessing
             try:
                 from PIL import Image
-                import io
+            except ImportError as exc:
+                # A missing decoder is a deployment fault, not a caller fault: the
+                # slot genuinely cannot serve image inference at all. Fail loudly
+                # rather than reshaping encoded bytes into a garbage tensor and
+                # returning confident nonsense.
+                raise RuntimeError(
+                    "image inference requires Pillow, which is not installed"
+                ) from exc
 
-                try:
-                    image = Image.open(io.BytesIO(input_data))
-                    image = image.convert("RGB")
-                except Exception as exc:  # corrupt/unsupported frame, not a model fault
-                    raise InvalidInputError(f"could not decode image payload: {exc}") from exc
+            import io
+
+            # Decode through tensor prep is all caller-fault territory: a corrupt
+            # or truncated frame can fail at open, convert, resize, or array
+            # conversion (PIL decodes lazily). Model/runtime concerns —
+            # _format_processed_input — stay outside this block so they keep
+            # their runtime-failure semantics.
+            try:
+                image = Image.open(io.BytesIO(input_data))
+                image = image.convert("RGB")
 
                 # Resize to expected shape
                 if len(input_shape) >= 2:
@@ -566,17 +577,14 @@ class InferenceRuntime:
 
                 # Add batch dimension
                 arr = np.expand_dims(arr, 0)
+            except Exception as exc:  # corrupt/truncated frame, not a model fault
+                raise InvalidInputError(f"could not decode image payload: {exc}") from exc
 
-                return self._format_processed_input(
-                    arr.astype(np.float32),
-                    model_info,
-                    input_name,
-                )
-
-            except ImportError:
-                logger.warning("PIL not available, using raw bytes")
-                arr = np.frombuffer(input_data, dtype=np.float32).reshape(input_shape)
-                return self._format_processed_input(arr, model_info, input_name)
+            return self._format_processed_input(
+                arr.astype(np.float32),
+                model_info,
+                input_name,
+            )
 
         else:
             # Generic binary data - assume numpy array
