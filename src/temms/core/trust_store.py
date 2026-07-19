@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from temms.core.atomic import write_json_atomic
 from temms.core.signing import signing_key_fingerprint
 
 TRUST_STORE_SCHEMA_VERSION = "temms-trust-store/v1"
@@ -112,14 +113,11 @@ class TrustStore:
 
     def save(self, path: Path) -> None:
         """Write the store atomically so a crash cannot truncate trust."""
-        path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "schema_version": TRUST_STORE_SCHEMA_VERSION,
             "keys": [key.to_dict() for key in self.sorted_keys()],
         }
-        tmp_path = path.with_suffix(f"{path.suffix}.tmp")
-        tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        tmp_path.replace(path)
+        write_json_atomic(path, payload, indent=2, sort_keys=True)
 
     # -- management --------------------------------------------------------
 
