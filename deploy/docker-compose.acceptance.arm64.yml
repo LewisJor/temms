@@ -20,7 +20,13 @@ services:
       platforms:
         - linux/arm64
     environment:
-      # Declared profile must match the silicon: rpi5-tflite is an arm64 profile,
-      # so on arm64 this raises no device_profile_arch_mismatch.
-      TEMMS_DEVICE_PROFILE: rpi5-tflite
+      # arm64-cpu, not rpi5-tflite. Both are arm64, so either would satisfy the
+      # architecture check — but this image ships onnxruntime and no TFLite, and
+      # rpi5-tflite's runtime_constraints require tflite_runtime. Declaring it
+      # here would assert a capability the container does not have, which is the
+      # same class of unverified claim this PR exists to close.
+      #
+      # Validating a genuine rpi5-tflite target means building the agent image
+      # with tflite_runtime; tracked as a follow-up.
+      TEMMS_DEVICE_PROFILE: arm64-cpu
       TEMMS_DEMO_SITE: acceptance-arm64

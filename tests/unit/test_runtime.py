@@ -829,3 +829,19 @@ class TestDeviceProfileArchMismatch:
 
         assert inventory["device_profile"] == inventory["detected_device_profile"]
         assert inventory["device_profile_arch_mismatch"] is None
+
+    def test_unknown_host_arch_does_not_manufacture_a_mismatch(self, monkeypatch):
+        """platform.machine() can return empty; that is not evidence of conflict.
+
+        Claiming a mismatch against an unknown architecture would flag every
+        correctly declared profile on such a host.
+        """
+        from temms.core import runtime_profiles
+
+        monkeypatch.setattr(runtime_profiles.platform, "machine", lambda: "")
+        monkeypatch.setenv("TEMMS_DEVICE_PROFILE", "x86_64-cpu")
+
+        inventory = runtime_profiles.detect_runtime_capabilities().to_dict()
+
+        assert inventory["arch"] == "unknown"
+        assert inventory["device_profile_arch_mismatch"] is None

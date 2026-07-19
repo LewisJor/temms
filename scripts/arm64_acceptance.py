@@ -12,8 +12,9 @@ that would otherwise be taken on trust:
 
   * the container really is aarch64 (not an amd64 image under emulation)
   * the agent detects an arm64 device profile from the silicon
-  * a declared Pi-class profile agrees with the hardware — no arch mismatch
-  * the agent serves, and reports a runtime that exists on that architecture
+  * a profile is actually declared, and agrees with the hardware — no mismatch
+  * the runtime that profile depends on is genuinely available on this image
+  * the agent serves requests
 
 Jetson/GPU validation stays deferred to real hardware.
 
@@ -110,15 +111,57 @@ def check_detected_profile() -> dict:
     if detected not in {"arm64-cpu", "rpi5-tflite", "arm64-jetson", "orin-tensorrt"}:
         raise AcceptanceCheckError(f"detected profile {detected!r} is not an arm64 profile")
 
-    # The declared Pi-class profile must agree with the hardware. This is the
-    # regression that motivated the check: a device can declare x86_64-cpu while
-    # running on arm64, and the Hub's fit gate would clear a package that cannot
-    # actually run there.
+    # A profile must actually be declared. Without this the mismatch check below
+    # passes vacuously on an edge that never set TEMMS_DEVICE_PROFILE at all.
+    declared = inventory.get("device_profile")
+    if not declared:
+        raise AcceptanceCheckError("edge declares no device profile")
+
+    # The declared profile must agree with the hardware. This is the regression
+    # that motivated the check: a device can declare x86_64-cpu while running on
+    # arm64, and the Hub's fit gate would clear a package that cannot run there.
     mismatch = inventory.get("device_profile_arch_mismatch")
     if mismatch:
         raise AcceptanceCheckError(f"declared profile contradicts the silicon: {mismatch}")
 
+    # Architecture agreement is necessary but not sufficient: the profile also
+    # names the runtimes it expects. Declaring a profile whose runtime is absent
+    # is the same unverified claim in a different dimension.
+    required = _profile_required_runtimes(declared)
+    runtimes = inventory.get("runtimes") or {}
+    missing = [
+        name for name in required if not (runtimes.get(name) or {}).get("available")
+    ]
+    if missing:
+        raise AcceptanceCheckError(
+            f"profile {declared!r} requires runtime(s) {missing} that this image does not provide"
+        )
+
     return inventory
+
+
+# Fallback when a profile has no runtime target: per docs/direction.md, ONNX
+# Runtime is the reference adapter, so an edge that can serve at all must have
+# it. This keeps the runtime check from passing vacuously.
+REFERENCE_RUNTIME = "onnxruntime"
+
+
+def _profile_required_runtimes(profile: str) -> list[str]:
+    """Runtimes a device profile's constraints depend on.
+
+    Note that ``arm64-cpu`` has no entry in DEFAULT_RUNTIME_TARGETS — a plain
+    arm64 CPU device (a Pi running ONNX rather than TFLite) has no runtime
+    target defined. Tracked as a follow-up; until then such profiles fall back
+    to the reference runtime so this check still asserts something.
+    """
+    from temms.core.runtime_profiles import default_runtime_targets
+
+    for target in default_runtime_targets().values():
+        if profile in (target.get("device_profiles") or []):
+            constraints = (target.get("runtime_constraints") or {}).get("runtimes") or []
+            if constraints:
+                return list(constraints)
+    return [REFERENCE_RUNTIME]
 
 
 def check_serves_requests() -> None:
@@ -154,6 +197,13 @@ def main() -> int:
         checks.append(("declared_profile", str(inventory.get("device_profile"))))
         checks.append(("detected_profile", str(inventory.get("detected_device_profile"))))
         checks.append(("no_arch_mismatch", "ok"))
+        checks.append(
+            (
+                "profile_runtimes_available",
+                ",".join(_profile_required_runtimes(str(inventory.get("device_profile"))))
+                or "none required",
+            )
+        )
 
         check_serves_requests()
         checks.append(("serves_requests", "ok"))

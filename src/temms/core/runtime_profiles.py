@@ -283,7 +283,14 @@ def detect_runtime_capabilities() -> RuntimeCapabilities:
     mismatch = None
     if declared_profile:
         declared_arch = device_profile_arch(declared_profile)
-        if declared_arch and declared_arch != arch:
+        # Both sides must be architectures we recognise. platform.machine() can
+        # come back empty (arch == "unknown"), and claiming a mismatch against
+        # an unknown would flag every correctly declared profile on such a host.
+        if (
+            declared_arch
+            and arch in KNOWN_ARCHITECTURES
+            and declared_arch != arch
+        ):
             mismatch = {
                 "declared_device_profile": declared_profile,
                 "declared_arch": declared_arch,
