@@ -280,6 +280,10 @@ def detect_runtime_capabilities() -> RuntimeCapabilities:
     # contradicts the silicon is a deployment waiting to fail: the Hub's runtime
     # fit gate would clear an x86_64-only package for a device that cannot run
     # it. Honour the declaration, but never discard what was actually detected.
+    #
+    # Note: this must be initialised outside the branch. Most edges declare no
+    # profile at all, and leaving it unbound makes detect_runtime_capabilities()
+    # raise UnboundLocalError on exactly that default path.
     mismatch = None
     if declared_profile:
         declared_arch = device_profile_arch(declared_profile)
