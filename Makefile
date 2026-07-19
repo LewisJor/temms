@@ -89,6 +89,15 @@ soak:
 	uv run python scripts/soak.py --duration $${SOAK_DURATION:-120} \
 		--report docs/reliability-report.json --markdown docs/reliability-report.md
 
+crash-soak:
+	uv run python scripts/crash_soak.py --iterations $${CRASH_ITERATIONS:-40} \
+		--report docs/crash-atomicity-report.json
+
+crash-soak-selftest:
+	@echo "Atomicity deliberately broken — this run is EXPECTED to fail:"
+	@TEMMS_CRASH_SOAK_UNSAFE_WRITES=1 uv run python scripts/crash_soak.py \
+		--iterations 8 || echo "  ^ expected FAIL: the harness detects torn writes"
+
 test-sim:
 	pytest tests/test_sim_weather.py tests/test_sim_scenarios.py -v
 

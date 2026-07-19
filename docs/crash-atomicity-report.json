@@ -1,0 +1,49 @@
+{
+  "schema_version": "temms-crash-atomicity/v1",
+  "generated_at": "2026-07-19T02:58:34.202433Z",
+  "config": {
+    "iterations": 40,
+    "seed": 1729
+  },
+  "totals": {
+    "cycles": 40,
+    "kills_on_live_worker": 40,
+    "failed_cycles": 0
+  },
+  "checks": {
+    "deployment_state_parses": {
+      "passed": 40,
+      "failed": 0
+    },
+    "intent_queue_parses": {
+      "passed": 40,
+      "failed": 0
+    },
+    "trust_store_parses": {
+      "passed": 40,
+      "failed": 0
+    },
+    "decision_chain_intact": {
+      "passed": 40,
+      "failed": 0
+    },
+    "deterministic_recovery": {
+      "passed": 40,
+      "failed": 0
+    }
+  },
+  "invariants": [
+    {
+      "name": "no_corrupt_state_after_sigkill",
+      "passed": true,
+      "detail": "0 of 40 kill cycles left inconsistent state"
+    },
+    {
+      "name": "kills_landed_mid_write",
+      "passed": true,
+      "detail": "40/40 kills hit a live worker"
+    }
+  ],
+  "failures": [],
+  "passed": true
+}

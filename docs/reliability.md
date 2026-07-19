@@ -75,11 +75,82 @@ Regenerate with `make soak`.
 All four invariants held. This is a short baseline; a multi-hour run supersedes
 it (see below).
 
+## Crash atomicity (`SIGKILL` mid-write)
+
+The soak above restarts *gracefully*. The DDIL question is harsher: power is cut,
+or the supervisor kills the process, **in the middle of writing state**. Nothing
+runs — no `finally`, no signal handler, no flush. Whatever is on disk is what the
+device wakes up to.
+
+`scripts/crash_soak.py` spawns a real subprocess that hammers the production
+write paths (deployment state, the signed intent queue, the decision chain, the
+trust store), sends it `SIGKILL` at a random offset, and verifies what survived:
+
+| Check | Meaning |
+|---|---|
+| `deployment_state_parses` | No truncated or half-written state file; the state is a legal value. |
+| `intent_queue_parses` | The queue is a list of well-formed entries — no partial record. |
+| `trust_store_parses` | Provisioned trust survives the kill (a device must not wake up trusting nothing). |
+| `decision_chain_intact` | The hash-linked chain still verifies end to end. |
+| `deterministic_recovery` | The slot returns to the last **committed** decision, never a partially applied one. |
+
+This works because every state file is written through
+`temms.core.atomic.write_json_atomic`: same-directory temp file → `fsync` →
+atomic `rename` → `fsync` of the parent directory. A reader therefore sees either
+the old contents or the new ones, never a mix.
+
+Verification reads the files **straight from disk** rather than through the store
+accessors, because `DeploymentStateStore._read()` deliberately swallows a corrupt
+file and reports `PENDING` — which would mask exactly the corruption being
+hunted.
+
+### Proving the harness actually detects
+
+A check that never fires proves nothing, so the harness ships with a
+falsification mode. `TEMMS_CRASH_SOAK_UNSAFE_WRITES=1` swaps the atomic writer
+for one that writes in two flushed chunks with a pause between them:
+
+```bash
+# Expected: PASS, 0 cycles leave inconsistent state
+uv run python scripts/crash_soak.py --iterations 40
+
+# Expected: FAIL — this is the point
+TEMMS_CRASH_SOAK_UNSAFE_WRITES=1 uv run python scripts/crash_soak.py --iterations 8
+```
+
+Under the unsafe flag the harness reports corrupt JSON in the majority of cycles
+(`Expecting property name enclosed in double quotes`), confirming it would catch
+a real atomicity regression rather than passing vacuously.
+
+### Crash-atomicity baseline
+
+40 `SIGKILL` cycles on a single Mac (Apple Silicon). Machine-readable copy:
+[`crash-atomicity-report.json`](crash-atomicity-report.json).
+
+| Metric | Value |
+|---|---|
+| Result | **PASS** |
+| Kill cycles | 40 |
+| Kills landing on a live worker | **40 / 40** |
+| Cycles leaving inconsistent state | **0** |
+
+The second row matters: a kill that arrives after the worker already died proves
+nothing about atomicity, so `kills_landed_mid_write` is asserted as an invariant
+in its own right.
+
+### A note on scope
+
+The issue proposed driving a full `temms daemon` subprocess. A real daemon takes
+longer to start than to kill, so a run buys only a handful of kills — while the
+property under test is atomicity of the *state writes*, not daemon startup.
+Driving the same store classes directly buys hundreds of kills in the same
+wall-clock budget, which is what actually catches a torn write. The write paths
+exercised are the production ones, unmodified.
+
 ## Known follow-ups
 
-- **`kill -9` mid-write variants.** The restart scenario here recovers from the
-  persisted state anchor; killing a real subprocess daemon mid-swap /
-  mid-evidence-write / mid-package-import (to test write atomicity and journaling
-  under an abrupt kill) needs a subprocess harness and is the next increment.
 - **Multi-hour run.** The committed baseline is a short run; a 24–72 h soak is an
   operator/nightly activity whose report supersedes the baseline.
+- **Mid-package-import kills.** Crash atomicity currently covers state, queue,
+  chain, and trust store. Package import writes into the model cache and is the
+  remaining path to cover.
