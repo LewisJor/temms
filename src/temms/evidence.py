@@ -3033,13 +3033,19 @@ def _decision_chain_evidence(state: Any) -> dict[str, Any]:
 
 
 def verify_decision_chain_export(
-    block: dict[str, Any], public_key: str | None = None
+    block: dict[str, Any],
+    public_key: str | None = None,
+    trust_store: Any = None,
 ) -> dict[str, Any]:
     """Re-verify an exported decision chain offline, without the source DB.
 
-    Walks the ordered ``entries``, recomputing each link, and (if a public key
-    and head signature are present) verifies the head signature. This is the
-    "verify after capture, on any machine" path for issue #27.
+    Walks the ordered ``entries``, recomputing each link, and (if a key and head
+    signature are present) verifies the head signature. This is the "verify
+    after capture, on any machine" path for issue #27.
+
+    Pass ``trust_store`` to verify against a provisioned set of keys rather than
+    one (#31): evidence from a device signed before a key rotation still
+    verifies, and the result records *which* key vouched for it.
     """
     from temms.core.signing import ed25519_verify
     from temms.slots.manager import DECISION_CHAIN_GENESIS, SlotManager
@@ -3067,9 +3073,27 @@ def verify_decision_chain_export(
     if head_sig:
         result["head_matches_signed_head"] = head_sig.get("head_hash") == prev_hash
         result["key_fingerprint"] = head_sig.get("key_fingerprint")
-        if public_key and head_sig.get("signature"):
+        signed_head = str(head_sig.get("head_hash", "")).encode()
+        if trust_store is not None and head_sig.get("signature"):
+            from temms.core.trust_store import TrustStoreError
+
+            def _verifier(candidate: str) -> bool:
+                return ed25519_verify(signed_head, head_sig["signature"], candidate)
+
+            try:
+                trusted = trust_store.verify_with_any(
+                    _verifier, head_sig.get("key_fingerprint")
+                )
+            except TrustStoreError as exc:
+                result["signature_valid"] = False
+                result["signature_error"] = str(exc)
+            else:
+                result["signature_valid"] = True
+                result["verified_by_fingerprint"] = trusted.fingerprint
+                result["verified_by_label"] = trusted.label
+        elif public_key and head_sig.get("signature"):
             result["signature_valid"] = ed25519_verify(
-                str(head_sig.get("head_hash", "")).encode(), head_sig["signature"], public_key
+                signed_head, head_sig["signature"], public_key
             )
     return result
 

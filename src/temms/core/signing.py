@@ -187,13 +187,51 @@ def sign_package(package_path: Path, key: str, signer: str = "temms") -> Path:
     return signature_path
 
 
-def verify_package_signature(package_path: Path, key: str) -> dict[str, Any]:
-    """Verify signature.json and all covered file hashes."""
+def _read_package_signature(package_path: Path) -> dict[str, Any]:
+    """Read signature.json for a package."""
     signature_path = package_path / SIGNATURE_FILE
     if not signature_path.exists():
         raise ValueError(f"Missing {SIGNATURE_FILE}")
+    return json.loads(signature_path.read_text(encoding="utf-8"))
 
-    signature = json.loads(signature_path.read_text(encoding="utf-8"))
+
+def verify_package_signature_with_trust_store(
+    package_path: Path,
+    store: Any,
+    now: Any = None,
+) -> dict[str, Any]:
+    """Verify a package against any trusted, unexpired key in ``store``.
+
+    This is the DDIL verification path: no CA, no transparency log, just a set
+    of provisioned public keys. Rotation works because both the outgoing and
+    incoming keys can be trusted at once. The returned metadata records *which*
+    key verified, so evidence answers "who signed this" and not merely "it was
+    signed".
+    """
+    signature = _read_package_signature(package_path)
+    if signature.get("algorithm") != ED25519_ALGORITHM:
+        raise ValueError(
+            "trust store verification requires an Ed25519 signature; "
+            f"package is signed with {signature.get('algorithm')}"
+        )
+
+    def _verifier(public_key: str) -> bool:
+        _verify_ed25519_signature(signature, public_key)
+        return True
+
+    trusted = store.verify_with_any(_verifier, signature.get("key_fingerprint"), now)
+
+    # Reuse the single-key path for the file/manifest hash checks so package
+    # integrity is enforced in exactly one place.
+    result = verify_package_signature(package_path, trusted.public_key)
+    result["verified_by_fingerprint"] = trusted.fingerprint
+    result["verified_by_label"] = trusted.label
+    return result
+
+
+def verify_package_signature(package_path: Path, key: str) -> dict[str, Any]:
+    """Verify signature.json and all covered file hashes."""
+    signature = _read_package_signature(package_path)
     algorithm = signature.get("algorithm")
     if algorithm == ED25519_ALGORITHM:
         _verify_ed25519_signature(signature, key)

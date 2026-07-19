@@ -33,6 +33,11 @@ app.add_typer(condition.app, name="condition", help="Manage runtime conditions")
 keys_app = typer.Typer(help="Manage Ed25519 package signing keys")
 app.add_typer(keys_app, name="keys")
 
+trust_app = typer.Typer(help="Manage the offline Ed25519 trust store")
+app.add_typer(trust_app, name="trust")
+
+DEFAULT_TRUST_STORE = Path("/var/lib/temms/trust-store.json")
+
 
 @keys_app.command("generate")
 def keys_generate(
@@ -72,6 +77,96 @@ def keys_fingerprint(
     from temms.core.signing import signing_key_fingerprint
 
     console.print(signing_key_fingerprint(key_file.read_text(encoding="utf-8")))
+
+
+@trust_app.command("add")
+def trust_add(
+    public_key_file: Path = typer.Argument(..., help="Path to an Ed25519 public key (PEM)"),
+    store_path: Path = typer.Option(
+        DEFAULT_TRUST_STORE, "--store", help="Trust store file"
+    ),
+    label: str = typer.Option("", "--label", help="Human-readable name for this signer"),
+    expires_at: str = typer.Option(
+        "", "--expires-at", help="Optional ISO-8601 expiry, e.g. 2027-01-01T00:00:00Z"
+    ),
+) -> None:
+    """Trust a public key. Add the new key before rotating to it."""
+    from temms.core.trust_store import TrustStore, TrustStoreError
+
+    if not public_key_file.exists():
+        console.print(f"[red]Public key not found:[/red] {public_key_file}")
+        raise typer.Exit(1)
+
+    store = TrustStore.load(store_path)
+    try:
+        trusted = store.add(
+            public_key_file.read_text(encoding="utf-8"),
+            label=label,
+            expires_at=expires_at or None,
+        )
+    except TrustStoreError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    store.save(store_path)
+    console.print(f"[green]Trusted:[/green] {trusted.fingerprint}")
+    if trusted.label:
+        console.print(f"[green]Label:  [/green] {trusted.label}")
+    if trusted.expires_at:
+        console.print(f"[green]Expires:[/green] {trusted.expires_at}")
+    console.print(f"[green]Store:  [/green] {store_path} ({len(store)} key(s))")
+
+
+@trust_app.command("list")
+def trust_list(
+    store_path: Path = typer.Option(
+        DEFAULT_TRUST_STORE, "--store", help="Trust store file"
+    ),
+) -> None:
+    """List trusted keys and their status."""
+    from temms.core.trust_store import TrustStore
+
+    store = TrustStore.load(store_path)
+    if not len(store):
+        console.print(f"[yellow]No trusted keys in {store_path}[/yellow]")
+        return
+
+    table = Table(title=f"Trust store — {store_path}")
+    table.add_column("Fingerprint")
+    table.add_column("Label")
+    table.add_column("Status")
+    table.add_column("Expires")
+    for key in store.sorted_keys():
+        expired = key.is_expired()
+        table.add_row(
+            key.fingerprint,
+            key.label or "-",
+            "[red]expired[/red]" if expired else "[green]active[/green]",
+            key.expires_at or "never",
+        )
+    console.print(table)
+
+
+@trust_app.command("remove")
+def trust_remove(
+    fingerprint: str = typer.Argument(..., help="Fingerprint to stop trusting"),
+    store_path: Path = typer.Option(
+        DEFAULT_TRUST_STORE, "--store", help="Trust store file"
+    ),
+) -> None:
+    """Stop trusting a key. Remove the old key only after the fleet has rotated."""
+    from temms.core.trust_store import TrustStore, TrustStoreError
+
+    store = TrustStore.load(store_path)
+    try:
+        removed = store.remove(fingerprint)
+    except TrustStoreError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    store.save(store_path)
+    console.print(f"[green]Removed:[/green] {removed.fingerprint}")
+    console.print(f"[green]Store:  [/green] {store_path} ({len(store)} key(s) remaining)")
 
 
 @app.command()
@@ -334,6 +429,11 @@ def evidence(
         "--public-key",
         help="Ed25519 public key file to verify the signed chain head",
     ),
+    trust_store_path: Optional[Path] = typer.Option(
+        None,
+        "--trust-store",
+        help="Verify the chain head against a trust store instead of a single key",
+    ),
     summary_limit: int = typer.Option(
         20,
         "--summary-limit",
@@ -424,7 +524,12 @@ def evidence(
             console.print("[red]No decision chain found in this evidence.[/red]")
             raise typer.Exit(1)
         pubkey = public_key.read_text(encoding="utf-8") if public_key else None
-        result = verify_decision_chain_export(block, public_key=pubkey)
+        store = None
+        if trust_store_path is not None:
+            from temms.core.trust_store import TrustStore
+
+            store = TrustStore.load(trust_store_path)
+        result = verify_decision_chain_export(block, public_key=pubkey, trust_store=store)
         length = result.get("length", 0)
         if not result.get("valid"):
             console.print(f"[red]Decision chain BROKEN[/red] at entry "
@@ -435,15 +540,19 @@ def evidence(
                       f"head {str(result.get('head_hash',''))[:16]}…")
         if "signature_valid" in result:
             if result["signature_valid"] and result.get("head_matches_signed_head"):
+                signer = result.get("verified_by_fingerprint") or result.get("key_fingerprint")
+                label = result.get("verified_by_label")
                 console.print(f"[green]Head signature verified[/green] "
-                              f"(signer {result.get('key_fingerprint')})")
+                              f"(signer {signer}{f' — {label}' if label else ''})")
             else:
-                console.print("[red]Head signature INVALID[/red] "
-                              "(wrong key, or head does not match the signed head)")
+                detail = result.get("signature_error") or (
+                    "wrong key, or head does not match the signed head"
+                )
+                console.print(f"[red]Head signature INVALID[/red] ({detail})")
                 raise typer.Exit(2)
         elif block.get("head_signature"):
             console.print(f"Signed by {block['head_signature'].get('key_fingerprint')} "
-                          "(pass --public-key to verify the signature)")
+                          "(pass --public-key or --trust-store to verify the signature)")
         raise typer.Exit(0)
 
     if summary and replay:

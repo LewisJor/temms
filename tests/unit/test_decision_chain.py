@@ -137,3 +137,46 @@ def test_conditions_and_audit_are_covered_by_the_hash(slot_manager):
     )
     slot_manager.conn.commit()
     assert slot_manager.verify_decision_chain()["valid"] is False
+
+
+def test_exported_chain_verifies_against_a_trust_store(slot_manager):
+    """Captured evidence verifies against a provisioned key set (#31)."""
+    from temms.core.trust_store import load_trust_store_from_keys
+    from temms.evidence import verify_decision_chain_export
+
+    _seed(slot_manager)
+    private_pem, public_pem, fingerprint = generate_ed25519_keypair()
+    _, other_public, _ = generate_ed25519_keypair()
+    block = {
+        "entries": slot_manager.export_decision_chain(),
+        "head_signature": slot_manager.sign_decision_chain_head(private_pem),
+    }
+
+    # The signer sits alongside an unrelated key, as it would mid-rotation.
+    store = load_trust_store_from_keys([other_public, public_pem])
+    result = verify_decision_chain_export(block, trust_store=store)
+
+    assert result["valid"] is True
+    assert result["signature_valid"] is True
+    assert result["verified_by_fingerprint"] == fingerprint
+
+
+def test_exported_chain_rejects_a_signer_outside_the_trust_store(slot_manager):
+    """Evidence from an untrusted signer must not pass as verified."""
+    from temms.core.trust_store import load_trust_store_from_keys
+    from temms.evidence import verify_decision_chain_export
+
+    _seed(slot_manager)
+    private_pem, _, _ = generate_ed25519_keypair()
+    _, stranger_public, _ = generate_ed25519_keypair()
+    block = {
+        "entries": slot_manager.export_decision_chain(),
+        "head_signature": slot_manager.sign_decision_chain_head(private_pem),
+    }
+
+    store = load_trust_store_from_keys([stranger_public])
+    result = verify_decision_chain_export(block, trust_store=store)
+
+    assert result["valid"] is True  # the chain itself is intact...
+    assert result["signature_valid"] is False  # ...but nobody trusted vouches for it
+    assert "untrusted key" in result["signature_error"]
