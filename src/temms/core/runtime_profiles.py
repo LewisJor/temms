@@ -280,10 +280,9 @@ def detect_runtime_capabilities() -> RuntimeCapabilities:
     # contradicts the silicon is a deployment waiting to fail: the Hub's runtime
     # fit gate would clear an x86_64-only package for a device that cannot run
     # it. Honour the declaration, but never discard what was actually detected.
-    mismatch = None
     if declared_profile:
         declared_arch = device_profile_arch(declared_profile)
-        if declared_arch and declared_arch != arch:
+        if declared_arch and arch != "unknown" and declared_arch != arch:
             mismatch = {
                 "declared_device_profile": declared_profile,
                 "declared_arch": declared_arch,
