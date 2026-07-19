@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 from temms.inference.runtime import (
     InferenceRuntime,
+    InvalidInputError,
     LoadedModel,
     SimulatedModelRuntime,
     SlotRuntime,
@@ -610,6 +611,75 @@ class TestRuntimeProfiles:
                 },
             )
         ]
+
+
+class TestPreprocessInputFaults:
+    """Undecodable payloads are caller faults, not model failures."""
+
+    def _model_info(self):
+        return SimpleNamespace(
+            metadata={"input_shape": [1, 3, 224, 224]},
+            format=ModelFormat.ONNX,
+        )
+
+    def test_undecodable_image_raises_invalid_input_error(self, model_cache, model_storage):
+        """A corrupt frame must surface as InvalidInputError.
+
+        The server relies on this type to answer 400 without marking the slot
+        unhealthy or running the fallback chain; a bare Exception here would let
+        one bad sensor frame take the whole slot down.
+        """
+        runtime = InferenceRuntime(model_cache, model_storage)
+
+        with pytest.raises(InvalidInputError, match="could not decode image payload"):
+            runtime._preprocess_input(b"definitely-not-an-image", "image/jpeg", self._model_info())
+
+    def test_invalid_input_error_is_not_a_generic_runtime_failure(self):
+        """InvalidInputError stays distinguishable from model/runtime errors."""
+        assert issubclass(InvalidInputError, ValueError)
+
+    def test_truncated_image_raises_invalid_input_error(self, model_cache, model_storage):
+        """A frame with a valid header but severed scan data is a caller fault.
+
+        PIL decodes lazily: Image.open() succeeds on the header and the failure
+        only surfaces once the pixels are actually read. This is the realistic
+        partial-write / dropped-link frame, distinct from undecodable garbage.
+        """
+        import io as _io
+
+        from PIL import Image as _Image
+
+        buf = _io.BytesIO()
+        _Image.new("RGB", (64, 64), (128, 128, 128)).save(buf, format="JPEG")
+        truncated = buf.getvalue()[: len(buf.getvalue()) // 2]
+
+        runtime = InferenceRuntime(model_cache, model_storage)
+
+        with pytest.raises(InvalidInputError, match="could not decode image payload"):
+            runtime._preprocess_input(truncated, "image/jpeg", self._model_info())
+
+    def test_missing_pillow_is_a_runtime_fault_not_a_garbage_tensor(
+        self, model_cache, model_storage, monkeypatch
+    ):
+        """No decoder means the slot cannot serve images at all.
+
+        That is a deployment fault, so it must raise rather than reshaping
+        encoded bytes into a tensor and returning confident nonsense.
+        """
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _no_pil(name, *args, **kwargs):
+            if name == "PIL" or name.startswith("PIL."):
+                raise ImportError("No module named 'PIL'")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_pil)
+        runtime = InferenceRuntime(model_cache, model_storage)
+
+        with pytest.raises(RuntimeError, match="requires Pillow"):
+            runtime._preprocess_input(b"\xff\xd8\xff\xe0jpegbytes", "image/jpeg", self._model_info())
 
 
 @pytest.mark.asyncio

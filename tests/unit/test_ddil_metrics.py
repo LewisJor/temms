@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+
+from temms.daemon.service import DaemonConfig, TEMMSDaemon
 from temms.observability import (
     decision_chain_length_gauge,
     model_swaps_total,
@@ -9,11 +12,19 @@ from temms.observability import (
     pending_intents_gauge,
     seconds_since_hub_sync_gauge,
     set_ddil_gauges,
+    swap_latency_ms,
 )
 
 
 def _value(metric):
     return metric._value.get()
+
+
+def _hist_count(metric):
+    for sample in metric.collect()[0].samples:
+        if sample.name.endswith("_count"):
+            return sample.value
+    return 0.0
 
 
 def test_model_swaps_counter_increments_on_activation(slot_manager):
@@ -30,6 +41,53 @@ def test_decision_count_is_cheap_and_correct(slot_manager):
     slot_manager.activate_model("vision", "a", "startup", "seed")
     slot_manager.activate_model("vision", "b", "policy", "fog")
     assert slot_manager.decision_count() == 2
+
+
+@pytest.mark.asyncio
+async def test_load_and_activate_records_swap_latency(
+    slot_manager,
+    condition_store,
+    policy_engine,
+    model_cache,
+    model_storage,
+    temp_dir,
+):
+    """The daemon's activation path must observe swap latency.
+
+    Regression guard: the histogram was originally wired only into the
+    controller, so every real (daemon) swap left it reading zero.
+    """
+    daemon = TEMMSDaemon(
+        config=DaemonConfig(
+            db_path=temp_dir / "temms.db",
+            model_dir=temp_dir / "models",
+            policy_dir=temp_dir / "policies",
+        ),
+        slot_manager=slot_manager,
+        condition_store=condition_store,
+        policy_engine=policy_engine,
+        model_cache=model_cache,
+        model_storage=model_storage,
+        collectors=[],
+    )
+
+    class _StubRuntime:
+        async def load_model(self, slot_name, model_id):
+            return None
+
+    daemon.inference_runtime = _StubRuntime()
+    slot_manager.create_slot("vision", "Vision", default_model="a")
+
+    before = _hist_count(swap_latency_ms)
+    await daemon._load_and_activate(
+        slot_name="vision",
+        model_id="a",
+        trigger_type="policy",
+        trigger_detail="test",
+        conditions={},
+    )
+
+    assert _hist_count(swap_latency_ms) == before + 1
 
 
 def test_set_ddil_gauges_updates_all():
