@@ -124,6 +124,21 @@ def read_signing_key(value: str | None = None, key_file: Path | None = None) -> 
     return None
 
 
+def classify_ed25519_key(key: str) -> str:
+    """Return ``"private"``, ``"public"``, or ``"unknown"`` for a candidate key.
+
+    Callers that must never hold secret material — a trust store provisioned
+    onto edge devices, for instance — need to tell a private key from a public
+    one *before* storing it. ``_load_ed25519_public`` deliberately derives the
+    public half from a private key, so it cannot make that distinction alone.
+    """
+    if _load_ed25519_private(key) is not None:
+        return "private"
+    if _load_ed25519_public(key) is not None:
+        return "public"
+    return "unknown"
+
+
 def signing_key_fingerprint(key: str) -> str:
     """Return a stable non-secret fingerprint for audit logs.
 
@@ -214,6 +229,15 @@ def verify_package_signature_with_trust_store(
             "trust store verification requires an Ed25519 signature; "
             f"package is signed with {signature.get('algorithm')}"
         )
+
+    # Validate the encoding once, up front. The trust store swallows exceptions
+    # while probing candidate keys, so without this a corrupt signature would be
+    # reported as "no trusted key verified it" — blaming the operator's trust
+    # configuration for what is actually a malformed package.
+    try:
+        base64.b64decode(str(signature.get("signature")), validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("Malformed Ed25519 signature encoding") from exc
 
     def _verifier(public_key: str) -> bool:
         _verify_ed25519_signature(signature, public_key)
