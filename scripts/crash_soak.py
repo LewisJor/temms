@@ -183,6 +183,14 @@ def verify_state(root: Path) -> list[dict[str, Any]]:
         record("deployment_state_parses", False, detail)
     elif payload is None:
         record("deployment_state_parses", True, detail)
+    elif not isinstance(payload, dict):
+        # A torn write can leave JSON that parses but is not an object. Record
+        # it as a failed check rather than crashing the harness on .get().
+        record(
+            "deployment_state_parses",
+            False,
+            f"expected a JSON object, got {type(payload).__name__}",
+        )
     else:
         valid_states = {s.value for s in DeploymentState}
         state = payload.get("state")
