@@ -243,3 +243,88 @@ def test_dropping_the_old_key_completes_rotation(tmp_path, old_key, new_key):
 
     with pytest.raises(TrustStoreError, match="untrusted key"):
         signing.verify_package_signature_with_trust_store(old_pkg, store)
+
+
+# -- what may enter the store ----------------------------------------------
+
+
+def test_private_key_is_refused(old_key):
+    """The store ships to edge devices; secret material must never enter it.
+
+    signing_key_fingerprint() happily derives a fingerprint from a private key,
+    so without an explicit check an operator could provision the fleet's signing
+    key onto every device it is meant to authenticate.
+    """
+    private_pem, _, _ = old_key
+    store = TrustStore()
+
+    with pytest.raises(TrustStoreError, match="refusing to trust a private key"):
+        store.add(private_pem)
+
+    assert len(store) == 0
+
+
+def test_hmac_secret_is_refused(old_key):
+    store = TrustStore()
+    with pytest.raises(TrustStoreError, match="not an Ed25519 public key"):
+        store.add("legacy-shared-secret")
+
+
+def test_garbage_is_refused():
+    store = TrustStore()
+    with pytest.raises(TrustStoreError, match="not an Ed25519 public key"):
+        store.add("-----BEGIN PUBLIC KEY-----\nnot-a-key\n-----END PUBLIC KEY-----")
+
+
+# -- trust store integrity -------------------------------------------------
+
+
+def test_unknown_schema_version_is_refused(tmp_path, old_key):
+    path = tmp_path / "trust.json"
+    store = TrustStore()
+    store.add(old_key[1])
+    store.save(path)
+
+    payload = json.loads(path.read_text())
+    payload["schema_version"] = "temms-trust-store/v99"
+    path.write_text(json.dumps(payload))
+
+    with pytest.raises(TrustStoreError, match="unsupported schema"):
+        TrustStore.load(path)
+
+
+def test_fingerprint_that_does_not_match_its_key_is_refused(tmp_path, old_key, new_key):
+    """A tampered entry must fail loudly, not fail verification confusingly."""
+    path = tmp_path / "trust.json"
+    store = TrustStore()
+    store.add(old_key[1])
+    store.save(path)
+
+    # Swap in a different key while keeping the original fingerprint.
+    payload = json.loads(path.read_text())
+    payload["keys"][0]["public_key"] = new_key[1]
+    path.write_text(json.dumps(payload))
+
+    with pytest.raises(TrustStoreError, match="but its key is"):
+        TrustStore.load(path)
+
+
+def test_non_object_store_is_refused(tmp_path):
+    path = tmp_path / "trust.json"
+    path.write_text(json.dumps(["not", "a", "store"]))
+    with pytest.raises(TrustStoreError, match="must be a JSON object"):
+        TrustStore.load(path)
+
+
+def test_corrupt_signature_is_not_blamed_on_the_trust_store(package, old_key):
+    """A malformed signature must not surface as a trust configuration problem."""
+    signing.sign_package(package, old_key[0])
+    sig_path = package / "signature.json"
+    payload = json.loads(sig_path.read_text())
+    payload["signature"] = "!!! not base64 !!!"
+    sig_path.write_text(json.dumps(payload))
+
+    store = load_trust_store_from_keys([old_key[1]])
+
+    with pytest.raises(ValueError, match="Malformed Ed25519 signature encoding"):
+        signing.verify_package_signature_with_trust_store(package, store)

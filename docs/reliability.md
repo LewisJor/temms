@@ -122,6 +122,11 @@ Under the unsafe flag the harness reports corrupt JSON in the majority of cycles
 (`Expecting property name enclosed in double quotes`), confirming it would catch
 a real atomicity regression rather than passing vacuously.
 
+`make crash-soak-selftest` inverts the exit code: it **fails** if the harness
+passes despite torn writes, since a detector that has stopped detecting is worse
+than a failing soak. CI runs `tests/integration/test_crash_atomicity.py`, which
+asserts both directions.
+
 ### Crash-atomicity baseline
 
 40 `SIGKILL` cycles on a single Mac (Apple Silicon). Machine-readable copy:

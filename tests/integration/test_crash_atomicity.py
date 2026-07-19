@@ -85,3 +85,25 @@ def test_harness_detects_torn_writes(tmp_path):
     assert corrupt_checks & {"deployment_state_parses", "intent_queue_parses"}, (
         f"expected a parse failure, got {corrupt_checks}"
     )
+
+
+def test_verify_state_survives_non_object_json(tmp_path):
+    """A torn write can leave JSON that parses but is not the expected shape.
+
+    The harness must record that as a failed check. Crashing on `.get()` would
+    lose the whole report — the run would look like harness breakage rather than
+    the corruption it was built to find.
+    """
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    import crash_soak
+
+    (tmp_path / "deployment_state.json").write_text(json.dumps(["not", "an", "object"]))
+    (tmp_path / "pending_ops.json").write_text(json.dumps("a bare string"))
+
+    checks = {c["check"]: c for c in crash_soak.verify_state(tmp_path)}
+
+    assert checks["deployment_state_parses"]["passed"] is False
+    assert "expected a JSON object" in checks["deployment_state_parses"]["detail"]
+    assert checks["intent_queue_parses"]["passed"] is False
