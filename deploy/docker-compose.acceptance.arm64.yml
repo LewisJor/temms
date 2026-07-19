@@ -1,0 +1,26 @@
+# arm64 (Pi-class) edge acceptance overlay — issue #33.
+#
+# Apple Silicon runs linux/arm64 natively, so a Raspberry-Pi-class target can be
+# validated on the laptop with no emulation and no hardware. Pinning the platform
+# makes the architecture an asserted property of the run rather than an accident
+# of whichever machine happened to build the image.
+#
+# This is an opt-in overlay, not part of the default acceptance stack: CI runners
+# are amd64, where linux/arm64 needs qemu and would be slow and flaky. Jetson GPU
+# validation stays deferred to real hardware per docs/direction.md.
+#
+#   docker compose -f deploy/docker-compose.acceptance.yml \
+#                  -f deploy/docker-compose.acceptance.arm64.yml up --build -d
+#   # or: make docker-acceptance-arm64
+
+services:
+  temms-edge-airgap:
+    platform: linux/arm64
+    build:
+      platforms:
+        - linux/arm64
+    environment:
+      # Declared profile must match the silicon: rpi5-tflite is an arm64 profile,
+      # so on arm64 this raises no device_profile_arch_mismatch.
+      TEMMS_DEVICE_PROFILE: rpi5-tflite
+      TEMMS_DEMO_SITE: acceptance-arm64
