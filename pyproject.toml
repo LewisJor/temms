@@ -133,6 +133,9 @@ python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
 addopts = "-v --cov=temms --cov-report=term-missing"
+markers = [
+    "slow: spawns subprocesses or sleeps; deselect with -m 'not slow'",
+]
 
 [tool.black]
 line-length = 100

@@ -44,6 +44,7 @@ run-on-linux-vm
 hub-lite
 mlflow-packaging
 package-signing
+trust-store
 evidence-chain
 proof-canonicalization
 policy-reference

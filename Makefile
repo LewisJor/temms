@@ -89,6 +89,24 @@ soak:
 	uv run python scripts/soak.py --duration $${SOAK_DURATION:-120} \
 		--report docs/reliability-report.json --markdown docs/reliability-report.md
 
+crash-soak:
+	uv run python scripts/crash_soak.py --iterations $${CRASH_ITERATIONS:-40} \
+		--report docs/crash-atomicity-report.json
+
+# Falsification: with atomicity deliberately broken the harness MUST fail.
+# A passing run here means the harness has stopped detecting corruption, which
+# is worse than a failing soak — so that outcome fails this target.
+crash-soak-selftest:
+	@echo "Atomicity deliberately broken — this run is EXPECTED to fail:"
+	@if TEMMS_CRASH_SOAK_UNSAFE_WRITES=1 uv run python scripts/crash_soak.py --iterations 8; then \
+		echo ""; \
+		echo "ERROR: the harness PASSED despite torn writes — it is no longer detecting corruption."; \
+		exit 1; \
+	else \
+		echo ""; \
+		echo "OK: the harness detected torn writes (the failure above is the expected result)."; \
+	fi
+
 test-sim:
 	pytest tests/test_sim_weather.py tests/test_sim_scenarios.py -v
 
@@ -171,6 +189,14 @@ docker-acceptance-up:
 
 docker-acceptance-down:
 	docker compose -f deploy/docker-compose.acceptance.yml down
+
+# arm64 (Pi-class) edge acceptance — native on Apple Silicon, no hardware needed.
+docker-acceptance-arm64:
+	uv run python scripts/arm64_acceptance.py
+
+docker-acceptance-arm64-down:
+	docker compose -f deploy/docker-compose.acceptance.yml \
+		-f deploy/docker-compose.acceptance.arm64.yml down -v
 
 docker-acceptance:
 	deploy/docker-acceptance-run.sh

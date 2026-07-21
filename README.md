@@ -25,6 +25,7 @@ runtime, mission phase, or operator input.
 - Fallback chains when a selected model fails to load
 - Offline mode with buffered control operations
 - Ed25519-signed packages with offline (public-key-only) verification
+- Offline trust store: multi-key verification and key rotation with no CA
 - Decision log and evidence bundle export
 - Hub product UI for model inventory, runtime compatibility, rollout approval,
   activation, and evidence export
