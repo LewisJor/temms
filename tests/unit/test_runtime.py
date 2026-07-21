@@ -762,3 +762,86 @@ class TestInferenceRuntimeAsync:
         result = await runtime.try_fallback_chain("test-slot", ["missing1", "missing2", "missing3"])
 
         assert result is None
+
+
+class TestDeviceProfileArchMismatch:
+    """A declared device profile must not silently contradict the silicon (#33).
+
+    The Hub's runtime-fit gate clears a package against the device profile the
+    edge reports. If an arm64 device can declare itself x86_64 with nothing
+    noticing, that gate approves deployments which cannot run on the target —
+    the "any target" compatibility claim becomes unverified.
+    """
+
+    def test_profile_arch_lookup(self):
+        from temms.core.runtime_profiles import device_profile_arch
+
+        assert device_profile_arch("x86_64-cpu") == "x86_64"
+        assert device_profile_arch("arm64-cpu") == "arm64"
+        assert device_profile_arch("rpi5-tflite") == "arm64"
+        assert device_profile_arch("orin-tensorrt") == "arm64"
+        assert device_profile_arch("rpi5") == "arm64"  # via alias
+
+    def test_unknown_profile_yields_no_arch_claim(self):
+        """An unrecognised profile is a different problem than an arch mismatch."""
+        from temms.core.runtime_profiles import device_profile_arch
+
+        assert device_profile_arch("totally-made-up") is None
+        assert device_profile_arch(None) is None
+
+    def test_mismatch_is_recorded_when_declaration_contradicts_hardware(self, monkeypatch):
+        from temms.core import runtime_profiles
+
+        monkeypatch.setattr(runtime_profiles.platform, "machine", lambda: "aarch64")
+        monkeypatch.setenv("TEMMS_DEVICE_PROFILE", "x86_64-cpu")
+
+        inventory = runtime_profiles.detect_runtime_capabilities().to_dict()
+
+        # The operator's declaration is still honoured...
+        assert inventory["device_profile"] == "x86_64-cpu"
+        # ...but what the silicon actually is survives alongside it.
+        assert inventory["arch"] == "arm64"
+        assert inventory["detected_device_profile"] == "arm64-cpu"
+
+        mismatch = inventory["device_profile_arch_mismatch"]
+        assert mismatch["declared_arch"] == "x86_64"
+        assert mismatch["detected_arch"] == "arm64"
+
+    def test_pi_class_profile_on_arm64_is_not_a_mismatch(self, monkeypatch):
+        """rpi5-tflite is an arm64 profile: declaring it on arm64 is correct."""
+        from temms.core import runtime_profiles
+
+        monkeypatch.setattr(runtime_profiles.platform, "machine", lambda: "aarch64")
+        monkeypatch.setenv("TEMMS_DEVICE_PROFILE", "rpi5-tflite")
+
+        inventory = runtime_profiles.detect_runtime_capabilities().to_dict()
+
+        assert inventory["device_profile"] == "rpi5-tflite"
+        assert inventory["device_profile_arch_mismatch"] is None
+
+    def test_no_declaration_never_mismatches(self, monkeypatch):
+        from temms.core import runtime_profiles
+
+        monkeypatch.setattr(runtime_profiles.platform, "machine", lambda: "aarch64")
+        monkeypatch.delenv("TEMMS_DEVICE_PROFILE", raising=False)
+
+        inventory = runtime_profiles.detect_runtime_capabilities().to_dict()
+
+        assert inventory["device_profile"] == inventory["detected_device_profile"]
+        assert inventory["device_profile_arch_mismatch"] is None
+
+    def test_unknown_host_arch_does_not_manufacture_a_mismatch(self, monkeypatch):
+        """platform.machine() can return empty; that is not evidence of conflict.
+
+        Claiming a mismatch against an unknown architecture would flag every
+        correctly declared profile on such a host.
+        """
+        from temms.core import runtime_profiles
+
+        monkeypatch.setattr(runtime_profiles.platform, "machine", lambda: "")
+        monkeypatch.setenv("TEMMS_DEVICE_PROFILE", "x86_64-cpu")
+
+        inventory = runtime_profiles.detect_runtime_capabilities().to_dict()
+
+        assert inventory["arch"] == "unknown"
+        assert inventory["device_profile_arch_mismatch"] is None

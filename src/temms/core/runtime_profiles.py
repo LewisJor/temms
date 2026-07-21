@@ -5,6 +5,7 @@ Runtime and device capability helpers for edge compatibility checks.
 from __future__ import annotations
 
 import importlib.util
+import logging
 import os
 import platform
 import shutil
@@ -13,6 +14,12 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# Architectures TEMMS can reason about when comparing a declared device profile
+# against the silicon it is actually running on.
+KNOWN_ARCHITECTURES = frozenset({"x86_64", "arm64"})
 
 MVP_DEVICE_PROFILES = {
     "x86_64-cpu": {
@@ -215,6 +222,8 @@ class RuntimeCapabilities:
     python: str
     device_profile: str
     arch: str | None = None
+    detected_device_profile: str | None = None
+    device_profile_arch_mismatch: dict[str, Any] | None = None
     board_model: str | None = None
     runtimes: dict[str, Any] = field(default_factory=dict)
     accelerators: dict[str, Any] = field(default_factory=dict)
@@ -231,6 +240,8 @@ class RuntimeCapabilities:
             "arch": self.arch or _normalize_arch(self.machine),
             "python": self.python,
             "device_profile": self.device_profile,
+            "detected_device_profile": self.detected_device_profile,
+            "device_profile_arch_mismatch": self.device_profile_arch_mismatch,
             "board_model": self.board_model,
             "runtimes": self.runtimes,
             "accelerators": self.accelerators,
@@ -257,19 +268,58 @@ def detect_runtime_capabilities() -> RuntimeCapabilities:
     accelerators = _detect_accelerators()
     machine = platform.machine() or "unknown"
     board_model = _detect_board_model()
-    device_profile = normalize_device_profile(os.environ.get("TEMMS_DEVICE_PROFILE"))
+    declared_profile = normalize_device_profile(os.environ.get("TEMMS_DEVICE_PROFILE"))
+    detected_profile = _infer_device_profile(machine, runtimes, accelerators, board_model)
+    arch = _normalize_arch(machine)
     memory = _memory_status()
     storage = _storage_status()
     thermal = _thermal_status()
     power = _power_status()
 
+    # An operator may legitimately declare a profile, but a declaration that
+    # contradicts the silicon is a deployment waiting to fail: the Hub's runtime
+    # fit gate would clear an x86_64-only package for a device that cannot run
+    # it. Honour the declaration, but never discard what was actually detected.
+    #
+    # Note: this must be initialised outside the branch. Most edges declare no
+    # profile at all, and leaving it unbound makes detect_runtime_capabilities()
+    # raise UnboundLocalError on exactly that default path.
+    mismatch = None
+    if declared_profile:
+        declared_arch = device_profile_arch(declared_profile)
+        # Both sides must be architectures we recognise. platform.machine() can
+        # come back empty (arch == "unknown"), and claiming a mismatch against
+        # an unknown would flag every correctly declared profile on such a host.
+        if (
+            declared_arch
+            and arch in KNOWN_ARCHITECTURES
+            and declared_arch != arch
+        ):
+            mismatch = {
+                "declared_device_profile": declared_profile,
+                "declared_arch": declared_arch,
+                "detected_device_profile": detected_profile,
+                "detected_arch": arch,
+                "machine": machine,
+            }
+            logger.warning(
+                "TEMMS_DEVICE_PROFILE=%s declares %s but this device is %s (%s); "
+                "packages built for %s may not run here",
+                declared_profile,
+                declared_arch,
+                arch,
+                machine,
+                declared_arch,
+            )
+
     return RuntimeCapabilities(
         os=platform.platform(),
         machine=machine,
-        arch=_normalize_arch(machine),
+        arch=arch,
         python=sys.version.split()[0],
-        device_profile=device_profile
-        or _infer_device_profile(machine, runtimes, accelerators, board_model),
+        device_profile=declared_profile or detected_profile,
+        detected_device_profile=detected_profile,
+        device_profile_arch_mismatch=mismatch,
         board_model=board_model,
         runtimes=runtimes,
         accelerators=accelerators,
@@ -278,6 +328,24 @@ def detect_runtime_capabilities() -> RuntimeCapabilities:
         thermal=thermal,
         power=power,
     )
+
+
+def device_profile_arch(profile: str | None) -> str | None:
+    """Return the CPU architecture a device profile implies.
+
+    Falls back to the leading arch segment for profiles outside the registry
+    (``arm64-nvidia`` and friends synthesised by _infer_device_profile). Returns
+    None when neither source yields a *recognised* architecture, so an unknown or
+    misspelled profile is not reported as an architecture mismatch — that is a
+    different problem and deserves a different message.
+    """
+    normalized = normalize_device_profile(profile)
+    if not normalized:
+        return None
+    known = MVP_DEVICE_PROFILES.get(normalized)
+    candidate = str(known["arch"]) if known and known.get("arch") else normalized.split("-", 1)[0]
+    arch = _normalize_arch(candidate)
+    return arch if arch in KNOWN_ARCHITECTURES else None
 
 
 def normalize_device_profile(profile: str | None) -> str | None:

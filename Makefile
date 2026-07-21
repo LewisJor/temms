@@ -190,6 +190,14 @@ docker-acceptance-up:
 docker-acceptance-down:
 	docker compose -f deploy/docker-compose.acceptance.yml down
 
+# arm64 (Pi-class) edge acceptance — native on Apple Silicon, no hardware needed.
+docker-acceptance-arm64:
+	uv run python scripts/arm64_acceptance.py
+
+docker-acceptance-arm64-down:
+	docker compose -f deploy/docker-compose.acceptance.yml \
+		-f deploy/docker-compose.acceptance.arm64.yml down -v
+
 docker-acceptance:
 	deploy/docker-acceptance-run.sh
 

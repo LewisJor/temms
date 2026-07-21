@@ -71,7 +71,14 @@ exhaustively. This is a hard constraint on what we build and how we prove it:
   agents) on the same Mac. No physical fleet required to exercise rollout,
   air-gap bundles, or reconnect.
 - **Fault injection** is host-level and Mac-runnable: `kill -9`, disk-full on
-  evidence/state writes, clock jumps, flapping/garbage sensor values.
+  evidence/state writes, clock jumps, flapping/garbage sensor values. See
+  [reliability](reliability.md) for the soak and crash-atomicity harnesses.
+- **Pi-class (arm64) targets** are validated natively: Apple Silicon *is*
+  arm64, so `make docker-acceptance-arm64` runs the edge agent pinned to
+  `linux/arm64` and asserts the container is genuinely `aarch64`, that the agent
+  infers an arm64 profile from the silicon, and that a declared Pi-class profile
+  does not contradict the hardware. No board, no emulation. Jetson/GPU stays
+  deferred to real hardware.
 
 Implications:
 - **Triton is not validatable on macOS/arm64** — no Mac build. It stays a
