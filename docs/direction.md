@@ -8,9 +8,17 @@ correctly, provably, and autonomously when the network is gone.
 
 ## The one sentence
 
-`model registry → any target/runtime → signed → DDIL-aware policy → load into device`,
-with an evidence chain proving *which model ran, when, why, and under what
+`model registry → signed portfolio → any target/runtime → DDIL-aware
+best-feasible selection → load into device`, with an evidence chain proving
+*which model ran, when, why it was the best feasible choice, and under what
 authority.*
+
+The core model is [best-feasible model control](model-control.md): a device runs
+a **portfolio** of models, each declaring the conditions it is *for* and the
+resources it *requires*, and TEMMS keeps the best *feasible* one serving —
+selection and degradation are one deterministic mechanism, not a primary with a
+fallback list, and the model's own output feeds back into the decision. This
+supersedes the earlier `default_model` + `fallback_chain` framing.
 
 ## Design principle: integrate the commodity, build the differentiator
 

@@ -1,5 +1,14 @@
 # Architecture
 
+```{note}
+This document describes the **current** implementation: two async loops, a
+condition store, and a `default_model` + `fallback_chain` selection model. The
+target design that supersedes the fallback-chain approach is
+[best-feasible model control](model-control.md) — one deterministic mechanism for
+selection *and* degradation, with the model's output feeding back into the
+decision. Sections below marked *(being superseded)* are on that path.
+```
+
 ## System Context
 
 TEMMS has a hub-and-daemon architecture. The daemon runs on the edge node. Hub
@@ -159,7 +168,12 @@ Multiple sources can set the same condition. The highest priority wins.
 
 An operator override (priority 1000) always wins over sensor data (100). This is intentional — the human in the loop has final authority.
 
-## Policy Evaluation
+## Policy Evaluation *(being superseded)*
+
+The rule-and-fallback-chain evaluation below is the current implementation.
+[Best-feasible model control](model-control.md) replaces it: selection over an
+operating point (conditions × resources × connectivity × observed performance),
+with degradation emerging from feasibility rather than a separate `fallback_chain`.
 
 Policies are slot-scoped YAML files. Each policy has rules sorted by priority.
 
