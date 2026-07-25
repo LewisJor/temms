@@ -8,10 +8,11 @@ correctly, provably, and autonomously when the network is gone.
 
 ## The one sentence
 
-`model registry → signed portfolio → any target/runtime → DDIL-aware
+`model registry → portfolio built for any target/runtime → signed → DDIL-aware
 best-feasible selection → load into device`, with an evidence chain proving
 *which model ran, when, why it was the best feasible choice, and under what
-authority.*
+authority.* (Signing comes after the portfolio is compiled for its declared
+targets — the signature covers the compiled artifact set.)
 
 The core model is [best-feasible model control](model-control.md): a device runs
 a **portfolio** of models, each declaring the conditions it is *for* and the

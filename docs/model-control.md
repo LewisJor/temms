@@ -62,8 +62,15 @@ models:
   - id: mobilenet-tiny
     provides: object-detection
     optimal_when: { }              # no preferred region — the floor
-    requires:     { memory_mb: 96 }     # always feasible
+    requires:     { memory_mb: 96 }     # cheapest to run; the last to become infeasible
 ```
+
+The floor model is the *cheapest* member, so it is the last to drop out of the
+feasible set — but "cheapest" is not "always feasible." If the device cannot even
+satisfy the floor (memory below 96 MB, runtime missing), the feasible set is
+**empty** and the slot serves nothing. That is a legitimate, first-class outcome:
+the controller records a "no feasible model" decision with the operating point
+that produced it, so an unserved slot is provable rather than silent.
 
 `provides` decouples the *requirement* (a capability the mission needs) from the
 *implementation* (which model, on which hardware). The same mission is satisfied
@@ -80,7 +87,11 @@ The mechanism is deliberately dumb — a safety property, not a limitation:
    priority).
 3. **Hold** through hysteresis (`min_dwell_s`) so a flapping signal cannot
    thrash.
-4. **Serve** the top of the ranking; warm-before-serve, so no request is dropped.
+4. **Serve** the top of the ranking. The swap itself drops no request:
+   in-flight requests complete on the old model and new requests go to the new
+   one only once it is warmed, so a *switch* never opens a 503 window. (This
+   bounds the swap, not inference in general — a warm-up failure keeps the model
+   out of the feasible set rather than serving a broken one.)
 
 No search, no optimisation, no ML in the loop. That determinism *is* the
 safety-case and certification story. If this ever needs a solver, the design has
