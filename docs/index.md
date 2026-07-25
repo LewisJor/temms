@@ -7,15 +7,17 @@ conditions, switches models under policy, records signed evidence, and keeps
 serving when connectivity is degraded or unavailable.
 
 Start with **[Direction](direction.md)** for the north star and the
-integrate-vs-build boundary. The rest of the docs are organized around the
-deployable pieces: the edge daemon, Hub Lite model/package workflows, policy
-evaluation, offline operation, and deployment validation.
+integrate-vs-build boundary, then **[Best-Feasible Model Control](model-control.md)**
+for the conceptual model the system is built around. The rest of the docs are
+organized around the deployable pieces: the edge daemon, Hub Lite model/package
+workflows, policy evaluation, offline operation, and deployment validation.
 
 ```{toctree}
 :maxdepth: 2
 :caption: Start Here
 
 direction
+model-control
 QUICKSTART
 demo-runbook
 functional-testing
