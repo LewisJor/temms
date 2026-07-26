@@ -5853,3 +5853,57 @@ class TestPolicyListCommand:
 
         assert result.exit_code == 0
         assert "thermal-adaptive" in result.output
+
+
+class TestMissionCommand:
+    """`temms mission` — build/validate a mission.yaml (#43 slice 1)."""
+
+    def _mission(self, tmp: Path, *, carry_all=True):
+        for mid in ("daylight", "tiny"):
+            (tmp / f"{mid}.onnx").write_bytes(f"onnx-{mid}".encode())
+        (tmp / "weather.yaml").write_text(
+            "apiVersion: temms/v1\nkind: SlotPolicy\n"
+            "metadata: {name: w}\n"
+            "spec:\n  slot: vision\n  default_model: daylight\n  rules: []\n"
+            "  fallback_chain: [daylight, tiny]\n"
+        )
+        models = [{"id": "daylight", "source": "file://daylight.onnx", "format": "onnx"}]
+        if carry_all:
+            models.append({"id": "tiny", "source": "file://tiny.onnx", "format": "onnx"})
+        spec = {
+            "kind": "MissionPackage",
+            "metadata": {"name": "vision", "version": "1.0.0"},
+            "models": models,
+            "slot": {"name": "vision", "policy": "weather.yaml"},
+        }
+        path = tmp / "mission.yaml"
+        import yaml as _yaml
+
+        path.write_text(_yaml.safe_dump(spec))
+        return path
+
+    def test_validate_ok(self, tmp_path):
+        result = runner.invoke(app, ["mission", "validate", str(self._mission(tmp_path))])
+        assert result.exit_code == 0
+        assert "Valid" in result.output
+
+    def test_validate_rejects_absent_referenced_model(self, tmp_path):
+        mission = self._mission(tmp_path, carry_all=False)  # 'tiny' referenced, not carried
+        result = runner.invoke(app, ["mission", "validate", str(mission)])
+        assert result.exit_code == 1
+        assert "does not carry" in result.output
+        assert "tiny" in result.output
+
+    def test_build_writes_a_package(self, tmp_path):
+        mission = self._mission(tmp_path)
+        out = tmp_path / "dist"
+        result = runner.invoke(app, ["mission", "build", str(mission), "--out", str(out)])
+        assert result.exit_code == 0, result.output
+        assert (out / "vision-1-0-0" / "manifest.json").is_file()
+
+    def test_build_fails_on_bad_spec_without_writing(self, tmp_path):
+        mission = self._mission(tmp_path, carry_all=False)
+        out = tmp_path / "dist"
+        result = runner.invoke(app, ["mission", "build", str(mission), "--out", str(out)])
+        assert result.exit_code == 1
+        assert not out.exists() or not any(out.iterdir())

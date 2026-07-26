@@ -1,0 +1,20 @@
+apiVersion: temms/v1
+kind: SlotPolicy
+metadata:
+  name: weather-adaptive
+spec:
+  slot: vision
+  default_model: yolov8-daylight
+  rules:
+    - name: low-light
+      priority: 70
+      conditions:
+        all:
+          - metric: environmental.celestial.ambient
+            operator: in
+            value: [low, dark]
+      action:
+        switch_to: yolov8-lowlight
+  fallback_chain:
+    - yolov8-daylight
+    - mobilenet-tiny

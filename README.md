@@ -24,6 +24,9 @@ runtime, mission phase, or operator input.
 - Hot-swap model activation (old model serves until the new one is warmed)
 - Fallback chains when a selected model fails to load
 - Offline mode with buffered control operations
+- YAML-driven mission packages: one `mission.yaml` compiles to a signed,
+  multi-model portfolio; the build fails if a policy references a model the
+  portfolio doesn't carry
 - Ed25519-signed packages with offline (public-key-only) verification
 - Offline trust store: multi-key verification and key rotation with no CA
 - Decision log and evidence bundle export

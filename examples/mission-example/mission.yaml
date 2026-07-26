@@ -1,0 +1,42 @@
+# mission.yaml — the authored source of truth for a TEMMS package.
+# `temms package build examples/mission-example/mission.yaml --out dist`
+apiVersion: temms/v1
+kind: MissionPackage
+
+metadata:
+  name: vision-portfolio
+  version: 1.0.0
+  description: Weather-adaptive object detection portfolio (example)
+
+# The model portfolio. Each member is an operating point: the conditions it is
+# FOR (optimal_when) and what it REQUIRES to run. Sources use scheme:// URIs;
+# file:// keeps this example self-contained (mlflow:// resolves from a registry).
+models:
+  - id: yolov8-daylight
+    source: file://models/yolov8-daylight.onnx
+    format: onnx
+    provides: object-detection
+    optimal_when: { light: bright }
+    requires: { memory_mb: 512 }
+  - id: yolov8-lowlight
+    source: file://models/yolov8-lowlight.onnx
+    format: onnx
+    provides: object-detection
+    optimal_when: { light: low }
+    requires: { memory_mb: 512 }
+  - id: mobilenet-tiny
+    source: file://models/mobilenet-tiny.onnx
+    format: onnx
+    provides: object-detection
+    optimal_when: {}          # the floor — cheapest, last to become infeasible
+    requires: { memory_mb: 96 }
+
+slot:
+  name: vision
+  policy: policies/weather-adaptive.yaml
+
+target:
+  device_profiles: [x86_64-cpu, arm64-cpu, rpi5-tflite]
+  runtime: onnxruntime
+  requires:
+    min_memory_available_mb: 512
