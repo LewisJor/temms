@@ -44,6 +44,7 @@ run-on-linux-vm
 :caption: Hub, Packages, and Policies
 
 hub-lite
+mission-packages
 mlflow-packaging
 package-signing
 trust-store

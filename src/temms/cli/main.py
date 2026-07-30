@@ -36,6 +36,9 @@ app.add_typer(keys_app, name="keys")
 trust_app = typer.Typer(help="Manage the offline Ed25519 trust store")
 app.add_typer(trust_app, name="trust")
 
+mission_app = typer.Typer(help="Build and validate mission packages from mission.yaml")
+app.add_typer(mission_app, name="mission")
+
 DEFAULT_TRUST_STORE = Path("/var/lib/temms/trust-store.json")
 
 
@@ -77,6 +80,64 @@ def keys_fingerprint(
     from temms.core.signing import signing_key_fingerprint
 
     console.print(signing_key_fingerprint(key_file.read_text(encoding="utf-8")))
+
+
+@mission_app.command("validate")
+def mission_validate(
+    mission_file: Path = typer.Argument(..., help="Path to a mission.yaml"),
+) -> None:
+    """Validate a mission.yaml without building — including policy references."""
+    from temms.core.mission_spec import MissionSpecError, load_mission_spec
+
+    try:
+        spec = load_mission_spec(mission_file)
+    except MissionSpecError as exc:
+        console.print(f"[red]Invalid:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    console.print(f"[green]Valid[/green] — {spec.metadata.name} v{spec.metadata.version}")
+    console.print(f"  slot:   {spec.slot.name}")
+    console.print(f"  models: {', '.join(spec.model_ids())}")
+    if spec.slot.policy:
+        console.print(f"  policy: {spec.slot.policy} (references resolve to carried models)")
+
+
+@mission_app.command("build")
+def mission_build(
+    mission_file: Path = typer.Argument(..., help="Path to a mission.yaml"),
+    output_dir: Path = typer.Option(Path("dist"), "--out", help="Output directory"),
+    key_file: Optional[Path] = typer.Option(
+        None, "--sign", help="Ed25519 private key to sign the package"
+    ),
+    tracking_uri: Optional[str] = typer.Option(
+        None, "--mlflow-uri", help="MLflow tracking URI for mlflow:// sources"
+    ),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing package"),
+) -> None:
+    """Compile a mission.yaml into a (optionally signed) package."""
+    from temms.core.mission_compiler import compile_mission_package
+    from temms.core.mission_spec import MissionSpecError
+    from temms.core.model_resolver import ModelResolutionError
+
+    signing_key = key_file.read_text(encoding="utf-8") if key_file else None
+    try:
+        package_dir = compile_mission_package(
+            mission_file,
+            output_dir,
+            signing_key=signing_key,
+            tracking_uri=tracking_uri,
+            overwrite=overwrite,
+        )
+    except (MissionSpecError, ModelResolutionError) as exc:
+        console.print(f"[red]Build failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except FileExistsError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    console.print(f"[green]Built[/green] {package_dir}")
+    if signing_key:
+        console.print("  signed: signature.json written")
 
 
 @trust_app.command("add")
