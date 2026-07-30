@@ -60,7 +60,7 @@ def test_legacy_rows_are_backfilled(slot_manager):
     # Simulate rows written before the chain existed.
     slot_manager.execute("UPDATE slot_decisions SET entry_hash=NULL, prev_hash=NULL")
     slot_manager.conn.commit()
-    slot_manager._backfill_decision_chain()
+    slot_manager._chain.backfill()
     result = slot_manager.verify_decision_chain()
     assert result["valid"] is True
     assert result["length"] == 4
