@@ -16,7 +16,9 @@ from typing import Any
 
 from temms.core.package_archive import create_package_archive, default_archive_path
 from temms.core.runtime_profiles import normalize_device_profile
-from temms.core.signing import sha256_file, sign_package, validate_package
+from temms.core.identifiers import slugify
+from temms.core.package_validation import validate_package
+from temms.core.signing import sha256_file, sign_package
 
 
 @dataclass
@@ -561,7 +563,8 @@ def _stable_json_sha256(value: Any) -> str:
 
 
 def _safe_id(value: str) -> str:
-    return "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "-" for ch in value)
+    # Keeps '.' and preserves case (package/model ids carry version dots).
+    return slugify(value, extra_allowed="-_.")
 
 
 def _raise_if_invalid_package(

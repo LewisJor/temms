@@ -14,7 +14,8 @@ from typing import Any
 from temms.core.package import PackageManifest
 from temms.core.package_archive import package_directory
 from temms.core.runtime_profiles import normalize_device_profile
-from temms.core.signing import read_signing_key, sha256_file, validate_package
+from temms.core.package_validation import validate_package
+from temms.core.signing import read_signing_key, sha256_file
 
 
 def package_source_sha256(package_path: Path) -> str:

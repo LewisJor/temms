@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from temms.core.package_builder import build_package_from_mlflow
-from temms.core.signing import ValidationResult, validate_package
+from temms.core.package_validation import ValidationResult, validate_package
 
 
 def test_build_package_from_mlflow_rejects_invalid_generated_package(temp_dir, monkeypatch):

@@ -22,7 +22,8 @@ from temms.core.storage import ModelStorage
 from temms.core.loader import ONNXRuntime, ModelLoader, RuntimeType
 from temms.core.package import PackageImporter
 from temms.core.package_catalog import package_source_sha256
-from temms.core.signing import sign_package, validate_package
+from temms.core.package_validation import validate_package
+from temms.core.signing import sign_package
 from temms.inference.runtime import InferenceRuntime
 from temms.slots.manager import SlotManager
 from temms.conditions.store import ConditionStore

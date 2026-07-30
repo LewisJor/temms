@@ -1552,7 +1552,8 @@ def package(
     from temms.core.package_archive import create_package_archive, sign_package_artifact
     from temms.core.package_builder import build_package_from_mlflow
     from temms.core.package_catalog import catalog_entry_from_package
-    from temms.core.signing import read_signing_key, validate_package
+    from temms.core.package_validation import validate_package
+    from temms.core.signing import read_signing_key
 
     key = _package_signing_key(signing_key, signing_key_file, read_signing_key)
 

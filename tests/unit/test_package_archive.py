@@ -16,7 +16,8 @@ from temms.core.package_archive import (
     extract_package_archive,
 )
 from temms.core.package_catalog import package_source_sha256
-from temms.core.signing import sign_package, validate_package
+from temms.core.package_validation import validate_package
+from temms.core.signing import sign_package
 
 
 class TestPackageArchiveSafety:

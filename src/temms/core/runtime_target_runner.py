@@ -245,7 +245,8 @@ def validate_local_runtime_target_package(
     """Validate a package locally against a runtime target's declared capabilities."""
     import json
 
-    from temms.core.signing import read_signing_key, validate_package
+    from temms.core.package_validation import validate_package
+    from temms.core.signing import read_signing_key
 
     command = build_local_runtime_target_validation_command(
         runtime_target,

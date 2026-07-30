@@ -153,7 +153,7 @@ class PackageImporter:
 
         from temms.core.package_archive import is_package_archive, package_directory
         from temms.core.package_catalog import package_source_sha256
-        from temms.core.signing import validate_package
+        from temms.core.package_validation import validate_package
 
         validation = validate_package(
             package_path,
