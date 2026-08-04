@@ -6,11 +6,57 @@ in an executor to avoid blocking.
 """
 
 from typing import Protocol, Dict, Any, Optional, runtime_checkable
+from dataclasses import dataclass
 from pathlib import Path
 import logging
 import asyncio
 
 logger = logging.getLogger(__name__)
+
+# Per-sensor health is published under this prefix at the same priority as other
+# runtime health, so policies (and the evidence chain) can see a blind sensor.
+SENSOR_HEALTH_PREFIX = "runtime.sensors"
+
+
+class SensorStatus:
+    """Outcome of a single sensor read.
+
+    The distinction that matters under DDIL: ``ABSENT`` means this platform
+    genuinely has no such sensor (a desktop has no battery) — expected, and
+    healthy. ``FAILED`` means the sensor exists but could not be read — the
+    device has gone *blind* to an input its policies may depend on, which is
+    actionable and must be visible.
+    """
+
+    OK = "ok"
+    ABSENT = "absent"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class SensorRead:
+    """A sensor read plus why it produced (or did not produce) a value."""
+
+    status: str
+    value: Any = None
+    error: Optional[str] = None
+
+    @property
+    def healthy(self) -> bool:
+        """Absent hardware is not a fault; an unreadable sensor is."""
+        return self.status != SensorStatus.FAILED
+
+    @classmethod
+    def ok(cls, value: Any) -> "SensorRead":
+        return cls(SensorStatus.OK, value=value)
+
+    @classmethod
+    def absent(cls) -> "SensorRead":
+        return cls(SensorStatus.ABSENT)
+
+    @classmethod
+    def failed(cls, error: BaseException | str) -> "SensorRead":
+        return cls(SensorStatus.FAILED, error=str(error))
 
 
 @runtime_checkable
@@ -72,91 +118,147 @@ class SystemMetricsCollector:
         return 100  # Onboard sensor priority
 
     def collect(self) -> Dict[str, Any]:
-        """Collect system metrics."""
-        metrics = {}
+        """Collect system metrics, publishing per-sensor health alongside values.
 
-        # CPU temperature
-        try:
-            temp = self._read_cpu_temp()
-            if temp is not None:
-                metrics["platform.compute.cpu_temp_c"] = temp
-        except Exception as e:
-            logger.warning(f"Failed to read CPU temp: {e}")
+        A failed sensor must not look like an absent one. Without per-sensor
+        health, a thermal probe that starts failing in the field simply stops
+        contributing its condition; the policy rule that depends on it silently
+        stops matching, thermal-adaptive switching quietly ceases, and nothing
+        records why. Each sensor therefore reports its own status so a blind
+        input is visible to policy and to the evidence chain.
+        """
+        metrics: Dict[str, Any] = {}
 
-        # Memory
-        try:
-            mem_info = self._read_memory()
-            if mem_info:
-                metrics["platform.compute.memory_available_mb"] = mem_info["available_mb"]
-        except Exception as e:
-            logger.warning(f"Failed to read memory: {e}")
+        readings = {
+            "cpu_temp": self._safe_read("cpu_temp", self._read_cpu_temp),
+            "memory": self._safe_read("memory", self._read_memory),
+            "battery": self._safe_read("battery", self._read_battery),
+        }
 
-        # Battery (if available)
-        try:
-            battery = self._read_battery()
-            if battery:
-                metrics["platform.power.battery_pct"] = battery["percent"]
-                metrics["platform.power.power_source"] = battery["source"]
-        except Exception as e:
-            logger.debug(f"No battery info: {e}")
+        cpu = readings["cpu_temp"]
+        if cpu.status == SensorStatus.OK:
+            metrics["platform.compute.cpu_temp_c"] = cpu.value
+
+        memory = readings["memory"]
+        if memory.status == SensorStatus.OK:
+            metrics["platform.compute.memory_available_mb"] = memory.value["available_mb"]
+
+        battery = readings["battery"]
+        if battery.status == SensorStatus.OK:
+            metrics["platform.power.battery_pct"] = battery.value["percent"]
+            metrics["platform.power.power_source"] = battery.value["source"]
+
+        for name, reading in readings.items():
+            metrics[f"{SENSOR_HEALTH_PREFIX}.{name}.status"] = reading.status
+            metrics[f"{SENSOR_HEALTH_PREFIX}.{name}.healthy"] = reading.healthy
+            metrics[f"{SENSOR_HEALTH_PREFIX}.{name}.last_error"] = reading.error
 
         return metrics
 
-    def _read_cpu_temp(self) -> Optional[float]:
-        """Read CPU temperature from thermal zone."""
-        thermal_zones = Path("/sys/class/thermal").glob("thermal_zone*")
-        for zone in thermal_zones:
-            try:
-                temp_file = zone / "temp"
-                if temp_file.exists():
-                    temp_millic = int(temp_file.read_text().strip())
-                    return temp_millic / 1000.0
-            except Exception:
-                continue
-        return None
+    @staticmethod
+    def _safe_read(name: str, read) -> SensorRead:
+        """Run one sensor read, converting an unexpected raise into FAILED.
 
-    def _read_memory(self) -> Optional[Dict[str, int]]:
-        """Read memory info from /proc/meminfo."""
+        The individual readers already classify their own outcome; this is the
+        backstop that keeps one broken sensor from taking down the whole collect
+        pass while still recording that it broke.
+        """
         try:
-            meminfo = Path("/proc/meminfo").read_text()
-            mem_available = None
+            return read()
+        except Exception as exc:  # a reader itself misbehaved
+            logger.warning(f"Sensor {name} read failed: {exc}")
+            return SensorRead.failed(exc)
 
-            for line in meminfo.splitlines():
-                if line.startswith("MemAvailable:"):
-                    mem_available = int(line.split()[1]) // 1024  # Convert KB to MB
-                    break
+    def _read_cpu_temp(self) -> SensorRead:
+        """Read CPU temperature from a thermal zone.
 
-            if mem_available:
-                return {"available_mb": mem_available}
-        except Exception:
-            pass
-        return None
+        No thermal zones at all -> ABSENT. Zones present but every one of them
+        unreadable -> FAILED: the hardware claims a sensor we can no longer read.
+        """
+        zones = sorted(Path("/sys/class/thermal").glob("thermal_zone*"))
+        if not zones:
+            return SensorRead.absent()
 
-    def _read_battery(self) -> Optional[Dict[str, Any]]:
-        """Read battery info if available."""
+        last_error: Optional[str] = None
+        found_temp_file = False
+        for zone in zones:
+            temp_file = zone / "temp"
+            if not temp_file.exists():
+                continue
+            found_temp_file = True
+            try:
+                temp_millic = int(temp_file.read_text().strip())
+            except (OSError, ValueError) as exc:
+                last_error = f"{temp_file}: {exc}"
+                continue
+            return SensorRead.ok(temp_millic / 1000.0 if temp_millic > 1000 else float(temp_millic))
+
+        if not found_temp_file:
+            return SensorRead.absent()
+        return SensorRead.failed(last_error or "no readable thermal zone")
+
+    def _read_memory(self) -> SensorRead:
+        """Read available memory from /proc/meminfo.
+
+        No /proc/meminfo -> ABSENT (non-Linux). Present but unparseable ->
+        FAILED; memory is a feasibility input, so silently losing it matters.
+        """
+        meminfo_path = Path("/proc/meminfo")
+        if not meminfo_path.exists():
+            return SensorRead.absent()
+        try:
+            meminfo = meminfo_path.read_text()
+        except OSError as exc:
+            return SensorRead.failed(exc)
+
+        for line in meminfo.splitlines():
+            if line.startswith("MemAvailable:"):
+                try:
+                    return SensorRead.ok({"available_mb": int(line.split()[1]) // 1024})
+                except (IndexError, ValueError) as exc:
+                    return SensorRead.failed(f"malformed MemAvailable line: {exc}")
+        return SensorRead.failed("MemAvailable not present in /proc/meminfo")
+
+    def _read_battery(self) -> SensorRead:
+        """Read battery state if this platform has one.
+
+        No power_supply tree, or no supply exposing capacity+status -> ABSENT
+        (a tethered device legitimately has no battery). A supply that exposes
+        those files but cannot be read -> FAILED.
+        """
         power_supply = Path("/sys/class/power_supply")
         if not power_supply.exists():
-            return None
+            return SensorRead.absent()
 
-        for supply in power_supply.iterdir():
-            try:
-                capacity_file = supply / "capacity"
-                status_file = supply / "status"
+        last_error: Optional[str] = None
+        found_battery = False
+        try:
+            supplies = sorted(power_supply.iterdir())
+        except OSError as exc:
+            return SensorRead.failed(exc)
 
-                if capacity_file.exists() and status_file.exists():
-                    capacity = int(capacity_file.read_text().strip())
-                    status = status_file.read_text().strip().lower()
-
-                    source = "battery" if status == "discharging" else "tethered"
-
-                    return {
-                        "percent": capacity,
-                        "source": source,
-                    }
-            except Exception:
+        for supply in supplies:
+            capacity_file = supply / "capacity"
+            status_file = supply / "status"
+            if not (capacity_file.exists() and status_file.exists()):
                 continue
+            found_battery = True
+            try:
+                capacity = int(capacity_file.read_text().strip())
+                status = status_file.read_text().strip().lower()
+            except (OSError, ValueError) as exc:
+                last_error = f"{supply.name}: {exc}"
+                continue
+            return SensorRead.ok(
+                {
+                    "percent": capacity,
+                    "source": "battery" if status == "discharging" else "tethered",
+                }
+            )
 
-        return None
+        if not found_battery:
+            return SensorRead.absent()
+        return SensorRead.failed(last_error or "no readable battery supply")
 
 
 class TimeBasedCollector:
