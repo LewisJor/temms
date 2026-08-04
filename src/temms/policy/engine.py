@@ -2,15 +2,16 @@
 Policy evaluation engine.
 """
 
-from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Dict, Any
-from pathlib import Path
 import logging
 import re
 import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
-from temms.policy.schema import SlotPolicy, PolicyRule, Condition, ConditionGroup
 from temms.conditions.store import ConditionStore
+from temms.policy.schema import Condition, ConditionGroup, PolicyRule, SlotPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -18,12 +19,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PolicyEvalResult:
     """Result of policy evaluation for a slot."""
-    switch_to: Optional[str] = None  # Model name to switch to
-    version: Optional[str] = None  # Optional version pin
-    preload: List[str] = field(default_factory=list)  # Models to preload
-    triggered_by: Optional[str] = None  # Rule name or "default_model"
+    switch_to: str | None = None  # Model name to switch to
+    version: str | None = None  # Optional version pin
+    preload: list[str] = field(default_factory=list)  # Models to preload
+    triggered_by: str | None = None  # Rule name or "default_model"
     is_default: bool = False  # True if returning to default model
-    explanation: Dict[str, Any] = field(default_factory=dict)
+    explanation: dict[str, Any] = field(default_factory=dict)
 
 
 class PolicyEngine:
@@ -32,7 +33,7 @@ class PolicyEngine:
     def __init__(
         self,
         condition_store: ConditionStore,
-        time_fn: Optional[Callable[[], float]] = None,
+        time_fn: Callable[[], float] | None = None,
     ):
         """
         Initialize policy engine.
@@ -44,11 +45,11 @@ class PolicyEngine:
                 DDIL). Injectable for deterministic tests.
         """
         self.condition_store = condition_store
-        self.loaded_policies: Dict[str, SlotPolicy] = {}
+        self.loaded_policies: dict[str, SlotPolicy] = {}
         self._time_fn = time_fn or time.monotonic
         # rule id -> monotonic timestamp when its conditions became (and have
         # since stayed) continuously satisfied. Cleared when they stop matching.
-        self._rule_satisfied_since: Dict[str, float] = {}
+        self._rule_satisfied_since: dict[str, float] = {}
 
     def load_policy(self, policy: SlotPolicy) -> None:
         """Load a policy into the engine."""
@@ -228,7 +229,7 @@ class PolicyEngine:
 
         return False, {"mode": "none", "items": []}
 
-    def _explain_condition(self, condition: Condition) -> dict[str, Any]:
+    def _explain_condition(self, condition: Condition) -> dict[str, Any]:  # noqa: C901  (tracked in #54)
         """Evaluate one condition and return the values used for audit."""
         evidence: dict[str, Any] = {
             "metric": condition.metric,
@@ -317,14 +318,14 @@ class PolicyEngine:
             evidence["reason"] = f"evaluation_error: {e}"
             return evidence
 
-    def get_fallback_chain(self, slot_name: str) -> List[str]:
+    def get_fallback_chain(self, slot_name: str) -> list[str]:
         """Get fallback chain for a slot."""
         for policy in self.loaded_policies.values():
             if policy.spec.slot == slot_name:
                 return policy.spec.fallback_chain
         return []
 
-    def list_policies(self) -> List[SlotPolicy]:
+    def list_policies(self) -> list[SlotPolicy]:
         """List all loaded policies."""
         return list(self.loaded_policies.values())
 

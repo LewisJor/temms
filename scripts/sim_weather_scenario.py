@@ -187,7 +187,7 @@ def run_scenario(base_url: str) -> bool:
 
     print_header("Scenario Complete")
     print(f"  All steps executed {'successfully' if passed else 'with issues'}")
-    print(f"  Check decision log: temms log decisions --slot vision")
+    print("  Check decision log: temms log decisions --slot vision")
     print()
 
     client.close()

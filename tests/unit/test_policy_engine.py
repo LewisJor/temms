@@ -12,20 +12,19 @@ Tests:
 - Edge cases (empty policies, no conditions, unknown operators)
 """
 
+
 import pytest
-from pathlib import Path
 
 from temms.policy.engine import PolicyEngine, PolicyEvalResult
 from temms.policy.schema import (
+    Condition,
+    ConditionGroup,
+    PolicyAction,
+    PolicyRule,
     SlotPolicy,
     SlotPolicyMetadata,
     SlotPolicySpec,
-    PolicyRule,
-    PolicyAction,
-    Condition,
-    ConditionGroup,
 )
-from temms.conditions.store import ConditionStore
 
 
 @pytest.fixture

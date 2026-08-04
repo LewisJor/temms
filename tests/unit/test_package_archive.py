@@ -2,11 +2,11 @@
 Tests for TEMMS package archive safety.
 """
 
+import hashlib
 import io
 import json
-import tarfile
-import hashlib
 import os
+import tarfile
 
 import pytest
 

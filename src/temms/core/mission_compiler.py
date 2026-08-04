@@ -18,12 +18,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from temms.core.identifiers import slugify
 from temms.core.mission_spec import (
     MISSION_PACKAGE_SPEC_SCHEMA_VERSION,
     MissionPackageSpec,
     load_mission_spec,
 )
-from temms.core.identifiers import slugify
 from temms.core.model_resolver import ResolvedModel, resolve_model_source
 from temms.core.signing import sign_package
 

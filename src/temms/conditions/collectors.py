@@ -5,11 +5,11 @@ Collectors can be sync or async. The daemon runs sync collectors
 in an executor to avoid blocking.
 """
 
-from typing import Protocol, Dict, Any, Optional, runtime_checkable
+import asyncio
+import logging
 from dataclasses import dataclass
 from pathlib import Path
-import logging
-import asyncio
+from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class SensorRead:
 
     status: str
     value: Any = None
-    error: Optional[str] = None
+    error: str | None = None
 
     @property
     def healthy(self) -> bool:
@@ -63,7 +63,7 @@ class SensorRead:
 class ConditionCollector(Protocol):
     """Interface for condition data sources."""
 
-    def collect(self) -> Dict[str, Any]:
+    def collect(self) -> dict[str, Any]:
         """
         Collect current condition values.
 
@@ -92,7 +92,7 @@ class ConditionCollector(Protocol):
 class AsyncConditionCollector(Protocol):
     """Async interface for condition collectors."""
 
-    async def collect_async(self) -> Dict[str, Any]:
+    async def collect_async(self) -> dict[str, Any]:
         """Collect conditions asynchronously."""
         ...
 
@@ -117,7 +117,7 @@ class SystemMetricsCollector:
     def source_priority(self) -> int:
         return 100  # Onboard sensor priority
 
-    def collect(self) -> Dict[str, Any]:
+    def collect(self) -> dict[str, Any]:
         """Collect system metrics, publishing per-sensor health alongside values.
 
         A failed sensor must not look like an absent one. Without per-sensor
@@ -127,7 +127,7 @@ class SystemMetricsCollector:
         records why. Each sensor therefore reports its own status so a blind
         input is visible to policy and to the evidence chain.
         """
-        metrics: Dict[str, Any] = {}
+        metrics: dict[str, Any] = {}
 
         readings = {
             "cpu_temp": self._safe_read("cpu_temp", self._read_cpu_temp),
@@ -179,7 +179,7 @@ class SystemMetricsCollector:
         if not zones:
             return SensorRead.absent()
 
-        last_error: Optional[str] = None
+        last_error: str | None = None
         found_temp_file = False
         for zone in zones:
             temp_file = zone / "temp"
@@ -230,7 +230,7 @@ class SystemMetricsCollector:
         if not power_supply.exists():
             return SensorRead.absent()
 
-        last_error: Optional[str] = None
+        last_error: str | None = None
         found_battery = False
         try:
             supplies = sorted(power_supply.iterdir())
@@ -271,7 +271,7 @@ class TimeBasedCollector:
     def source_priority(self) -> int:
         return 90  # Derived data priority
 
-    def collect(self) -> Dict[str, Any]:
+    def collect(self) -> dict[str, Any]:
         """Collect time-based conditions."""
         from datetime import datetime
 
@@ -318,7 +318,7 @@ class MockWeatherCollector:
     def source_priority(self) -> int:
         return 50  # External data priority
 
-    def collect(self) -> Dict[str, Any]:
+    def collect(self) -> dict[str, Any]:
         """Mock weather data."""
         return {
             "environmental.atmospheric.visibility_m": self._visibility,
@@ -328,9 +328,9 @@ class MockWeatherCollector:
 
     def set_conditions(
         self,
-        visibility_m: Optional[int] = None,
-        precipitation: Optional[str] = None,
-        wind_speed_ms: Optional[float] = None,
+        visibility_m: int | None = None,
+        precipitation: str | None = None,
+        wind_speed_ms: float | None = None,
     ) -> None:
         """Set mock conditions for testing."""
         if visibility_m is not None:
@@ -348,11 +348,11 @@ class ScenarioCollector:
     Reads conditions from a YAML file that defines time-based scenarios.
     """
 
-    def __init__(self, scenario_file: Optional[Path] = None):
+    def __init__(self, scenario_file: Path | None = None):
         self.source_name = "scenario"
         self.scenario_file = scenario_file
-        self._scenario_data: Optional[Dict] = None
-        self._start_time: Optional[float] = None
+        self._scenario_data: dict | None = None
+        self._start_time: float | None = None
         self._current_step_index = 0
 
     @property
@@ -368,7 +368,7 @@ class ScenarioCollector:
         self._current_step_index = 0
         logger.info(f"Loaded scenario: {scenario_file}")
 
-    def collect(self) -> Dict[str, Any]:
+    def collect(self) -> dict[str, Any]:
         """Collect conditions based on scenario timeline."""
         import time
 
@@ -415,7 +415,7 @@ class GPUMetricsCollector:
             self._has_nvidia = shutil.which("nvidia-smi") is not None
         return self._has_nvidia
 
-    def collect(self) -> Dict[str, Any]:
+    def collect(self) -> dict[str, Any]:
         """Collect GPU metrics."""
         metrics = {}
 
@@ -433,13 +433,13 @@ class GPUMetricsCollector:
 
         return metrics
 
-    def _read_tegrastats(self) -> Optional[Dict[str, Any]]:
+    def _read_tegrastats(self) -> dict[str, Any] | None:
         """Read Jetson tegrastats."""
         # Tegrastats output would need to be parsed
         # This is a placeholder for actual implementation
         return None
 
-    def _read_nvidia_smi(self) -> Optional[Dict[str, Any]]:
+    def _read_nvidia_smi(self) -> dict[str, Any] | None:
         """Read nvidia-smi output."""
         import subprocess
 
@@ -476,7 +476,7 @@ class GPUMetricsCollector:
 async def collect_all_async(
     collectors: list,
     executor=None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Collect from all collectors concurrently.
 

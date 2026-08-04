@@ -69,6 +69,12 @@ jobs:
       - name: Build package
         run: uv build
 
+      - name: Lint (ruff)
+        run: uv run ruff check src/ tests/ scripts/
+
+      - name: No duplicate top-level definitions
+        run: uv run python scripts/check_no_duplicate_defs.py
+
       - name: Run unit and MVP acceptance tests
         run: |
           uv run pytest \

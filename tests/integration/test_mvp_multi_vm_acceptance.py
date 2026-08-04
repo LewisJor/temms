@@ -374,7 +374,7 @@ def _release_package(hub: HubLiteStore, package_id: str) -> dict:
 
 def _seed_cached_model(system, model_id):
     model_path = system["model_dir"] / f"{model_id}.onnx"
-    model_bytes = f"seed-{model_id}".encode("utf-8")
+    model_bytes = f"seed-{model_id}".encode()
     model_path.write_bytes(model_bytes)
     system["model_cache"].add_cached_model(
         model_id=model_id,

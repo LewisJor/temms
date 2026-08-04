@@ -7,7 +7,6 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 
 class ModelStorage:
@@ -112,7 +111,7 @@ class ModelStorage:
             return True
         return False
 
-    def get_model_path(self, model_id: str) -> Optional[Path]:
+    def get_model_path(self, model_id: str) -> Path | None:
         """
         Get model directory path.
 

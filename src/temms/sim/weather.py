@@ -10,14 +10,14 @@ only need 5 transforms and we don't want to add a dependency.  The transforms
 here are ~10 lines each and run in <2ms per 640x480 frame on a 2020 MacBook.
 """
 
+
 import numpy as np
-from typing import Optional
 
 
 def apply_fog(
     image: np.ndarray,
     intensity: float = 0.5,
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> np.ndarray:
     """
     Simulate fog by blending with a white overlay and reducing contrast.
@@ -63,7 +63,7 @@ def apply_fog(
 def apply_rain(
     image: np.ndarray,
     intensity: float = 0.5,
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> np.ndarray:
     """
     Simulate rain by drawing angled streaks and darkening the image.
@@ -109,7 +109,7 @@ def apply_rain(
 def apply_snow(
     image: np.ndarray,
     intensity: float = 0.5,
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> np.ndarray:
     """
     Simulate snow by adding white dots and brightening the scene.
@@ -148,7 +148,7 @@ def apply_snow(
 def apply_darkness(
     image: np.ndarray,
     intensity: float = 0.5,
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> np.ndarray:
     """
     Simulate nighttime / low ambient light.
@@ -186,14 +186,13 @@ def apply_darkness(
 def apply_sun_flare(
     image: np.ndarray,
     intensity: float = 0.5,
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> np.ndarray:
     """
     Simulate sun flare / glare from a bright light source.
 
     intensity 0.0 = none, 1.0 = blinding.
     """
-    import cv2
 
     intensity = np.clip(intensity, 0.0, 1.0)
     if intensity < 0.01:
@@ -222,7 +221,7 @@ def apply_sun_flare(
 
 # ----- Mapping from TEMMS conditions to weather effects -----
 
-def conditions_to_effects(conditions: dict) -> dict:
+def conditions_to_effects(conditions: dict) -> dict:  # noqa: C901  (tracked in #54)
     """
     Convert TEMMS condition values to weather effect intensities.
 
@@ -297,7 +296,7 @@ def conditions_to_effects(conditions: dict) -> dict:
 def apply_weather(
     image: np.ndarray,
     effects: dict,
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> np.ndarray:
     """
     Apply all weather effects to an image in the correct order.

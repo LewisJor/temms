@@ -5,12 +5,9 @@ Tests for sim scenarios.
 import pytest
 
 from temms.sim.scenarios import (
-    SCENARIOS,
-    FOG_ROLLOUT,
     DAY_NIGHT_CYCLE,
-    RAINSTORM,
-    COMBINED_STRESS,
-    Scenario,
+    FOG_ROLLOUT,
+    SCENARIOS,
     ScenarioStep,
 )
 

@@ -2,17 +2,16 @@
 Slot manager for concurrent multi-model deployment.
 """
 
-import sqlite3
-from pathlib import Path
-from typing import Optional, List, Dict, Any
-from datetime import datetime
-from dataclasses import dataclass
-from enum import Enum
 import json
+import sqlite3
+from dataclasses import dataclass
+from datetime import datetime
+from enum import Enum
+from typing import Any
 
 from temms.core.database import Database
-from temms.slots.decision_chain import DECISION_CHAIN_GENESIS, DecisionChain
 from temms.observability import model_swaps_total
+from temms.slots.decision_chain import DECISION_CHAIN_GENESIS, DecisionChain
 
 # DECISION_CHAIN_GENESIS is re-exported from decision_chain for existing importers
 # (evidence.py, tests) that reference it via this module.
@@ -34,7 +33,7 @@ class OperatorOverride:
     reason: str
     source: str  # operator ID or "api"
     set_at: datetime
-    expires_at: Optional[datetime] = None
+    expires_at: datetime | None = None
 
     def is_expired(self) -> bool:
         """Check if the override has expired."""
@@ -49,13 +48,13 @@ class Slot:
     name: str
     description: str
     required: bool  # Robot won't operate without this slot
-    default_model: Optional[str]
-    active_model_id: Optional[str]
+    default_model: str | None
+    active_model_id: str | None
     state: SlotState
     updated_at: datetime
-    candidates: List[str]  # Model names that can run in this slot
-    metadata: Dict[str, Any]
-    operator_override: Optional[OperatorOverride] = None
+    candidates: list[str]  # Model names that can run in this slot
+    metadata: dict[str, Any]
+    operator_override: OperatorOverride | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -109,7 +108,7 @@ class SlotManager(Database):
         self._chain.ensure_schema()
 
     @staticmethod
-    def _decision_entry_hash(content: Dict[str, Any], prev_hash: str) -> str:
+    def _decision_entry_hash(content: dict[str, Any], prev_hash: str) -> str:
         """Hash linking a decision to the previous one (kept for offline verifiers)."""
         return DecisionChain.entry_hash(content, prev_hash)
 
@@ -146,9 +145,9 @@ class SlotManager(Database):
         name: str,
         description: str,
         required: bool = False,
-        default_model: Optional[str] = None,
-        candidates: Optional[List[str]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        default_model: str | None = None,
+        candidates: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> Slot:
         """Create a new slot."""
         candidates = candidates or []
@@ -184,7 +183,7 @@ class SlotManager(Database):
             metadata=metadata,
         )
 
-    def get_slot(self, name: str) -> Optional[Slot]:
+    def get_slot(self, name: str) -> Slot | None:
         """Get slot by name."""
         return self.fetch_one_mapped(
             "SELECT * FROM slots WHERE name = ?",
@@ -192,7 +191,7 @@ class SlotManager(Database):
             self._row_to_slot,
         )
 
-    def list_slots(self) -> List[Slot]:
+    def list_slots(self) -> list[Slot]:
         """List all slots."""
         return self.fetch_all_mapped(
             "SELECT * FROM slots",
@@ -206,8 +205,8 @@ class SlotManager(Database):
         model_id: str,
         trigger_type: str,
         trigger_detail: str,
-        conditions: Optional[Dict[str, Any]] = None,
-        audit_metadata: Optional[Dict[str, Any]] = None,
+        conditions: dict[str, Any] | None = None,
+        audit_metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Activate a model in a slot.
@@ -261,7 +260,7 @@ class SlotManager(Database):
         """Number of decisions in the chain (cheap; for metrics)."""
         return self._chain.count()
 
-    def verify_decision_chain(self) -> Dict[str, Any]:
+    def verify_decision_chain(self) -> dict[str, Any]:
         """Verify the tamper-evident decision chain end to end."""
         return self._chain.verify()
 
@@ -269,11 +268,11 @@ class SlotManager(Database):
         """Return the current head hash of the decision chain."""
         return self._chain.head()
 
-    def export_decision_chain(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    def export_decision_chain(self, limit: int | None = None) -> list[dict[str, Any]]:
         """Return the ordered decision chain (content + hashes) for offline audit."""
         return self._chain.export(limit)
 
-    def sign_decision_chain_head(self, signing_key: str, signer: str = "temms") -> Dict[str, Any]:
+    def sign_decision_chain_head(self, signing_key: str, signer: str = "temms") -> dict[str, Any]:
         """Sign the current chain head so the log is offline-verifiable (issue #27)."""
         return self._chain.sign_head(signing_key, signer)
 
@@ -283,7 +282,7 @@ class SlotManager(Database):
         model_id: str,
         reason: str = "",
         source: str = "api",
-        duration_s: Optional[int] = None,
+        duration_s: int | None = None,
     ) -> None:
         """
         Set an operator override for a slot.
@@ -348,7 +347,7 @@ class SlotManager(Database):
 
         return True
 
-    def get_decision_log(self, slot_name: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_decision_log(self, slot_name: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         """Get decision log for audit."""
         if slot_name:
             rows = self.fetchall(

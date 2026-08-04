@@ -2,13 +2,12 @@
 Condition storage with source priority and confidence tracking.
 """
 
-import sqlite3
-from pathlib import Path
-from typing import Optional, Dict, Any, List
-from datetime import datetime
-from dataclasses import dataclass
 import json
 import logging
+import sqlite3
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
 
 from temms.core.database import Database
 
@@ -78,7 +77,7 @@ class ConditionStore(Database):
         self.conn.commit()
 
     @staticmethod
-    def _row_to_condition(row: sqlite3.Row) -> Optional[ConditionValue]:
+    def _row_to_condition(row: sqlite3.Row) -> ConditionValue | None:
         """Map a database row to a ConditionValue, handling corrupt data."""
         try:
             value = json.loads(row["value"])
@@ -104,7 +103,7 @@ class ConditionStore(Database):
         source: str,
         priority: int,
         confidence: float = 1.0,
-    ) -> Optional[ConditionValue]:
+    ) -> ConditionValue | None:
         """
         Set a condition value.
 
@@ -163,7 +162,7 @@ class ConditionStore(Database):
             updated_at=updated_at,
         )
 
-    def get(self, path: str) -> Optional[ConditionValue]:
+    def get(self, path: str) -> ConditionValue | None:
         """Get current condition value by path."""
         row = self.fetchone(
             "SELECT * FROM conditions WHERE path = ?", (path,)
@@ -174,7 +173,7 @@ class ConditionStore(Database):
 
         return self._row_to_condition(row)
 
-    def get_all(self, prefix: Optional[str] = None) -> Dict[str, ConditionValue]:
+    def get_all(self, prefix: str | None = None) -> dict[str, ConditionValue]:
         """
         Get all conditions, optionally filtered by path prefix.
 
@@ -199,7 +198,7 @@ class ConditionStore(Database):
                 result[cond.path] = cond
         return result
 
-    def get_snapshot(self) -> Dict[str, Any]:
+    def get_snapshot(self) -> dict[str, Any]:
         """
         Get full snapshot of current conditions (for decision logging).
 
@@ -239,7 +238,7 @@ class ConditionStore(Database):
         )
         return cursor.rowcount
 
-    def get_stale_conditions(self, max_age_seconds: int = 300) -> List[str]:
+    def get_stale_conditions(self, max_age_seconds: int = 300) -> list[str]:
         """
         Find conditions that haven't been updated recently.
 

@@ -6,22 +6,22 @@ to model switching and inference.
 """
 
 import json
+from unittest.mock import AsyncMock
 
 import pytest
-from unittest.mock import AsyncMock
 from fastapi.testclient import TestClient
 
+from temms.conditions.store import ConditionStore
 from temms.core.cache import ModelCache, ModelFormat
 from temms.core.storage import ModelStorage
-from temms.slots.manager import SlotManager
-from temms.conditions.store import ConditionStore
-from temms.policy.engine import PolicyEngine
-from temms.policy.schema import SlotPolicy
+from temms.daemon.deployment_state import DeploymentStateStore
+from temms.daemon.pending_ops import PendingOperationsStore
+from temms.daemon.service import DaemonConfig, TEMMSDaemon
 from temms.inference.runtime import InferenceRuntime
 from temms.inference.server import create_app
-from temms.daemon.service import TEMMSDaemon, DaemonConfig
-from temms.daemon.pending_ops import PendingOperationsStore
-from temms.daemon.deployment_state import DeploymentStateStore
+from temms.policy.engine import PolicyEngine
+from temms.policy.schema import SlotPolicy
+from temms.slots.manager import SlotManager
 
 
 @pytest.fixture

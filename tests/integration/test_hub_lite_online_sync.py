@@ -15,8 +15,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import uvicorn
 import pytest
+import uvicorn
 from fastapi.testclient import TestClient
 
 from temms.conditions.store import ConditionStore

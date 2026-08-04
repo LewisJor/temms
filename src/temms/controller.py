@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from temms.conditions.store import ConditionStore
 from temms.core.cache import CachedModel, ModelCache

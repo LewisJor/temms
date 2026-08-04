@@ -115,8 +115,10 @@ test-sim:
 format:
 	black src/ tests/
 
+# Mirrors the CI gates exactly, so a green `make lint` means a green CI lint.
 lint:
-	ruff check src/ tests/
+	uv run ruff check src/ tests/ scripts/
+	uv run python scripts/check_no_duplicate_defs.py
 	mypy src/
 
 clean:
