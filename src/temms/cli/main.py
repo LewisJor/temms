@@ -15,6 +15,15 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from temms.core.proof_gates import (
+    optional_float,
+    proof_gate_failures,
+    runtime_capability_lock,
+    runtime_capability_lock_failures,
+    runtime_fit_score,
+    runtime_target_best_failures,
+    runtime_target_selection,
+)
 from temms import __version__
 from temms.cli import condition, slot
 
@@ -3006,166 +3015,29 @@ def _normalize_hub_mission_package_command_path(path: str) -> str:
     return normalized
 
 
-def _hub_gate_failures(
-    action: str,
-    payload: dict[str, Any],
-    *,
-    require_go: bool,
-    min_runtime_fit: Optional[float],
-    require_best_runtime: bool,
-    require_capability_lock: bool,
-    runtime_context: Optional[dict[str, Any]] = None,
-) -> list[str]:
-    """Return operator-facing gate failures for readiness/mission checks."""
-    if action not in {"readiness", "edge-runtime-mission"}:
-        return []
-
-    failures: list[str] = []
-    status = str(payload.get("status") or "unknown")
-    if require_go and status != "go":
-        failures.append(f"{action} status is {status}, expected go")
-
-    if min_runtime_fit is not None:
-        score = _hub_runtime_fit_score(action, payload)
-        if score is None:
-            failures.append("runtime fit score is missing")
-        elif score < min_runtime_fit:
-            failures.append(
-                f"runtime fit score {score:g}/100 is below required {min_runtime_fit:g}/100"
-            )
-    if require_best_runtime:
-        failures.extend(
-            _runtime_target_best_gate_failures(runtime_context or payload or {})
-        )
-    if require_capability_lock:
-        failures.extend(
-            _runtime_capability_lock_gate_failures(runtime_context or payload or {})
-        )
-    return failures
+# Proof gates live in temms.core.proof_gates — the single source of truth shared
+# with Hub enforcement, so offline `verify-edge-proof` and the Hub cannot disagree.
+_hub_gate_failures = proof_gate_failures
+_hub_runtime_fit_score = runtime_fit_score
+_runtime_target_best_gate_failures = runtime_target_best_failures
+_runtime_target_selection_for_gate = runtime_target_selection
+_runtime_capability_lock_gate_failures = runtime_capability_lock_failures
+_runtime_capability_lock_for_gate = runtime_capability_lock
+_optional_float = optional_float
 
 
-def _runtime_target_best_gate_failures(runtime_context: dict[str, Any]) -> list[str]:
-    target_selection = _runtime_target_selection_for_gate(runtime_context)
-    if not target_selection:
-        return ["runtime target selection proof is missing"]
-
-    status = str(target_selection.get("status") or "").lower()
-    selected = str(target_selection.get("selected_runtime_target_id") or "")
-    best = str(target_selection.get("best_runtime_target_id") or "")
-    score_delta = _optional_float(target_selection.get("score_delta"))
-    selected_is_best = bool(selected and best and selected == best)
-    if (
-        status == "best"
-        and (not selected or not best or selected_is_best)
-        and (score_delta is None or score_delta <= 0)
-    ):
-        return []
-    if selected_is_best and (score_delta is None or score_delta <= 0):
-        return []
-    if selected and best and selected != best:
-        return [
-            f"selected runtime target {selected} is not best measured target {best}"
-        ]
-    if score_delta is not None and score_delta > 0:
-        return [
-            f"selected runtime target trails best measured target by {score_delta:g} points"
-        ]
-    if status:
-        return [f"runtime target selection status is {status}, expected best"]
-    return ["runtime target selection proof is missing best-runtime status"]
 
 
-def _runtime_target_selection_for_gate(runtime_context: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(runtime_context, dict):
-        return {}
-    readiness = (
-        runtime_context.get("readiness")
-        if isinstance(runtime_context.get("readiness"), dict)
-        else {}
-    )
-    for source in (
-        runtime_context,
-        runtime_context.get("edge_execution_contract"),
-        runtime_context.get("runtime_decision"),
-        runtime_context.get("runtime_fit"),
-        readiness.get("edge_execution_contract"),
-        readiness.get("runtime_decision"),
-        readiness.get("runtime_fit"),
-    ):
-        if not isinstance(source, dict):
-            continue
-        target_selection = source.get("target_selection")
-        if isinstance(target_selection, dict) and target_selection:
-            return target_selection
-    return {}
 
 
-def _runtime_capability_lock_gate_failures(runtime_context: dict[str, Any]) -> list[str]:
-    lock = _runtime_capability_lock_for_gate(runtime_context)
-    if not lock:
-        return ["runtime capability lock proof is missing"]
-
-    status = str(lock.get("status") or "").lower()
-    digest = str(lock.get("capability_sha256") or "")
-    raw_failures = lock.get("failures") if isinstance(lock.get("failures"), list) else []
-    lock_failures = [str(failure) for failure in raw_failures if failure]
-    failures: list[str] = []
-    if status != "locked":
-        failures.append(f"runtime capability lock status is {status or 'missing'}, expected locked")
-    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest.lower()):
-        failures.append("runtime capability lock capability_sha256 is missing or invalid")
-    if lock_failures:
-        failures.append(
-            "runtime capability lock has failures: " + "; ".join(lock_failures[:3])
-        )
-    return failures
 
 
-def _runtime_capability_lock_for_gate(runtime_context: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(runtime_context, dict):
-        return {}
-    readiness = (
-        runtime_context.get("readiness")
-        if isinstance(runtime_context.get("readiness"), dict)
-        else {}
-    )
-    for source in (
-        runtime_context,
-        runtime_context.get("edge_execution_contract"),
-        runtime_context.get("runtime_decision"),
-        runtime_context.get("runtime_fit"),
-        readiness.get("edge_execution_contract"),
-        readiness.get("runtime_decision"),
-        readiness.get("runtime_fit"),
-    ):
-        if not isinstance(source, dict):
-            continue
-        lock = source.get("runtime_capability_lock")
-        if isinstance(lock, dict) and lock:
-            return lock
-    return {}
 
 
-def _optional_float(value: Any) -> Optional[float]:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
-def _hub_runtime_fit_score(action: str, payload: dict[str, Any]) -> Optional[float]:
-    if action == "readiness":
-        runtime_fit = payload.get("runtime_fit")
-    else:
-        metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
-        runtime_fit = metrics.get("runtime_fit")
-    if not isinstance(runtime_fit, dict):
-        return None
-    score = runtime_fit.get("score")
-    try:
-        return float(score)
-    except (TypeError, ValueError):
-        return None
+
+
 
 
 def _parse_proof_timestamp(value: Any) -> Any:
