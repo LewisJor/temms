@@ -5760,7 +5760,8 @@ def _edge_runtime_trace_next(row: dict[str, Any]) -> str:
     return f"{label} ({kind})" if label else ""
 
 
-def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
+def _print_proof_header(payload: dict) -> None:
+    """Render the header section of a proof verification."""
     """Print local edge proof verification in an operator-readable format."""
     valid = bool(payload.get("valid"))
     color = "green" if valid else "red"
@@ -5777,6 +5778,9 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
             f"{path.get('device_id') or 'edge'}"
         )
 
+
+def _print_proof_path(payload: dict) -> None:
+    """Render the path section of a proof verification."""
     console.print(f"Mission status: {payload.get('status') or 'unknown'}")
     runtime_fit_score = payload.get("runtime_fit_score")
     if runtime_fit_score is not None:
@@ -5785,6 +5789,10 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
         except (TypeError, ValueError):
             score_text = f"{runtime_fit_score}/100"
         console.print(f"Runtime fit: {score_text}")
+
+
+def _print_proof_runtime_fit(payload: dict) -> None:
+    """Render the runtime fit section of a proof verification."""
     console.print(f"Recorded gate: {payload.get('gate_status') or 'unknown'}")
     console.print(f"Requested gate: {payload.get('requested_gate_status') or 'unknown'}")
     proof_freshness = (
@@ -5808,6 +5816,10 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
             except (TypeError, ValueError):
                 freshness_detail += f" / max {max_age}s"
         console.print(f"Proof freshness: {freshness_status}{freshness_detail}")
+
+
+def _print_proof_freshness(payload: dict) -> None:
+    """Render the freshness section of a proof verification."""
     path_expectations = (
         payload.get("path_expectations")
         if isinstance(payload.get("path_expectations"), dict)
@@ -5816,6 +5828,10 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
     if path_expectations and path_expectations.get("status") != "not_requested":
         console.print(f"Path binding: {path_expectations.get('status') or 'unknown'}")
 
+
+def _print_proof_runtime_decision_and_contract(payload: dict) -> None:
+    """Render the runtime decision and contract section of a proof verification."""
+    path = payload.get("path") if isinstance(payload.get("path"), dict) else {}
     runtime_decision = (
         payload.get("runtime_decision")
         if isinstance(payload.get("runtime_decision"), dict)
@@ -5902,6 +5918,10 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
             "Runtime trace consistency: "
             f"{trace_consistency.get('status') or 'unknown'}"
         )
+
+
+def _print_proof_trace_consistency(payload: dict) -> None:
+    """Render the trace consistency section of a proof verification."""
     manifest_consistency = (
         payload.get("edge_execution_manifest_consistency")
         if isinstance(payload.get("edge_execution_manifest_consistency"), dict)
@@ -5912,6 +5932,10 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
             "Execution manifest: "
             f"{manifest_consistency.get('status') or 'unknown'}"
         )
+
+
+def _print_proof_manifest_consistency(payload: dict) -> None:
+    """Render the manifest consistency section of a proof verification."""
     component_digest_consistency = (
         payload.get("component_digest_consistency")
         if isinstance(payload.get("component_digest_consistency"), dict)
@@ -5923,11 +5947,17 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
             f"{component_digest_consistency.get('status') or 'unknown'}"
         )
 
+
+def _print_proof_component_digests(payload: dict) -> None:
+    """Render the component digests section of a proof verification."""
     integrity = payload.get("integrity") if isinstance(payload.get("integrity"), dict) else {}
     recorded_hash = integrity.get("recorded_payload_sha256")
     if recorded_hash:
         console.print(f"Payload SHA256: {recorded_hash}")
 
+
+def _print_proof_integrity(payload: dict) -> None:
+    """Render the integrity section of a proof verification."""
     attestation = payload.get("attestation") if isinstance(payload.get("attestation"), dict) else {}
     if attestation:
         console.print(f"Attestation: {attestation.get('status') or 'unknown'}")
@@ -5936,12 +5966,35 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
         if attestation.get("signer"):
             console.print(f"Attestation signer: {attestation['signer']}")
 
+
+def _print_proof_attestation(payload: dict) -> None:
+    """Render the attestation section of a proof verification."""
     for error in payload.get("errors", []) or []:
         console.print(f"[red]Proof invalid:[/red] {error}")
+
+
+def _print_proof_failures(payload: dict) -> None:
+    """Render the failures section of a proof verification."""
     for failure in payload.get("gate_failures", []) or []:
         console.print(f"[yellow]Recorded gate failed:[/yellow] {failure}")
     for failure in payload.get("requested_gate_failures", []) or []:
         console.print(f"[red]Requested gate failed:[/red] {failure}")
+
+
+def _print_edge_runtime_proof_verification(payload: dict) -> None:
+    """Render an edge-runtime proof verification, section by section."""
+    _print_proof_header(payload)
+    _print_proof_path(payload)
+    _print_proof_runtime_fit(payload)
+    _print_proof_freshness(payload)
+    _print_proof_runtime_decision_and_contract(payload)
+    _print_proof_trace_consistency(payload)
+    _print_proof_manifest_consistency(payload)
+    _print_proof_component_digests(payload)
+    _print_proof_integrity(payload)
+    _print_proof_attestation(payload)
+    _print_proof_failures(payload)
+
 
 
 def _mission_metric_label(key: str) -> str:
