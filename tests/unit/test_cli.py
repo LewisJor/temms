@@ -5906,7 +5906,8 @@ class TestMissionCommand:
         out = tmp_path / "dist"
         result = runner.invoke(app, ["mission", "build", str(mission), "--out", str(out)])
         assert result.exit_code == 1
-        assert not out.exists() or not any(out.iterdir())
+        assert not (out / "vision-1-0-0").exists()
+        assert list(out.glob("**/*")) == [] if out.exists() else not out.exists()
 
 
 class TestHubActionCharacterization:

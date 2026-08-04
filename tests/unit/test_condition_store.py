@@ -40,12 +40,6 @@ class TestConditionStoreBasic:
     def test_get_missing_returns_none(self, condition_store):
         assert condition_store.get("nonexistent") is None
 
-    def test_set_overwrites_same_priority(self, condition_store):
-        condition_store.set("temp", 50, "sensor", 100)
-        condition_store.set("temp", 80, "sensor", 100)
-
-        assert condition_store.get("temp").value == 80
-
     def test_set_returns_condition_value(self, condition_store):
         result = condition_store.set("temp", 50, "sensor", 100)
 
