@@ -9,6 +9,8 @@ import socket
 import tempfile
 from contextlib import closing
 from pathlib import Path
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Optional
 
 import typer
@@ -1978,6 +1980,693 @@ def _control_mutation_body(**values: Any) -> dict[str, Any]:
     return {key: value for key, value in values.items() if value}
 
 
+@dataclass(frozen=True)
+class HubActionContext:
+    """The CLI options (and derived signing key) for one `temms hub` call.
+
+    A parameter object: hub() accepts the union of every action's options, so
+    passing them individually to each handler would just move the 55-argument
+    problem. Each handler reads only the few fields it needs.
+    """
+
+    action: Any
+    source: Any
+    device_id: Any
+    package_id: Any
+    model_id: Any
+    slot_name: Any
+    rollout_id: Any
+    rollout_plan_id: Any
+    target_device_ids: Any
+    batch_size: Any
+    runtime_target_id: Any
+    mission_yaml: Any
+    mission_yaml_file: Any
+    mission_goal: Any
+    sensor: Any
+    latency_budget_ms: Any
+    min_throughput_ips: Any
+    switch_policy: Any
+    confidence_threshold: Any
+    fallback_model_id: Any
+    ddil_mode: Any
+    require_runtime_validation: Any
+    require_approval: Any
+    promotion_state: Any
+    image: Any
+    os_name: Any
+    arch: Any
+    runtimes: Any
+    providers: Any
+    accelerators: Any
+    tracking_uri: Any
+    model_artifact: Any
+    require_schema: Any
+    archive: Any
+    overwrite: Any
+    output: Any
+    include_packages: Any
+    include_device_inventory: Any
+    pull_image: Any
+    dry_run: Any
+    local_runtime: Any
+    timeout_s: Any
+    strict_metadata: Any
+    require_signature: Any
+    signing_key_file: Any
+    device_profile: Any
+    labels: Any
+    inventory: Any
+    actor: Any
+    reason: Any
+    require_go: Any
+    min_runtime_fit: Any
+    require_best_runtime: Any
+    require_capability_lock: Any
+    require_proof_signature: Any
+    key: Any
+
+
+@dataclass
+class HubActionResult:
+    """What an action produced: its payload, plus an optional readiness proof."""
+
+    payload: dict[str, Any]
+    readiness_proof: dict[str, Any] | None = None
+    # The action already produced its own output (e.g. wrote a bundle to disk)
+    # and the shared post-processing must be skipped. In the pre-refactor
+    # if/elif chain this was a bare `return` out of hub() itself.
+    handled: bool = False
+
+def _action_enroll(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub enroll`."""
+    if ctx.device_id is None:
+        console.print("[red]--device-id is required[/red]")
+        raise typer.Exit(1)
+    payload = _checked_json(
+        client.post(
+            "/devices/enroll",
+            json={
+                "device_id": ctx.device_id,
+                "profile": ctx.device_profile,
+                "labels": _parse_key_value_options(ctx.labels),
+                "inventory": _parse_key_value_options(ctx.inventory),
+            },
+        )
+    )
+    return HubActionResult(payload)
+
+
+def _action_devices(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub devices`."""
+    payload = _checked_json(client.get("/devices"))
+    return HubActionResult(payload)
+
+
+def _action_packages(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub packages`."""
+    payload = _checked_json(client.get("/packages"))
+    return HubActionResult(payload)
+
+
+def _action_runtime_targets(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub runtime-targets`."""
+    payload = _checked_json(client.get("/runtime-targets"))
+    return HubActionResult(payload)
+
+
+def _action_runtime_validations(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub runtime-validations`."""
+    params = {}
+    if ctx.package_id:
+        params["package_id"] = ctx.package_id
+    if ctx.runtime_target_id:
+        params["runtime_target_id"] = ctx.runtime_target_id
+    payload = _checked_json(
+        client.get("/runtime-targets/validations", params=params or None)
+    )
+    return HubActionResult(payload)
+
+
+def _action_benchmarks(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub benchmarks`."""
+    params = {}
+    if ctx.device_id:
+        params["device_id"] = ctx.device_id
+    if ctx.package_id:
+        params["package_id"] = ctx.package_id
+    if ctx.runtime_target_id:
+        params["runtime_target_id"] = ctx.runtime_target_id
+    payload = _checked_json(client.get("/benchmarks", params=params or None))
+    return HubActionResult(payload)
+
+
+def _action_rollouts(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub rollouts`."""
+    payload = _checked_json(client.get("/rollouts"))
+    return HubActionResult(payload)
+
+
+def _action_rollout_plans(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub rollout-plans`."""
+    payload = _checked_json(client.get("/rollout-plans"))
+    return HubActionResult(payload)
+
+
+def _action_status(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub status`."""
+    payload = _checked_json(client.get("/deployment-status"))
+    return HubActionResult(payload)
+
+
+def _action_readiness(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub` readiness / edge-runtime-mission."""
+    readiness_proof_payload = None
+    params = _hub_readiness_query_params(
+        package_id=ctx.package_id,
+        model_id=ctx.model_id,
+        device_id=ctx.device_id,
+        runtime_target_id=ctx.runtime_target_id,
+        slot=ctx.slot_name,
+    )
+    readiness_payload = _checked_json(
+        client.get("/readiness", params=params or None)
+    )
+    readiness_proof_payload = readiness_payload
+    if ctx.action == "edge-runtime-mission":
+        mission = readiness_payload.get("edge_runtime_mission")
+        payload = mission if isinstance(mission, dict) else {}
+    else:
+        payload = readiness_payload
+    return HubActionResult(payload, readiness_proof_payload)
+
+
+def _action_mission_package_plan(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub` mission-package-plan / mission-package-download."""
+    request = _hub_mission_package_request_body(
+        source=ctx.source,
+        package_id=ctx.package_id,
+        model_id=ctx.model_id,
+        device_id=ctx.device_id,
+        runtime_target_id=ctx.runtime_target_id,
+        slot=ctx.slot_name,
+        goal=ctx.mission_goal,
+        mission_yaml=ctx.mission_yaml,
+        mission_yaml_file=ctx.mission_yaml_file,
+        sensor=ctx.sensor,
+        latency_budget_ms=ctx.latency_budget_ms,
+        min_throughput_ips=ctx.min_throughput_ips,
+        switch_policy=ctx.switch_policy,
+        confidence_threshold=ctx.confidence_threshold,
+        fallback_model_id=ctx.fallback_model_id,
+        ddil_mode=ctx.ddil_mode,
+        require_go=ctx.require_go,
+        min_runtime_fit=ctx.min_runtime_fit,
+        require_best_runtime=ctx.require_best_runtime,
+        require_capability_lock=ctx.require_capability_lock,
+        require_proof_signature=ctx.require_proof_signature,
+    )
+    endpoint = (
+        "/mission-package/download"
+        if ctx.action == "mission-package-download"
+        else "/mission-package/plan"
+    )
+    payload = _checked_json(client.post(endpoint, json=request))
+    return HubActionResult(payload)
+
+
+def _action_mission_package_stage(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub mission-package-stage`."""
+    request = _hub_mission_package_stage_request(
+        source=ctx.source,
+        rollout_id=ctx.rollout_id,
+        actor=ctx.actor,
+        reason=ctx.reason,
+    )
+    payload = _checked_json(client.post("/mission-package/stage", json=request))
+    return HubActionResult(payload)
+
+
+def _action_telemetry(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub telemetry`."""
+    payload = _checked_json(client.get("/telemetry"))
+    return HubActionResult(payload)
+
+
+def _action_evidence(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub evidence`."""
+    payload = _checked_json(client.get("/evidence"))
+    return HubActionResult(payload)
+
+
+def _action_package_from_mlflow(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub package-from-mlflow`."""
+    if ctx.source is None:
+        console.print("[red]MLflow model URI required, e.g. models:/name/version[/red]")
+        raise typer.Exit(1)
+    if ctx.slot_name is None:
+        console.print("[red]--slot is required[/red]")
+        raise typer.Exit(1)
+    runtime_constraints: dict[str, Any] = {}
+    if ctx.device_profile:
+        runtime_constraints["device_profiles"] = [ctx.device_profile]
+    if ctx.runtimes:
+        runtime_constraints["runtimes"] = ctx.runtimes
+    if ctx.providers:
+        runtime_constraints["preferred_providers"] = ctx.providers
+    if ctx.accelerators:
+        runtime_constraints["accelerators"] = ctx.accelerators
+    runtime_options: dict[str, Any] = {}
+    if ctx.providers:
+        runtime_options["providers"] = ctx.providers
+    payload = _checked_json(
+        client.post(
+            "/packages/from-mlflow",
+            json={
+                "model_uri": ctx.source,
+                "slot": ctx.slot_name,
+                "tracking_uri": ctx.tracking_uri,
+                "device_profile": ctx.device_profile,
+                "runtime_constraints": runtime_constraints,
+                "runtime_options": runtime_options,
+                "model_artifact_path": ctx.model_artifact,
+                "require_schema": ctx.require_schema,
+                "require_signature": ctx.require_signature,
+                "signing_key": ctx.key,
+                "archive": ctx.archive,
+                "overwrite": ctx.overwrite,
+                "strict_metadata": ctx.strict_metadata,
+                "actor": ctx.actor,
+            },
+        )
+    )
+    return HubActionResult(payload)
+
+
+def _action_register_package(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub register-package`."""
+    if ctx.source is None:
+        console.print("[red]Package path required[/red]")
+        raise typer.Exit(1)
+    payload = _checked_json(
+        client.post(
+            "/packages/register",
+            json={
+                "package_path": str(Path(ctx.source).expanduser()),
+                "require_signature": ctx.require_signature,
+                "signing_key": ctx.key,
+                "device_profiles": [ctx.device_profile] if ctx.device_profile else None,
+                "strict_metadata": ctx.strict_metadata,
+                "actor": ctx.actor,
+            },
+        )
+    )
+    return HubActionResult(payload)
+
+
+def _action_register_runtime(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub register-runtime`."""
+    if ctx.runtime_target_id is None or ctx.image is None:
+        console.print("[red]--runtime-target-id and --image are required[/red]")
+        raise typer.Exit(1)
+    runtime_inventory = {runtime: {"available": True} for runtime in (ctx.runtimes or [])}
+    if ctx.providers:
+        runtime_inventory.setdefault("onnxruntime", {"available": True})[
+            "providers"
+        ] = ctx.providers
+    accelerator_inventory = {
+        accelerator: {"available": True} for accelerator in (ctx.accelerators or [])
+    }
+    constraints: dict[str, Any] = {}
+    if ctx.device_profile:
+        constraints["device_profiles"] = [ctx.device_profile]
+    if ctx.runtimes:
+        constraints["runtimes"] = ctx.runtimes
+    if ctx.providers:
+        constraints["preferred_providers"] = ctx.providers
+    if ctx.accelerators:
+        constraints["accelerators"] = ctx.accelerators
+    payload = _checked_json(
+        client.post(
+            "/runtime-targets",
+            json={
+                "runtime_target_id": ctx.runtime_target_id,
+                "name": ctx.runtime_target_id,
+                "image": ctx.image,
+                "os": ctx.os_name,
+                "arch": ctx.arch,
+                "device_profiles": [ctx.device_profile] if ctx.device_profile else [],
+                "runtimes": runtime_inventory,
+                "accelerators": accelerator_inventory,
+                "runtime_constraints": constraints,
+                "labels": _parse_key_value_options(ctx.labels),
+                "actor": ctx.actor,
+            },
+        )
+    )
+    return HubActionResult(payload)
+
+
+def _action_validate_runtime(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub validate-runtime`."""
+    from temms.core.runtime_target_runner import validate_runtime_target_package
+    if ctx.source is None or ctx.runtime_target_id is None:
+        console.print("[red]Package path and --runtime-target-id are required[/red]")
+        raise typer.Exit(1)
+    targets_payload = _checked_json(client.get("/runtime-targets"))
+    runtime_target = _find_runtime_target(
+        targets_payload.get("runtime_targets", []),
+        ctx.runtime_target_id,
+    )
+    result = validate_runtime_target_package(
+        runtime_target,
+        Path(ctx.source),
+        require_signature=ctx.require_signature,
+        strict_metadata=ctx.strict_metadata,
+        signing_key=ctx.key,
+        signing_key_file=ctx.signing_key_file,
+        pull_image=ctx.pull_image,
+        dry_run=ctx.dry_run,
+        local=ctx.local_runtime,
+        timeout_s=ctx.timeout_s,
+    )
+    payload = {
+        "schema_version": "temms-runtime-target-validation/v1",
+        **result.to_dict(),
+    }
+    result_payload = dict(payload)
+    validation_record = _checked_json(
+        client.post(
+            "/runtime-targets/validations",
+            json={
+                "runtime_target_id": ctx.runtime_target_id,
+                "package_id": ctx.package_id,
+                "package_path": str(Path(ctx.source).expanduser()),
+                "result": result_payload,
+                "actor": ctx.actor,
+            },
+        )
+    )
+    payload["validation_record"] = validation_record
+    return HubActionResult(payload)
+
+
+def _action_preview_compatibility(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub preview-compatibility`."""
+    if ctx.device_id is None or ctx.package_id is None:
+        console.print("[red]--device-id and --package-id are required[/red]")
+        raise typer.Exit(1)
+    request = {
+        "device_id": ctx.device_id,
+        "package_id": ctx.package_id,
+        "runtime_target_id": ctx.runtime_target_id,
+    }
+    if ctx.model_id:
+        request["model_id"] = ctx.model_id
+    payload = _checked_json(
+        client.post(
+            "/compatibility/preview",
+            json=request,
+        )
+    )
+    return HubActionResult(payload)
+
+
+def _action_compatibility_matrix(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub compatibility-matrix`."""
+    request = {
+        "package_ids": [ctx.package_id] if ctx.package_id else None,
+        "device_ids": [ctx.device_id] if ctx.device_id else None,
+        "runtime_target_ids": [ctx.runtime_target_id] if ctx.runtime_target_id else None,
+        "include_device_inventory": ctx.include_device_inventory,
+    }
+    if ctx.model_id:
+        request["model_ids"] = [ctx.model_id]
+    payload = _checked_json(client.post("/compatibility/matrix", json=request))
+    return HubActionResult(payload)
+
+
+def _action_promote_package(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub promote-package`."""
+    target_package = ctx.source or ctx.package_id
+    if target_package is None or ctx.promotion_state is None:
+        console.print("[red]Package ID and --promotion-state are required[/red]")
+        raise typer.Exit(1)
+    payload = _checked_json(
+        client.post(
+            f"/packages/{target_package}/promote",
+            json={
+                "state": ctx.promotion_state,
+                "reason": ctx.reason,
+                "actor": ctx.actor,
+            },
+        )
+    )
+    return HubActionResult(payload)
+
+
+def _action_create_rollout_plan(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub create-rollout-plan`."""
+    devices = list(ctx.target_device_ids or [])
+    if ctx.device_id:
+        devices.append(ctx.device_id)
+    if ctx.package_id is None or not devices:
+        console.print(
+            "[red]--package-id and at least one target device are required[/red]"
+        )
+        raise typer.Exit(1)
+    request = {
+        "plan_id": ctx.rollout_plan_id,
+        "package_id": ctx.package_id,
+        "device_ids": devices,
+        "slot": ctx.slot_name,
+        "runtime_target_id": ctx.runtime_target_id,
+        "batch_size": ctx.batch_size,
+        "require_runtime_validation": ctx.require_runtime_validation,
+        "require_approval": ctx.require_approval,
+        "actor": ctx.actor,
+    }
+    if ctx.model_id:
+        request["model_id"] = ctx.model_id
+    payload = _checked_json(client.post("/rollout-plans", json=request))
+    return HubActionResult(payload)
+
+
+def _action_advance_rollout_plan(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub advance-rollout-plan`."""
+    target_plan = ctx.source or ctx.rollout_plan_id
+    if target_plan is None:
+        console.print("[red]Rollout plan ID required[/red]")
+        raise typer.Exit(1)
+    payload = _checked_json(
+        client.post(
+            f"/rollout-plans/{target_plan}/advance",
+            json={"limit": ctx.batch_size, "actor": ctx.actor},
+        )
+    )
+    return HubActionResult(payload)
+
+
+def _action_pause_rollout_plan(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub pause-rollout-plan`."""
+    target_plan = ctx.source or ctx.rollout_plan_id
+    if target_plan is None:
+        console.print("[red]Rollout plan ID required[/red]")
+        raise typer.Exit(1)
+    payload = _checked_json(
+        client.post(
+            f"/rollout-plans/{target_plan}/pause",
+            json={"reason": ctx.reason, "actor": ctx.actor},
+        )
+    )
+    return HubActionResult(payload)
+
+
+def _action_resume_rollout_plan(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub resume-rollout-plan`."""
+    target_plan = ctx.source or ctx.rollout_plan_id
+    if target_plan is None:
+        console.print("[red]Rollout plan ID required[/red]")
+        raise typer.Exit(1)
+    payload = _checked_json(
+        client.post(
+            f"/rollout-plans/{target_plan}/resume",
+            json={"reason": ctx.reason, "actor": ctx.actor},
+        )
+    )
+    return HubActionResult(payload)
+
+
+def _action_assign(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub assign`."""
+    if ctx.device_id is None or ctx.package_id is None:
+        console.print("[red]--device-id and --package-id are required[/red]")
+        raise typer.Exit(1)
+    request = {
+        "device_id": ctx.device_id,
+        "package_id": ctx.package_id,
+        "slot": ctx.slot_name,
+        "rollout_id": ctx.rollout_id,
+        "runtime_target_id": ctx.runtime_target_id,
+        "require_runtime_validation": ctx.require_runtime_validation,
+        "require_approval": ctx.require_approval,
+        "actor": ctx.actor,
+    }
+    if ctx.model_id:
+        request["model_id"] = ctx.model_id
+    payload = _checked_json(client.post("/rollouts", json=request))
+    return HubActionResult(payload)
+
+
+def _action_approve(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub approve`."""
+    target_rollout = ctx.source or ctx.rollout_id
+    if target_rollout is None:
+        console.print("[red]Rollout ID required[/red]")
+        raise typer.Exit(1)
+    payload = _checked_json(
+        client.post(
+            f"/rollouts/{target_rollout}/approve",
+            json={"reason": ctx.reason, "actor": ctx.actor},
+        )
+    )
+    return HubActionResult(payload)
+
+
+def _action_apply(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub apply`."""
+    target_rollout = ctx.source or ctx.rollout_id
+    if target_rollout is None:
+        console.print("[red]Rollout ID required[/red]")
+        raise typer.Exit(1)
+    payload = _checked_json(
+        client.post(
+            f"/rollouts/{target_rollout}/apply",
+            json={
+                "require_signature": ctx.require_signature,
+                "signing_key": ctx.key,
+                "actor": ctx.actor,
+            },
+        )
+    )
+    return HubActionResult(payload)
+
+
+def _action_rollback(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub rollback`."""
+    target_rollout = ctx.source or ctx.rollout_id
+    if target_rollout is None:
+        console.print("[red]Rollout ID required[/red]")
+        raise typer.Exit(1)
+    payload = _checked_json(
+        client.post(
+            f"/rollouts/{target_rollout}/rollback",
+            json={"reason": ctx.reason, "actor": ctx.actor},
+        )
+    )
+    return HubActionResult(payload)
+
+
+def _action_export(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub export`."""
+    import json
+    payload = _checked_json(
+        client.post(
+            "/airgap/export",
+            json={"include_packages": ctx.include_packages},
+        )
+    )
+    if ctx.output is not None:
+        ctx.output.write_text(
+            json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        console.print(f"[green]Hub bundle written:[/green] {ctx.output}")
+        return HubActionResult(payload, handled=True)
+    return HubActionResult(payload)
+
+
+def _action_import(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub import`."""
+    import json
+    if ctx.source is None:
+        console.print("[red]Bundle path required[/red]")
+        raise typer.Exit(1)
+    bundle = json.loads(Path(ctx.source).read_text(encoding="utf-8"))
+    payload = _checked_json(client.post("/airgap/import", json=bundle))
+    return HubActionResult(payload)
+
+
+def _action_replay_telemetry(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub replay-telemetry`."""
+    import json
+    if ctx.source is None:
+        console.print("[red]Telemetry bundle path required[/red]")
+        raise typer.Exit(1)
+    bundle = json.loads(Path(ctx.source).read_text(encoding="utf-8"))
+    payload = _checked_json(
+        client.post(
+            "/telemetry/replay",
+            json={"bundle": bundle, "device_id": ctx.device_id, "actor": ctx.actor},
+        )
+    )
+    return HubActionResult(payload)
+
+
+def _action_ingest_evidence(ctx: HubActionContext, client: Any) -> HubActionResult:
+    """`temms hub ingest-evidence`."""
+    import json
+    if ctx.source is None:
+        console.print("[red]Evidence bundle path required[/red]")
+        raise typer.Exit(1)
+    bundle = json.loads(Path(ctx.source).read_text(encoding="utf-8"))
+    payload = _checked_json(
+        client.post(
+            "/evidence/ingest",
+            json={"bundle": bundle, "device_id": ctx.device_id, "actor": ctx.actor},
+        )
+    )
+    return HubActionResult(payload)
+
+
+HUB_ACTIONS: dict[str, Callable[[HubActionContext, Any], HubActionResult]] = {
+    "enroll": _action_enroll,
+    "devices": _action_devices,
+    "packages": _action_packages,
+    "runtime-targets": _action_runtime_targets,
+    "runtime-validations": _action_runtime_validations,
+    "benchmarks": _action_benchmarks,
+    "rollouts": _action_rollouts,
+    "rollout-plans": _action_rollout_plans,
+    "status": _action_status,
+    "readiness": _action_readiness,
+    "edge-runtime-mission": _action_readiness,
+    "mission-package-plan": _action_mission_package_plan,
+    "mission-package-download": _action_mission_package_plan,
+    "mission-package-stage": _action_mission_package_stage,
+    "telemetry": _action_telemetry,
+    "evidence": _action_evidence,
+    "package-from-mlflow": _action_package_from_mlflow,
+    "register-package": _action_register_package,
+    "register-runtime": _action_register_runtime,
+    "validate-runtime": _action_validate_runtime,
+    "preview-compatibility": _action_preview_compatibility,
+    "compatibility-matrix": _action_compatibility_matrix,
+    "promote-package": _action_promote_package,
+    "create-rollout-plan": _action_create_rollout_plan,
+    "advance-rollout-plan": _action_advance_rollout_plan,
+    "pause-rollout-plan": _action_pause_rollout_plan,
+    "resume-rollout-plan": _action_resume_rollout_plan,
+    "assign": _action_assign,
+    "approve": _action_approve,
+    "apply": _action_apply,
+    "rollback": _action_rollback,
+    "export": _action_export,
+    "import": _action_import,
+    "replay-telemetry": _action_replay_telemetry,
+    "ingest-evidence": _action_ingest_evidence,
+}
+
+
 @app.command()
 def hub(
     action: str = typer.Argument(
@@ -2308,461 +2997,22 @@ def hub(
 
     import httpx
 
-    from temms.core.runtime_target_runner import validate_runtime_target_package
-
     base_url = _hub_api_url(hub_url)
     headers = _hub_auth_headers(token)
     readiness_proof_payload: dict[str, Any] | None = None
 
     try:
         with httpx.Client(base_url=base_url, headers=headers, timeout=30.0) as client:
-            if action == "enroll":
-                if device_id is None:
-                    console.print("[red]--device-id is required[/red]")
-                    raise typer.Exit(1)
-                payload = _checked_json(
-                    client.post(
-                        "/devices/enroll",
-                        json={
-                            "device_id": device_id,
-                            "profile": device_profile,
-                            "labels": _parse_key_value_options(labels),
-                            "inventory": _parse_key_value_options(inventory),
-                        },
-                    )
-                )
-            elif action == "devices":
-                payload = _checked_json(client.get("/devices"))
-            elif action == "packages":
-                payload = _checked_json(client.get("/packages"))
-            elif action == "runtime-targets":
-                payload = _checked_json(client.get("/runtime-targets"))
-            elif action == "runtime-validations":
-                params = {}
-                if package_id:
-                    params["package_id"] = package_id
-                if runtime_target_id:
-                    params["runtime_target_id"] = runtime_target_id
-                payload = _checked_json(
-                    client.get("/runtime-targets/validations", params=params or None)
-                )
-            elif action == "benchmarks":
-                params = {}
-                if device_id:
-                    params["device_id"] = device_id
-                if package_id:
-                    params["package_id"] = package_id
-                if runtime_target_id:
-                    params["runtime_target_id"] = runtime_target_id
-                payload = _checked_json(client.get("/benchmarks", params=params or None))
-            elif action == "rollouts":
-                payload = _checked_json(client.get("/rollouts"))
-            elif action == "rollout-plans":
-                payload = _checked_json(client.get("/rollout-plans"))
-            elif action == "status":
-                payload = _checked_json(client.get("/deployment-status"))
-            elif action in {"readiness", "edge-runtime-mission"}:
-                params = _hub_readiness_query_params(
-                    package_id=package_id,
-                    model_id=model_id,
-                    device_id=device_id,
-                    runtime_target_id=runtime_target_id,
-                    slot=slot_name,
-                )
-                readiness_payload = _checked_json(
-                    client.get("/readiness", params=params or None)
-                )
-                readiness_proof_payload = readiness_payload
-                if action == "edge-runtime-mission":
-                    mission = readiness_payload.get("edge_runtime_mission")
-                    payload = mission if isinstance(mission, dict) else {}
-                else:
-                    payload = readiness_payload
-            elif action in {"mission-package-plan", "mission-package-download"}:
-                request = _hub_mission_package_request_body(
-                    source=source,
-                    package_id=package_id,
-                    model_id=model_id,
-                    device_id=device_id,
-                    runtime_target_id=runtime_target_id,
-                    slot=slot_name,
-                    goal=mission_goal,
-                    mission_yaml=mission_yaml,
-                    mission_yaml_file=mission_yaml_file,
-                    sensor=sensor,
-                    latency_budget_ms=latency_budget_ms,
-                    min_throughput_ips=min_throughput_ips,
-                    switch_policy=switch_policy,
-                    confidence_threshold=confidence_threshold,
-                    fallback_model_id=fallback_model_id,
-                    ddil_mode=ddil_mode,
-                    require_go=require_go,
-                    min_runtime_fit=min_runtime_fit,
-                    require_best_runtime=require_best_runtime,
-                    require_capability_lock=require_capability_lock,
-                    require_proof_signature=require_proof_signature,
-                )
-                endpoint = (
-                    "/mission-package/download"
-                    if action == "mission-package-download"
-                    else "/mission-package/plan"
-                )
-                payload = _checked_json(client.post(endpoint, json=request))
-            elif action == "mission-package-stage":
-                request = _hub_mission_package_stage_request(
-                    source=source,
-                    rollout_id=rollout_id,
-                    actor=actor,
-                    reason=reason,
-                )
-                payload = _checked_json(client.post("/mission-package/stage", json=request))
-            elif action == "telemetry":
-                payload = _checked_json(client.get("/telemetry"))
-            elif action == "evidence":
-                payload = _checked_json(client.get("/evidence"))
-            elif action == "package-from-mlflow":
-                if source is None:
-                    console.print("[red]MLflow model URI required, e.g. models:/name/version[/red]")
-                    raise typer.Exit(1)
-                if slot_name is None:
-                    console.print("[red]--slot is required[/red]")
-                    raise typer.Exit(1)
-                runtime_constraints: dict[str, Any] = {}
-                if device_profile:
-                    runtime_constraints["device_profiles"] = [device_profile]
-                if runtimes:
-                    runtime_constraints["runtimes"] = runtimes
-                if providers:
-                    runtime_constraints["preferred_providers"] = providers
-                if accelerators:
-                    runtime_constraints["accelerators"] = accelerators
-                runtime_options: dict[str, Any] = {}
-                if providers:
-                    runtime_options["providers"] = providers
-                payload = _checked_json(
-                    client.post(
-                        "/packages/from-mlflow",
-                        json={
-                            "model_uri": source,
-                            "slot": slot_name,
-                            "tracking_uri": tracking_uri,
-                            "device_profile": device_profile,
-                            "runtime_constraints": runtime_constraints,
-                            "runtime_options": runtime_options,
-                            "model_artifact_path": model_artifact,
-                            "require_schema": require_schema,
-                            "require_signature": require_signature,
-                            "signing_key": key,
-                            "archive": archive,
-                            "overwrite": overwrite,
-                            "strict_metadata": strict_metadata,
-                            "actor": actor,
-                        },
-                    )
-                )
-            elif action == "register-package":
-                if source is None:
-                    console.print("[red]Package path required[/red]")
-                    raise typer.Exit(1)
-                payload = _checked_json(
-                    client.post(
-                        "/packages/register",
-                        json={
-                            "package_path": str(Path(source).expanduser()),
-                            "require_signature": require_signature,
-                            "signing_key": key,
-                            "device_profiles": [device_profile] if device_profile else None,
-                            "strict_metadata": strict_metadata,
-                            "actor": actor,
-                        },
-                    )
-                )
-            elif action == "register-runtime":
-                if runtime_target_id is None or image is None:
-                    console.print("[red]--runtime-target-id and --image are required[/red]")
-                    raise typer.Exit(1)
-                runtime_inventory = {runtime: {"available": True} for runtime in (runtimes or [])}
-                if providers:
-                    runtime_inventory.setdefault("onnxruntime", {"available": True})[
-                        "providers"
-                    ] = providers
-                accelerator_inventory = {
-                    accelerator: {"available": True} for accelerator in (accelerators or [])
-                }
-                constraints: dict[str, Any] = {}
-                if device_profile:
-                    constraints["device_profiles"] = [device_profile]
-                if runtimes:
-                    constraints["runtimes"] = runtimes
-                if providers:
-                    constraints["preferred_providers"] = providers
-                if accelerators:
-                    constraints["accelerators"] = accelerators
-                payload = _checked_json(
-                    client.post(
-                        "/runtime-targets",
-                        json={
-                            "runtime_target_id": runtime_target_id,
-                            "name": runtime_target_id,
-                            "image": image,
-                            "os": os_name,
-                            "arch": arch,
-                            "device_profiles": [device_profile] if device_profile else [],
-                            "runtimes": runtime_inventory,
-                            "accelerators": accelerator_inventory,
-                            "runtime_constraints": constraints,
-                            "labels": _parse_key_value_options(labels),
-                            "actor": actor,
-                        },
-                    )
-                )
-            elif action == "validate-runtime":
-                if source is None or runtime_target_id is None:
-                    console.print("[red]Package path and --runtime-target-id are required[/red]")
-                    raise typer.Exit(1)
-                targets_payload = _checked_json(client.get("/runtime-targets"))
-                runtime_target = _find_runtime_target(
-                    targets_payload.get("runtime_targets", []),
-                    runtime_target_id,
-                )
-                result = validate_runtime_target_package(
-                    runtime_target,
-                    Path(source),
-                    require_signature=require_signature,
-                    strict_metadata=strict_metadata,
-                    signing_key=key,
-                    signing_key_file=signing_key_file,
-                    pull_image=pull_image,
-                    dry_run=dry_run,
-                    local=local_runtime,
-                    timeout_s=timeout_s,
-                )
-                payload = {
-                    "schema_version": "temms-runtime-target-validation/v1",
-                    **result.to_dict(),
-                }
-                result_payload = dict(payload)
-                validation_record = _checked_json(
-                    client.post(
-                        "/runtime-targets/validations",
-                        json={
-                            "runtime_target_id": runtime_target_id,
-                            "package_id": package_id,
-                            "package_path": str(Path(source).expanduser()),
-                            "result": result_payload,
-                            "actor": actor,
-                        },
-                    )
-                )
-                payload["validation_record"] = validation_record
-            elif action == "preview-compatibility":
-                if device_id is None or package_id is None:
-                    console.print("[red]--device-id and --package-id are required[/red]")
-                    raise typer.Exit(1)
-                request = {
-                    "device_id": device_id,
-                    "package_id": package_id,
-                    "runtime_target_id": runtime_target_id,
-                }
-                if model_id:
-                    request["model_id"] = model_id
-                payload = _checked_json(
-                    client.post(
-                        "/compatibility/preview",
-                        json=request,
-                    )
-                )
-            elif action == "compatibility-matrix":
-                request = {
-                    "package_ids": [package_id] if package_id else None,
-                    "device_ids": [device_id] if device_id else None,
-                    "runtime_target_ids": [runtime_target_id] if runtime_target_id else None,
-                    "include_device_inventory": include_device_inventory,
-                }
-                if model_id:
-                    request["model_ids"] = [model_id]
-                payload = _checked_json(client.post("/compatibility/matrix", json=request))
-            elif action == "promote-package":
-                target_package = source or package_id
-                if target_package is None or promotion_state is None:
-                    console.print("[red]Package ID and --promotion-state are required[/red]")
-                    raise typer.Exit(1)
-                payload = _checked_json(
-                    client.post(
-                        f"/packages/{target_package}/promote",
-                        json={
-                            "state": promotion_state,
-                            "reason": reason,
-                            "actor": actor,
-                        },
-                    )
-                )
-            elif action == "create-rollout-plan":
-                devices = list(target_device_ids or [])
-                if device_id:
-                    devices.append(device_id)
-                if package_id is None or not devices:
-                    console.print(
-                        "[red]--package-id and at least one target device are required[/red]"
-                    )
-                    raise typer.Exit(1)
-                request = {
-                    "plan_id": rollout_plan_id,
-                    "package_id": package_id,
-                    "device_ids": devices,
-                    "slot": slot_name,
-                    "runtime_target_id": runtime_target_id,
-                    "batch_size": batch_size,
-                    "require_runtime_validation": require_runtime_validation,
-                    "require_approval": require_approval,
-                    "actor": actor,
-                }
-                if model_id:
-                    request["model_id"] = model_id
-                payload = _checked_json(client.post("/rollout-plans", json=request))
-            elif action == "advance-rollout-plan":
-                target_plan = source or rollout_plan_id
-                if target_plan is None:
-                    console.print("[red]Rollout plan ID required[/red]")
-                    raise typer.Exit(1)
-                payload = _checked_json(
-                    client.post(
-                        f"/rollout-plans/{target_plan}/advance",
-                        json={"limit": batch_size, "actor": actor},
-                    )
-                )
-            elif action == "pause-rollout-plan":
-                target_plan = source or rollout_plan_id
-                if target_plan is None:
-                    console.print("[red]Rollout plan ID required[/red]")
-                    raise typer.Exit(1)
-                payload = _checked_json(
-                    client.post(
-                        f"/rollout-plans/{target_plan}/pause",
-                        json={"reason": reason, "actor": actor},
-                    )
-                )
-            elif action == "resume-rollout-plan":
-                target_plan = source or rollout_plan_id
-                if target_plan is None:
-                    console.print("[red]Rollout plan ID required[/red]")
-                    raise typer.Exit(1)
-                payload = _checked_json(
-                    client.post(
-                        f"/rollout-plans/{target_plan}/resume",
-                        json={"reason": reason, "actor": actor},
-                    )
-                )
-            elif action == "assign":
-                if device_id is None or package_id is None:
-                    console.print("[red]--device-id and --package-id are required[/red]")
-                    raise typer.Exit(1)
-                request = {
-                    "device_id": device_id,
-                    "package_id": package_id,
-                    "slot": slot_name,
-                    "rollout_id": rollout_id,
-                    "runtime_target_id": runtime_target_id,
-                    "require_runtime_validation": require_runtime_validation,
-                    "require_approval": require_approval,
-                    "actor": actor,
-                }
-                if model_id:
-                    request["model_id"] = model_id
-                payload = _checked_json(client.post("/rollouts", json=request))
-            elif action == "approve":
-                target_rollout = source or rollout_id
-                if target_rollout is None:
-                    console.print("[red]Rollout ID required[/red]")
-                    raise typer.Exit(1)
-                payload = _checked_json(
-                    client.post(
-                        f"/rollouts/{target_rollout}/approve",
-                        json={"reason": reason, "actor": actor},
-                    )
-                )
-            elif action == "apply":
-                target_rollout = source or rollout_id
-                if target_rollout is None:
-                    console.print("[red]Rollout ID required[/red]")
-                    raise typer.Exit(1)
-                payload = _checked_json(
-                    client.post(
-                        f"/rollouts/{target_rollout}/apply",
-                        json={
-                            "require_signature": require_signature,
-                            "signing_key": key,
-                            "actor": actor,
-                        },
-                    )
-                )
-            elif action == "rollback":
-                target_rollout = source or rollout_id
-                if target_rollout is None:
-                    console.print("[red]Rollout ID required[/red]")
-                    raise typer.Exit(1)
-                payload = _checked_json(
-                    client.post(
-                        f"/rollouts/{target_rollout}/rollback",
-                        json={"reason": reason, "actor": actor},
-                    )
-                )
-            elif action == "export":
-                payload = _checked_json(
-                    client.post(
-                        "/airgap/export",
-                        json={"include_packages": include_packages},
-                    )
-                )
-                if output is not None:
-                    output.write_text(
-                        json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
-                    )
-                    console.print(f"[green]Hub bundle written:[/green] {output}")
-                    return
-            elif action == "import":
-                if source is None:
-                    console.print("[red]Bundle path required[/red]")
-                    raise typer.Exit(1)
-                bundle = json.loads(Path(source).read_text(encoding="utf-8"))
-                payload = _checked_json(client.post("/airgap/import", json=bundle))
-            elif action == "replay-telemetry":
-                if source is None:
-                    console.print("[red]Telemetry bundle path required[/red]")
-                    raise typer.Exit(1)
-                bundle = json.loads(Path(source).read_text(encoding="utf-8"))
-                payload = _checked_json(
-                    client.post(
-                        "/telemetry/replay",
-                        json={"bundle": bundle, "device_id": device_id, "actor": actor},
-                    )
-                )
-            elif action == "ingest-evidence":
-                if source is None:
-                    console.print("[red]Evidence bundle path required[/red]")
-                    raise typer.Exit(1)
-                bundle = json.loads(Path(source).read_text(encoding="utf-8"))
-                payload = _checked_json(
-                    client.post(
-                        "/evidence/ingest",
-                        json={"bundle": bundle, "device_id": device_id, "actor": actor},
-                    )
-                )
-            else:
+            handler = HUB_ACTIONS.get(action)
+            if handler is None:
                 console.print(f"[red]Unknown action: {action}[/red]")
-                console.print(
-                    "Valid actions: enroll, devices, packages, runtime-targets, rollouts, "
-                    "status, readiness, edge-runtime-mission, verify-edge-proof, "
-                    "package-from-mlflow, mission-package-plan, mission-package-download, "
-                    "mission-package-stage, "
-                    "register-package, register-runtime, validate-runtime, "
-                    "runtime-validations, benchmarks, preview-compatibility, "
-                    "compatibility-matrix, promote-package, rollout-plans, "
-                    "create-rollout-plan, advance-rollout-plan, pause-rollout-plan, "
-                    "resume-rollout-plan, assign, approve, apply, rollback, export, import, "
-                    "ingest-evidence, evidence, replay-telemetry, telemetry"
-                )
+                console.print("Valid actions: " + ", ".join(sorted(HUB_ACTIONS)))
                 raise typer.Exit(1)
+            result = handler(HubActionContext(action=action, source=source, device_id=device_id, package_id=package_id, model_id=model_id, slot_name=slot_name, rollout_id=rollout_id, rollout_plan_id=rollout_plan_id, target_device_ids=target_device_ids, batch_size=batch_size, runtime_target_id=runtime_target_id, mission_yaml=mission_yaml, mission_yaml_file=mission_yaml_file, mission_goal=mission_goal, sensor=sensor, latency_budget_ms=latency_budget_ms, min_throughput_ips=min_throughput_ips, switch_policy=switch_policy, confidence_threshold=confidence_threshold, fallback_model_id=fallback_model_id, ddil_mode=ddil_mode, require_runtime_validation=require_runtime_validation, require_approval=require_approval, promotion_state=promotion_state, image=image, os_name=os_name, arch=arch, runtimes=runtimes, providers=providers, accelerators=accelerators, tracking_uri=tracking_uri, model_artifact=model_artifact, require_schema=require_schema, archive=archive, overwrite=overwrite, output=output, include_packages=include_packages, include_device_inventory=include_device_inventory, pull_image=pull_image, dry_run=dry_run, local_runtime=local_runtime, timeout_s=timeout_s, strict_metadata=strict_metadata, require_signature=require_signature, signing_key_file=signing_key_file, device_profile=device_profile, labels=labels, inventory=inventory, actor=actor, reason=reason, require_go=require_go, min_runtime_fit=min_runtime_fit, require_best_runtime=require_best_runtime, require_capability_lock=require_capability_lock, require_proof_signature=require_proof_signature, key=key), client)
+            payload = result.payload
+            readiness_proof_payload = result.readiness_proof
+            if result.handled:
+                return
     except typer.Exit:
         raise
     except Exception as e:
