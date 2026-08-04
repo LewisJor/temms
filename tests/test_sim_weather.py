@@ -2,14 +2,14 @@
 Tests for the visual simulation weather augmentation engine.
 """
 
-import pytest
 import numpy as np
+import pytest
 
 from temms.sim.weather import (
+    apply_darkness,
     apply_fog,
     apply_rain,
     apply_snow,
-    apply_darkness,
     apply_sun_flare,
     apply_weather,
     conditions_to_effects,

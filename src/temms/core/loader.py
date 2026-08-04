@@ -2,10 +2,10 @@
 Unified model loader supporting multiple ML frameworks.
 """
 
-from pathlib import Path
-from typing import Any, Optional, Protocol
-from enum import Enum
 import logging
+from enum import Enum
+from pathlib import Path
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +37,8 @@ class ModelRuntime(Protocol):
 class ONNXRuntime:
     """ONNX Runtime wrapper."""
 
-    def __init__(self, providers: Optional[list[str]] = None):
-        self.session: Optional[Any] = None
+    def __init__(self, providers: list[str] | None = None):
+        self.session: Any | None = None
         self.providers = providers
 
     def load(self, model_path: Path) -> Any:
@@ -83,8 +83,8 @@ class ONNXRuntime:
 class TFLiteRuntime:
     """TensorFlow Lite runtime wrapper."""
 
-    def __init__(self, num_threads: Optional[int] = None):
-        self.interpreter: Optional[Any] = None
+    def __init__(self, num_threads: int | None = None):
+        self.interpreter: Any | None = None
         self.num_threads = num_threads
 
     def load(self, model_path: Path) -> Any:
@@ -136,7 +136,7 @@ class TorchScriptRuntime:
     """PyTorch TorchScript runtime wrapper."""
 
     def __init__(self):
-        self.model: Optional[Any] = None
+        self.model: Any | None = None
 
     def load(self, model_path: Path) -> Any:
         """Load TorchScript model."""
@@ -169,8 +169,8 @@ class TensorRTRuntime:
     """TensorRT serialized engine runtime wrapper."""
 
     def __init__(self):
-        self.engine: Optional[Any] = None
-        self.context: Optional[Any] = None
+        self.engine: Any | None = None
+        self.context: Any | None = None
 
     def load(self, model_path: Path) -> Any:
         """Load a serialized TensorRT engine."""
@@ -206,15 +206,15 @@ class ModelLoader:
     """Unified model loader with hot-swap support."""
 
     def __init__(self):
-        self.current_model: Optional[ModelRuntime] = None
-        self.current_runtime_type: Optional[RuntimeType] = None
-        self.current_path: Optional[Path] = None
+        self.current_model: ModelRuntime | None = None
+        self.current_runtime_type: RuntimeType | None = None
+        self.current_path: Path | None = None
 
     def load_model(
         self,
         model_path: Path,
         runtime_type: RuntimeType,
-        runtime_options: Optional[dict[str, Any]] = None,
+        runtime_options: dict[str, Any] | None = None,
     ) -> ModelRuntime:
         """
         Load a model with specified runtime.
@@ -261,7 +261,7 @@ class ModelLoader:
             self.current_runtime_type = None
             self.current_path = None
 
-    def get_current_model(self) -> Optional[ModelRuntime]:
+    def get_current_model(self) -> ModelRuntime | None:
         """Get currently loaded model."""
         return self.current_model
 

@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from temms.core.cache import ModelCache, CachedModel
+from temms.core.cache import CachedModel, ModelCache
 from temms.core.runtime_profiles import detect_runtime_capabilities
 from temms.core.storage import ModelStorage
 from temms.inference.runtime import InferenceRuntime

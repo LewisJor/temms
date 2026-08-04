@@ -10,13 +10,11 @@ Tests:
 """
 
 import json
-
-import pytest
-import time
 from datetime import datetime, timedelta
 
-from temms.slots.manager import SlotManager, SlotState, Slot, OperatorOverride
+import pytest
 
+from temms.slots.manager import OperatorOverride, SlotState
 
 # ── Slot CRUD ────────────────────────────────────────────────────────
 

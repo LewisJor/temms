@@ -16,21 +16,13 @@ import shlex
 import tempfile
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from temms.core import mission_package as _mission_package
+from temms.core import proof_gates
 from temms.core.atomic import write_json_atomic
-from temms.core.proof_gates import (
-    optional_float,
-    proof_gate_failures,
-    runtime_capability_lock,
-    runtime_capability_lock_failures,
-    runtime_fit_score,
-    runtime_target_best_failures,
-    runtime_target_selection,
-)
 from temms.core.runtime_profiles import (
     default_runtime_targets,
     normalize_device_profile,
@@ -707,7 +699,7 @@ class HubLiteStore:
             "content": artifact_bytes,
         }
 
-    def assign_rollout(
+    def assign_rollout(  # noqa: C901  (tracked in #54)
         self,
         device_id: str,
         package_id: str,
@@ -839,7 +831,7 @@ class HubLiteStore:
         self._write(data)
         return rollout
 
-    def create_rollout_plan(
+    def create_rollout_plan(  # noqa: C901  (tracked in #54)
         self,
         *,
         package_id: str,
@@ -977,7 +969,7 @@ class HubLiteStore:
         self._write(data)
         return plan
 
-    def advance_rollout_plan(
+    def advance_rollout_plan(  # noqa: C901  (tracked in #54)
         self,
         plan_id: str,
         *,
@@ -1418,7 +1410,7 @@ class HubLiteStore:
             bundle["package_artifacts"] = self._export_package_artifacts(data)
         return bundle
 
-    def import_bundle(
+    def import_bundle(  # noqa: C901  (tracked in #54)
         self, bundle: dict[str, Any], package_dir: Path | None = None
     ) -> dict[str, int]:
         """Merge an air-gap bundle into local state."""
@@ -2241,7 +2233,7 @@ def _compatibility_recommendation(cell: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _recommendation_score(cell: dict[str, Any]) -> int:
+def _recommendation_score(cell: dict[str, Any]) -> int:  # noqa: C901  (tracked in #54)
     score = 0
     if cell.get("compatible"):
         score += 34
@@ -2501,7 +2493,7 @@ def _numeric_headroom(observed: float | None, required: float | None) -> float |
     return round(observed - required, 3)
 
 
-def _runtime_target_fit_summary(
+def _runtime_target_fit_summary(  # noqa: C901  (tracked in #54)
     data: dict[str, Any],
     *,
     package: dict[str, Any],
@@ -3301,7 +3293,7 @@ def _runtime_target_assessments(
     return assessments
 
 
-def _runtime_target_assessment_remediation(
+def _runtime_target_assessment_remediation(  # noqa: C901  (tracked in #54)
     candidate: dict[str, Any],
     *,
     runtime_target_id: str,
@@ -4817,7 +4809,7 @@ def _fallback_model_readiness_action(
     )
 
 
-def _readiness_action_command(kind: str, refs: dict[str, Any]) -> dict[str, Any] | None:
+def _readiness_action_command(kind: str, refs: dict[str, Any]) -> dict[str, Any] | None:  # noqa: C901  (tracked in #54)
     if kind == "promote_package" and refs.get("package_id"):
         return _readiness_command(
             "POST",
@@ -6240,8 +6232,8 @@ def build_edge_mission_package_plan(
     return _build_edge_mission_package_plan(
         readiness,
         mission_spec,
-        proof_gate_failures=edge_runtime_proof_gate_failures,
-        capability_lock_for_proof_gate=_runtime_capability_lock_for_proof_gate,
+        proof_gate_failures=proof_gates.proof_gate_failures,
+        capability_lock_for_proof_gate=proof_gates.runtime_capability_lock,
         capability_lock_summary=_runtime_capability_lock_summary,
         require_go=require_go,
         min_runtime_fit=min_runtime_fit,
@@ -6251,7 +6243,7 @@ def build_edge_mission_package_plan(
     )
 
 
-def build_edge_runtime_proof(
+def build_edge_runtime_proof(  # noqa: C901  (tracked in #54)
     readiness: dict[str, Any],
     *,
     source_action: str = "edge-runtime-mission",
@@ -6289,7 +6281,7 @@ def build_edge_runtime_proof(
         if isinstance(readiness.get("edge_execution_contract"), dict)
         else {}
     )
-    gate_failures = edge_runtime_proof_gate_failures(
+    gate_failures = proof_gates.proof_gate_failures(
         source_action,
         payload,
         require_go=require_go,
@@ -6307,13 +6299,13 @@ def build_edge_runtime_proof(
         gate_policy["require_capability_lock"] = True
     proof = {
         "schema_version": EDGE_RUNTIME_PROOF_SCHEMA_VERSION,
-        "exported_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "exported_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "source_action": source_action,
         "gate_status": "passed" if not gate_failures else "failed",
         "gate_policy": gate_policy,
         "gate_failures": gate_failures,
         "status": str(payload.get("status") or "unknown"),
-        "runtime_fit_score": edge_runtime_proof_runtime_fit_score(source_action, payload),
+        "runtime_fit_score": proof_gates.runtime_fit_score(source_action, payload),
         "selection": selection,
         "edge_runtime_mission": mission,
         "readiness": readiness,
@@ -6352,15 +6344,6 @@ def build_edge_runtime_proof(
     return proof
 
 
-# Proof gates live in temms.core.proof_gates — the single source of truth shared
-# with the CLI verifier, so Hub enforcement and offline verification agree.
-edge_runtime_proof_gate_failures = proof_gate_failures
-edge_runtime_proof_runtime_fit_score = runtime_fit_score
-_runtime_target_best_gate_failures = runtime_target_best_failures
-_runtime_target_selection_for_proof_gate = runtime_target_selection
-_runtime_capability_lock_gate_failures = runtime_capability_lock_failures
-_runtime_capability_lock_for_proof_gate = runtime_capability_lock
-_optional_float = optional_float
 
 
 
@@ -6419,7 +6402,7 @@ def sign_edge_runtime_proof(
     attestation = {
         "schema_version": EDGE_RUNTIME_PROOF_ATTESTATION_SCHEMA_VERSION,
         "algorithm": SIGNATURE_ALGORITHM,
-        "signed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "signed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "signer": signer,
         "key_fingerprint": signing_key_fingerprint(key),
         "payload_sha256": payload_sha256,
@@ -6875,7 +6858,7 @@ def _select_readiness_device(
     return candidates[0]
 
 
-def _select_readiness_runtime_target(
+def _select_readiness_runtime_target(  # noqa: C901  (tracked in #54)
     data: dict[str, Any],
     *,
     runtime_target_id: str | None,
@@ -6970,16 +6953,6 @@ def _select_readiness_rollout(
         rollouts = [rollout for rollout in rollouts if rollout.get("slot") == slot]
     rollouts.sort(key=_record_timestamp, reverse=True)
     return rollouts[0] if rollouts else None
-
-
-def _record_timestamp(record: dict[str, Any]) -> str:
-    return str(
-        record.get("updated_at")
-        or record.get("created_at")
-        or record.get("last_seen_at")
-        or record.get("enrolled_at")
-        or ""
-    )
 
 
 def _first_declared_model_id(package: dict[str, Any]) -> str | None:
@@ -7187,7 +7160,7 @@ def _performance_fit_refs(fit: dict[str, Any]) -> dict[str, Any]:
     return refs
 
 
-def _fallback_model_candidate(
+def _fallback_model_candidate(  # noqa: C901  (tracked in #54)
     data: dict[str, Any],
     *,
     package: dict[str, Any],
@@ -7306,7 +7279,7 @@ def _fallback_model_candidate(
     return candidates[0]
 
 
-def _resource_envelope_summary(
+def _resource_envelope_summary(  # noqa: C901  (tracked in #54)
     *,
     package: dict[str, Any],
     device: dict[str, Any],
@@ -8300,7 +8273,7 @@ def _parse_hub_timestamp(value: str | None) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is not None:
-        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        parsed = parsed.astimezone(UTC).replace(tzinfo=None)
     return parsed
 
 

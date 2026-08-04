@@ -7,27 +7,20 @@ import os
 import shlex
 import socket
 import tempfile
-from contextlib import closing
-from pathlib import Path
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass
-from typing import Any, Optional
+from datetime import UTC
+from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from temms.core.proof_gates import (
-    optional_float,
-    proof_gate_failures,
-    runtime_capability_lock,
-    runtime_capability_lock_failures,
-    runtime_fit_score,
-    runtime_target_best_failures,
-    runtime_target_selection,
-)
 from temms import __version__
 from temms.cli import condition, slot
+from temms.core import proof_gates
 
 app = typer.Typer(
     name="temms",
@@ -117,10 +110,10 @@ def mission_validate(
 def mission_build(
     mission_file: Path = typer.Argument(..., help="Path to a mission.yaml"),
     output_dir: Path = typer.Option(Path("dist"), "--out", help="Output directory"),
-    key_file: Optional[Path] = typer.Option(
+    key_file: Path | None = typer.Option(
         None, "--sign", help="Ed25519 private key to sign the package"
     ),
-    tracking_uri: Optional[str] = typer.Option(
+    tracking_uri: str | None = typer.Option(
         None, "--mlflow-uri", help="MLflow tracking URI for mlflow:// sources"
     ),
     overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing package"),
@@ -259,7 +252,7 @@ def init(
     """Initialize TEMMS configuration and directories."""
     from temms.core.config import Config
 
-    console.print(f"[bold green]Initializing TEMMS...[/bold green]")
+    console.print("[bold green]Initializing TEMMS...[/bold green]")
 
     # Create directories
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -272,7 +265,7 @@ def init(
     (config_path.parent / "slots").mkdir(exist_ok=True)
 
     # Create config with actual data directory paths
-    from temms.core.config import DatabaseConfig, StorageConfig, PolicyConfig
+    from temms.core.config import DatabaseConfig, PolicyConfig, StorageConfig
 
     config = Config(
         database=DatabaseConfig(path=data_dir / "temms.db"),
@@ -286,7 +279,7 @@ def init(
 
     console.print(f"✓ Created configuration: {config_path}")
     console.print(f"✓ Created data directory: {data_dir}")
-    console.print(f"\n[bold]Next steps:[/bold]")
+    console.print("\n[bold]Next steps:[/bold]")
     console.print(
         "  1. Import a signed package: temms import <package_dir> --signing-key-file <key>"
     )
@@ -304,17 +297,17 @@ def import_package(
         "--require-signature/--allow-unsigned-package",
         help="Require and verify signature.json before import",
     ),
-    signing_key: Optional[str] = typer.Option(
+    signing_key: str | None = typer.Option(
         None,
         "--signing-key",
         help="Inline package signing key for signature verification",
     ),
-    signing_key_file: Optional[Path] = typer.Option(
+    signing_key_file: Path | None = typer.Option(
         None,
         "--signing-key-file",
         help="File containing package signing key",
     ),
-    device_profile: Optional[str] = typer.Option(
+    device_profile: str | None = typer.Option(
         None,
         "--device-profile",
         help="Validate package compatibility for this device profile",
@@ -332,11 +325,11 @@ def import_package(
     ),
 ):
     """Import a TEMMS package (models + policies)."""
-    from temms.core.config import Config
     from temms.core.cache import ModelCache
-    from temms.core.storage import ModelStorage
+    from temms.core.config import Config
     from temms.core.package import PackageImporter
     from temms.core.signing import read_signing_key
+    from temms.core.storage import ModelStorage
 
     if not package_path.exists():
         console.print(f"[red]Error: Package not found: {package_path}[/red]")
@@ -362,7 +355,7 @@ def import_package(
         with console.status("[bold green]Importing package..."):
             result = importer.import_package(package_path, verify=verify)
 
-        console.print(f"[green]✓ Package imported successfully[/green]")
+        console.print("[green]✓ Package imported successfully[/green]")
         console.print(f"\nPackage: {result.manifest.name} v{result.manifest.version}")
         console.print(f"Models imported: {len(result.models)}")
         for model in result.models:
@@ -388,9 +381,9 @@ def import_alias(
         "--require-signature/--allow-unsigned-package",
         help="Require and verify signature.json before import",
     ),
-    signing_key: Optional[str] = typer.Option(None, "--signing-key"),
-    signing_key_file: Optional[Path] = typer.Option(None, "--signing-key-file"),
-    device_profile: Optional[str] = typer.Option(None, "--device-profile"),
+    signing_key: str | None = typer.Option(None, "--signing-key"),
+    signing_key_file: Path | None = typer.Option(None, "--signing-key-file"),
+    device_profile: str | None = typer.Option(None, "--device-profile"),
     strict_metadata: bool = typer.Option(
         True,
         "--strict-metadata/--allow-lab-metadata",
@@ -426,8 +419,8 @@ def status(
     ),
 ):
     """Show TEMMS system status."""
-    from temms.core.config import Config
     from temms.core.cache import ModelCache
+    from temms.core.config import Config
     from temms.slots.manager import SlotManager
 
     if not config_path.exists():
@@ -451,14 +444,14 @@ def status(
     # Slots
     slots = slot_manager.list_slots()
     console.print(f"\nSlots: {len(slots)}")
-    for slot in slots:
-        status_icon = "✓" if slot.state.value == "running" else "○"
-        console.print(f"  {status_icon} {slot.name}: {slot.state.value}")
+    for slot_row in slots:
+        status_icon = "✓" if slot_row.state.value == "running" else "○"
+        console.print(f"  {status_icon} {slot_row.name}: {slot_row.state.value}")
 
 
 @app.command()
-def evidence(
-    slot: Optional[str] = typer.Option(
+def evidence(  # noqa: C901  (tracked in #54)
+    slot: str | None = typer.Option(
         None,
         "--slot",
         "-s",
@@ -470,13 +463,13 @@ def evidence(
         "-n",
         help="Maximum number of recent decisions to include",
     ),
-    output: Optional[Path] = typer.Option(
+    output: Path | None = typer.Option(
         None,
         "--output",
         "-o",
         help="Write evidence bundle JSON to this path",
     ),
-    input_bundle: Optional[Path] = typer.Option(
+    input_bundle: Path | None = typer.Option(
         None,
         "--input",
         help="Read an existing evidence bundle JSON file",
@@ -496,12 +489,12 @@ def evidence(
         "--verify-chain",
         help="Verify the tamper-evident decision chain and exit",
     ),
-    public_key: Optional[Path] = typer.Option(
+    public_key: Path | None = typer.Option(
         None,
         "--public-key",
         help="Ed25519 public key file to verify the signed chain head",
     ),
-    trust_store_path: Optional[Path] = typer.Option(
+    trust_store_path: Path | None = typer.Option(
         None,
         "--trust-store",
         help="Verify the chain head against a trust store instead of a single key",
@@ -661,17 +654,17 @@ def version():
 
 
 @app.command()
-def daemon(
+def daemon(  # noqa: C901  (tracked in #54)
     action: str = typer.Argument(..., help="Action: start, stop, status"),
     foreground: bool = typer.Option(
         False, "--foreground", "-f", help="Run in foreground (don't daemonize)"
     ),
-    host: Optional[str] = typer.Option(
+    host: str | None = typer.Option(
         None,
         "--host",
         help="Inference server host (defaults to TEMMS_HOST or 0.0.0.0)",
     ),
-    port: Optional[int] = typer.Option(
+    port: int | None = typer.Option(
         None,
         "--port",
         "-p",
@@ -690,8 +683,8 @@ def daemon(
     import signal
 
     if action == "start":
-        from temms.daemon.service import TEMMSDaemon, DaemonConfig
         from temms.core.config import Config
+        from temms.daemon.service import DaemonConfig, TEMMSDaemon
 
         daemon_overrides: dict[str, Any] = {}
         if host is not None:
@@ -712,7 +705,7 @@ def daemon(
             daemon_config = DaemonConfig(**daemon_overrides)
 
         if foreground:
-            console.print(f"[bold green]Starting TEMMS daemon in foreground...[/bold green]")
+            console.print("[bold green]Starting TEMMS daemon in foreground...[/bold green]")
             console.print(f"  Host: {daemon_config.inference_host}")
             console.print(f"  Port: {daemon_config.inference_port}")
             console.print(f"  Config: {config_path}")
@@ -725,7 +718,7 @@ def daemon(
                 console.print("\n[yellow]Daemon stopped by user[/yellow]")
         else:
             # Fork to background
-            console.print(f"[bold green]Starting TEMMS daemon...[/bold green]")
+            console.print("[bold green]Starting TEMMS daemon...[/bold green]")
             pid_file = Path("/var/run/temms.pid")
 
             # Check if already running
@@ -756,7 +749,7 @@ def daemon(
                 pid = os.fork()
                 if pid > 0:
                     os._exit(0)
-            except OSError as e:
+            except OSError:
                 os._exit(1)
 
             # Write PID file
@@ -818,7 +811,7 @@ def daemon(
             with httpx.Client() as client:
                 response = client.get(f"http://{host}:{port}/v1/health", timeout=2)
                 if response.status_code == 200:
-                    console.print(f"[green]API healthy[/green]")
+                    console.print("[green]API healthy[/green]")
 
                 # Get system status
                 status_response = client.get(f"http://{host}:{port}/v1/status", timeout=2)
@@ -839,9 +832,9 @@ def daemon(
 
 
 @app.command()
-def policy(
+def policy(  # noqa: C901  (tracked in #54)
     action: str = typer.Argument(..., help="Action: load, list, status"),
-    policy_file: Optional[Path] = typer.Argument(None, help="Policy file path"),
+    policy_file: Path | None = typer.Argument(None, help="Policy file path"),
     config_path: Path = typer.Option(
         Path("/etc/temms/temms.yaml"),
         "--config",
@@ -850,8 +843,8 @@ def policy(
     ),
 ):
     """Manage policies."""
-    from temms.core.config import Config
     from temms.conditions.store import ConditionStore
+    from temms.core.config import Config
     from temms.policy.engine import PolicyEngine
 
     if not config_path.exists():
@@ -918,7 +911,7 @@ def policy(
                     str(len(loaded.spec.rules)),
                     pf.name,
                 )
-            except Exception as e:
+            except Exception:
                 table.add_row(pf.stem, "[red]Error[/red]", "-", pf.name)
 
         console.print(table)
@@ -948,7 +941,7 @@ def policy(
 
 
 @app.command()
-def doctor(
+def doctor(  # noqa: C901  (tracked in #54)
     config_path: Path = typer.Option(
         Path("/etc/temms/temms.yaml"),
         "--config",
@@ -1314,7 +1307,7 @@ def _doctor_security_report() -> dict[str, Any]:
     }
 
 
-def _env_bool_default_true(value: Optional[str]) -> bool:
+def _env_bool_default_true(value: str | None) -> bool:
     """Parse an environment boolean whose unset default is true."""
     if value is None:
         return True
@@ -1384,28 +1377,28 @@ def benchmark(
     slot_name: str = typer.Option("benchmark", "--slot", help="Temporary benchmark slot"),
     samples: int = typer.Option(5, "--samples", "-n", min=1, help="Measured inference runs"),
     warmup: int = typer.Option(1, "--warmup", min=0, help="Warmup inference runs"),
-    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Write JSON result"),
-    hub_url: Optional[str] = typer.Option(
+    output: Path | None = typer.Option(None, "--output", "-o", help="Write JSON result"),
+    hub_url: str | None = typer.Option(
         None,
         "--hub-url",
         help="Publish benchmark evidence to this Hub Lite API base URL",
     ),
-    token: Optional[str] = typer.Option(
+    token: str | None = typer.Option(
         None,
         "--token",
         help="Hub API token; defaults to TEMMS_HUB_TOKEN or TEMMS_API_TOKEN",
     ),
-    device_id: Optional[str] = typer.Option(
+    device_id: str | None = typer.Option(
         None,
         "--device-id",
         help="Device ID to attach when publishing benchmark evidence",
     ),
-    package_id: Optional[str] = typer.Option(
+    package_id: str | None = typer.Option(
         None,
         "--package-id",
         help="Package ID to attach when publishing benchmark evidence",
     ),
-    runtime_target_id: Optional[str] = typer.Option(
+    runtime_target_id: str | None = typer.Option(
         None,
         "--runtime-target-id",
         help="Runtime target ID to attach when publishing benchmark evidence",
@@ -1481,17 +1474,17 @@ def benchmark(
 
 
 @app.command()
-def package(
+def package(  # noqa: C901  (tracked in #54)
     action: str = typer.Argument(
         ...,
         help="Action: from-mlflow, validate, sign, archive, inspect",
     ),
-    source: Optional[str] = typer.Argument(None, help="Model URI or package path"),
-    slot_name: Optional[str] = typer.Option(None, "--slot", help="Target TEMMS slot"),
-    policy_path: Optional[Path] = typer.Option(None, "--policy", help="Policy YAML to include"),
+    source: str | None = typer.Argument(None, help="Model URI or package path"),
+    slot_name: str | None = typer.Option(None, "--slot", help="Target TEMMS slot"),
+    policy_path: Path | None = typer.Option(None, "--policy", help="Policy YAML to include"),
     output_dir: Path = typer.Option(Path("."), "--output", "-o", help="Output directory"),
-    tracking_uri: Optional[str] = typer.Option(None, "--tracking-uri", help="MLflow tracking URI"),
-    model_format: Optional[str] = typer.Option(None, "--format", help="Model format override"),
+    tracking_uri: str | None = typer.Option(None, "--tracking-uri", help="MLflow tracking URI"),
+    model_format: str | None = typer.Option(None, "--format", help="Model format override"),
     require_schema: bool = typer.Option(
         True,
         "--require-schema/--allow-missing-schema",
@@ -1502,28 +1495,28 @@ def package(
         "--require-runtime-constraints/--allow-missing-runtime-constraints",
         help="Require runtime constraints when building MLflow packages",
     ),
-    device_profile: Optional[str] = typer.Option(
+    device_profile: str | None = typer.Option(
         None,
         "--device-profile",
         help="Target/check device profile such as x86_64-cpu or orin-tensorrt",
     ),
-    runtime_constraints: Optional[list[str]] = typer.Option(
+    runtime_constraints: list[str] | None = typer.Option(
         None,
         "--runtime-constraint",
         help="Runtime constraint override as key=JSON; repeatable for from-mlflow",
     ),
-    runtime_options: Optional[list[str]] = typer.Option(
+    runtime_options: list[str] | None = typer.Option(
         None,
         "--runtime-option",
         help="Runtime loader option override as key=JSON; repeatable for from-mlflow",
     ),
-    model_artifact: Optional[str] = typer.Option(
+    model_artifact: str | None = typer.Option(
         None,
         "--model-artifact",
         help="Relative MLflow artifact path to package when a run contains multiple model files",
     ),
-    signing_key: Optional[str] = typer.Option(None, "--signing-key", help="Inline signing key"),
-    signing_key_file: Optional[Path] = typer.Option(
+    signing_key: str | None = typer.Option(None, "--signing-key", help="Inline signing key"),
+    signing_key_file: Path | None = typer.Option(
         None,
         "--signing-key-file",
         help="File containing signing key",
@@ -1791,7 +1784,7 @@ def _package_validation_summary(manifest: dict[str, Any] | None) -> dict[str, An
 
 
 @app.command()
-def control(
+def control(  # noqa: C901  (tracked in #54)
     action: str = typer.Argument(
         ...,
         help=(
@@ -1804,20 +1797,20 @@ def control(
         "--control-url",
         help="TEMMS edge control API base URL",
     ),
-    token: Optional[str] = typer.Option(
+    token: str | None = typer.Option(
         None,
         "--token",
         help="Control API token; defaults to TEMMS_HUB_TOKEN or TEMMS_API_TOKEN",
     ),
-    payload_sha256: Optional[str] = typer.Option(
+    payload_sha256: str | None = typer.Option(
         None,
         "--payload-sha256",
         help="Pending DDIL intent payload SHA256 for retarget-runtime",
     ),
-    package_id: Optional[str] = typer.Option(None, "--package-id", help="Package ID"),
-    model_id: Optional[str] = typer.Option(None, "--model-id", help="Model ID"),
-    device_id: Optional[str] = typer.Option(None, "--device-id", help="Target edge device ID"),
-    runtime_target_id: Optional[str] = typer.Option(
+    package_id: str | None = typer.Option(None, "--package-id", help="Package ID"),
+    model_id: str | None = typer.Option(None, "--model-id", help="Model ID"),
+    device_id: str | None = typer.Option(None, "--device-id", help="Target edge device ID"),
+    runtime_target_id: str | None = typer.Option(
         None,
         "--runtime-target-id",
         help=(
@@ -1825,7 +1818,7 @@ def control(
             "auto-select the measured candidate when omitted"
         ),
     ),
-    slot_name: Optional[str] = typer.Option(None, "--slot", help="Target slot"),
+    slot_name: str | None = typer.Option(None, "--slot", help="Target slot"),
     actor: str = typer.Option(
         "operator:temms-cli",
         "--actor",
@@ -1836,7 +1829,7 @@ def control(
         "--source",
         help="Source label recorded on deploy intents",
     ),
-    reason: Optional[str] = typer.Option(
+    reason: str | None = typer.Option(
         None,
         "--reason",
         help="Reason recorded for retarget/quarantine/acknowledgement actions",
@@ -1953,12 +1946,12 @@ def _control_deploy_body(
     *,
     actor: str,
     source: str,
-    package_id: Optional[str],
+    package_id: str | None,
     model_id: str,
-    device_id: Optional[str],
-    runtime_target_id: Optional[str],
+    device_id: str | None,
+    runtime_target_id: str | None,
     slot: str,
-    reason: Optional[str],
+    reason: str | None,
 ) -> dict[str, Any]:
     return {
         key: value
@@ -2668,7 +2661,7 @@ HUB_ACTIONS: dict[str, Callable[[HubActionContext, Any], HubActionResult]] = {
 
 
 @app.command()
-def hub(
+def hub(  # noqa: C901  (tracked in #54)
     action: str = typer.Argument(
         ...,
         help=(
@@ -2682,7 +2675,7 @@ def hub(
             "ingest-evidence, evidence, replay-telemetry, telemetry"
         ),
     ),
-    source: Optional[str] = typer.Argument(
+    source: str | None = typer.Argument(
         None,
         help=(
             "MLflow model URI, package path, rollout ID, air-gap bundle path, "
@@ -2695,26 +2688,26 @@ def hub(
         "--hub-url",
         help="TEMMS Hub Lite API base URL",
     ),
-    token: Optional[str] = typer.Option(
+    token: str | None = typer.Option(
         None,
         "--token",
         help="Hub API token; defaults to TEMMS_HUB_TOKEN or TEMMS_API_TOKEN",
     ),
-    device_id: Optional[str] = typer.Option(None, "--device-id", help="Target device ID"),
-    package_id: Optional[str] = typer.Option(None, "--package-id", help="Package ID"),
-    model_id: Optional[str] = typer.Option(
+    device_id: str | None = typer.Option(None, "--device-id", help="Target device ID"),
+    package_id: str | None = typer.Option(None, "--package-id", help="Package ID"),
+    model_id: str | None = typer.Option(
         None,
         "--model-id",
         help="Model ID inside a multi-model package",
     ),
-    slot_name: Optional[str] = typer.Option(None, "--slot", help="Target rollout slot"),
-    rollout_id: Optional[str] = typer.Option(None, "--rollout-id", help="Rollout ID"),
-    rollout_plan_id: Optional[str] = typer.Option(
+    slot_name: str | None = typer.Option(None, "--slot", help="Target rollout slot"),
+    rollout_id: str | None = typer.Option(None, "--rollout-id", help="Rollout ID"),
+    rollout_plan_id: str | None = typer.Option(
         None,
         "--plan-id",
         help="Rollout plan ID for coordinated rollout actions",
     ),
-    target_device_ids: Optional[list[str]] = typer.Option(
+    target_device_ids: list[str] | None = typer.Option(
         None,
         "--target-device-id",
         help="Device ID included in a rollout plan; repeatable",
@@ -2725,59 +2718,59 @@ def hub(
         min=1,
         help="Number of devices assigned per rollout-plan batch",
     ),
-    runtime_target_id: Optional[str] = typer.Option(
+    runtime_target_id: str | None = typer.Option(
         None,
         "--runtime-target-id",
         help="Container runtime target for rollout assignment or runtime registration",
     ),
-    mission_yaml: Optional[str] = typer.Option(
+    mission_yaml: str | None = typer.Option(
         None,
         "--mission-yaml",
         help="Inline mission YAML used for mission package planning",
     ),
-    mission_yaml_file: Optional[Path] = typer.Option(
+    mission_yaml_file: Path | None = typer.Option(
         None,
         "--mission-yaml-file",
         help="Mission YAML file used for mission package planning",
     ),
-    mission_goal: Optional[str] = typer.Option(
+    mission_goal: str | None = typer.Option(
         None,
         "--goal",
         help="Mission goal for mission package planning",
     ),
-    sensor: Optional[str] = typer.Option(
+    sensor: str | None = typer.Option(
         None,
         "--sensor",
         help="Sensor input bound into the mission package",
     ),
-    latency_budget_ms: Optional[float] = typer.Option(
+    latency_budget_ms: float | None = typer.Option(
         None,
         "--latency-budget-ms",
         help="p95 latency budget in milliseconds for the mission package SLO",
     ),
-    min_throughput_ips: Optional[float] = typer.Option(
+    min_throughput_ips: float | None = typer.Option(
         None,
         "--min-throughput-ips",
         help="Minimum inference throughput for the mission package SLO",
     ),
-    switch_policy: Optional[str] = typer.Option(
+    switch_policy: str | None = typer.Option(
         None,
         "--switch-policy",
         help="Model switching policy bound into the mission package",
     ),
-    confidence_threshold: Optional[float] = typer.Option(
+    confidence_threshold: float | None = typer.Option(
         None,
         "--confidence-threshold",
         min=0.0,
         max=1.0,
         help="Confidence threshold for model switching",
     ),
-    fallback_model_id: Optional[str] = typer.Option(
+    fallback_model_id: str | None = typer.Option(
         None,
         "--fallback-model-id",
         help="Fallback model ID for mission package handling policy",
     ),
-    ddil_mode: Optional[str] = typer.Option(
+    ddil_mode: str | None = typer.Option(
         None,
         "--ddil-mode",
         help="DDIL behavior mode bound into the mission package",
@@ -2792,12 +2785,12 @@ def hub(
         "--require-approval",
         help="Require rollout approval before edge apply",
     ),
-    promotion_state: Optional[str] = typer.Option(
+    promotion_state: str | None = typer.Option(
         None,
         "--promotion-state",
         help="Package promotion target: validated, approved, released, or retired",
     ),
-    image: Optional[str] = typer.Option(
+    image: str | None = typer.Option(
         None,
         "--image",
         help="Container image for register-runtime",
@@ -2807,32 +2800,32 @@ def hub(
         "--os",
         help="Runtime target OS for register-runtime",
     ),
-    arch: Optional[str] = typer.Option(
+    arch: str | None = typer.Option(
         None,
         "--arch",
         help="Runtime target architecture such as amd64 or arm64",
     ),
-    runtimes: Optional[list[str]] = typer.Option(
+    runtimes: list[str] | None = typer.Option(
         None,
         "--runtime",
         help="Runtime available in the target image; repeatable",
     ),
-    providers: Optional[list[str]] = typer.Option(
+    providers: list[str] | None = typer.Option(
         None,
         "--provider",
         help="ONNX provider available in the target image; repeatable",
     ),
-    accelerators: Optional[list[str]] = typer.Option(
+    accelerators: list[str] | None = typer.Option(
         None,
         "--accelerator",
         help="Accelerator available to the target image; repeatable",
     ),
-    tracking_uri: Optional[str] = typer.Option(
+    tracking_uri: str | None = typer.Option(
         None,
         "--tracking-uri",
         help="MLflow tracking URI for package-from-mlflow",
     ),
-    model_artifact: Optional[str] = typer.Option(
+    model_artifact: str | None = typer.Option(
         None,
         "--model-artifact",
         help="Relative MLflow artifact path for package-from-mlflow",
@@ -2852,7 +2845,7 @@ def hub(
         "--overwrite",
         help="Replace an existing Hub package-from-mlflow output",
     ),
-    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file"),
+    output: Path | None = typer.Option(None, "--output", "-o", help="Output file"),
     include_packages: bool = typer.Option(
         False,
         "--include-packages",
@@ -2893,28 +2886,28 @@ def hub(
         "--require-signature/--allow-unsigned-package",
         help="Require signature for package registration or rollout apply",
     ),
-    signing_key: Optional[str] = typer.Option(None, "--signing-key", help="Inline signing key"),
-    signing_key_file: Optional[Path] = typer.Option(
+    signing_key: str | None = typer.Option(None, "--signing-key", help="Inline signing key"),
+    signing_key_file: Path | None = typer.Option(
         None,
         "--signing-key-file",
         help="File containing signing key",
     ),
-    device_profile: Optional[str] = typer.Option(
+    device_profile: str | None = typer.Option(
         None,
         "--device-profile",
         help="Device profile for enrollment or package registration",
     ),
-    labels: Optional[list[str]] = typer.Option(
+    labels: list[str] | None = typer.Option(
         None,
         "--label",
         help="Device enrollment label in key=value form; repeatable",
     ),
-    inventory: Optional[list[str]] = typer.Option(
+    inventory: list[str] | None = typer.Option(
         None,
         "--inventory",
         help="Device enrollment inventory in key=value form; repeatable",
     ),
-    actor: Optional[str] = typer.Option(
+    actor: str | None = typer.Option(
         None,
         "--actor",
         help="Operator or automation actor recorded in rollout audit history",
@@ -2930,7 +2923,7 @@ def hub(
         "--require-go",
         help="Exit non-zero unless readiness or edge-runtime-mission status is go",
     ),
-    min_runtime_fit: Optional[float] = typer.Option(
+    min_runtime_fit: float | None = typer.Option(
         None,
         "--min-runtime-fit",
         min=0.0,
@@ -2952,7 +2945,7 @@ def hub(
         "--require-proof-signature",
         help="Require and verify an edge-runtime proof attestation with --signing-key",
     ),
-    max_proof_age_seconds: Optional[float] = typer.Option(
+    max_proof_age_seconds: float | None = typer.Option(
         None,
         "--max-proof-age-seconds",
         min=0.0,
@@ -3019,7 +3012,7 @@ def hub(
         console.print(f"[red]Hub command failed: {e}[/red]")
         raise typer.Exit(1)
 
-    gate_failures = _hub_gate_failures(
+    gate_failures = proof_gates.proof_gate_failures(
         action,
         payload,
         require_go=require_go,
@@ -3083,7 +3076,7 @@ def _control_api_url(url: str) -> str:
     return f"{base}/v1/control"
 
 
-def _hub_auth_headers(token: Optional[str]) -> dict[str, str]:
+def _hub_auth_headers(token: str | None) -> dict[str, str]:
     """Return Hub Lite auth headers for CLI calls."""
     resolved = token or os.environ.get("TEMMS_HUB_TOKEN") or os.environ.get("TEMMS_API_TOKEN")
     if not resolved:
@@ -3091,7 +3084,7 @@ def _hub_auth_headers(token: Optional[str]) -> dict[str, str]:
     return {"X-TEMMS-Token": resolved}
 
 
-def _package_signing_key(signing_key, signing_key_file, read_key) -> Optional[str]:
+def _package_signing_key(signing_key, signing_key_file, read_key) -> str | None:
     """Resolve package verification key from CLI args or TEMMS package env vars."""
     resolved = read_key(signing_key, signing_key_file)
     if resolved:
@@ -3105,7 +3098,7 @@ def _package_signing_key(signing_key, signing_key_file, read_key) -> Optional[st
     return None
 
 
-def _hub_package_signing_key(signing_key, signing_key_file, read_key) -> Optional[str]:
+def _hub_package_signing_key(signing_key, signing_key_file, read_key) -> str | None:
     """Resolve package verification key for Hub CLI calls."""
     return _package_signing_key(signing_key, signing_key_file, read_key)
 
@@ -3133,11 +3126,11 @@ def _find_runtime_target(
 
 def _hub_readiness_query_params(
     *,
-    package_id: Optional[str],
-    model_id: Optional[str],
-    device_id: Optional[str],
-    runtime_target_id: Optional[str],
-    slot: Optional[str],
+    package_id: str | None,
+    model_id: str | None,
+    device_id: str | None,
+    runtime_target_id: str | None,
+    slot: str | None,
 ) -> dict[str, str]:
     """Return non-empty query params for Hub readiness selection."""
     return {
@@ -3155,24 +3148,24 @@ def _hub_readiness_query_params(
 
 def _hub_mission_package_request_body(
     *,
-    source: Optional[str],
-    package_id: Optional[str],
-    model_id: Optional[str],
-    device_id: Optional[str],
-    runtime_target_id: Optional[str],
-    slot: Optional[str],
-    goal: Optional[str],
-    mission_yaml: Optional[str],
-    mission_yaml_file: Optional[Path],
-    sensor: Optional[str],
-    latency_budget_ms: Optional[float],
-    min_throughput_ips: Optional[float],
-    switch_policy: Optional[str],
-    confidence_threshold: Optional[float],
-    fallback_model_id: Optional[str],
-    ddil_mode: Optional[str],
+    source: str | None,
+    package_id: str | None,
+    model_id: str | None,
+    device_id: str | None,
+    runtime_target_id: str | None,
+    slot: str | None,
+    goal: str | None,
+    mission_yaml: str | None,
+    mission_yaml_file: Path | None,
+    sensor: str | None,
+    latency_budget_ms: float | None,
+    min_throughput_ips: float | None,
+    switch_policy: str | None,
+    confidence_threshold: float | None,
+    fallback_model_id: str | None,
+    ddil_mode: str | None,
     require_go: bool,
-    min_runtime_fit: Optional[float],
+    min_runtime_fit: float | None,
     require_best_runtime: bool,
     require_capability_lock: bool,
     require_proof_signature: bool,
@@ -3223,9 +3216,9 @@ def _hub_mission_package_request_body(
 
 def _hub_mission_package_stage_request(
     *,
-    source: Optional[str],
-    rollout_id: Optional[str],
-    actor: Optional[str],
+    source: str | None,
+    rollout_id: str | None,
+    actor: str | None,
     reason: str,
 ) -> dict[str, Any]:
     """Return the Hub path/body for staging a mission package deployment intent."""
@@ -3266,15 +3259,6 @@ def _normalize_hub_mission_package_command_path(path: str) -> str:
     return normalized
 
 
-# Proof gates live in temms.core.proof_gates — the single source of truth shared
-# with Hub enforcement, so offline `verify-edge-proof` and the Hub cannot disagree.
-_hub_gate_failures = proof_gate_failures
-_hub_runtime_fit_score = runtime_fit_score
-_runtime_target_best_gate_failures = runtime_target_best_failures
-_runtime_target_selection_for_gate = runtime_target_selection
-_runtime_capability_lock_gate_failures = runtime_capability_lock_failures
-_runtime_capability_lock_for_gate = runtime_capability_lock
-_optional_float = optional_float
 
 
 
@@ -3293,7 +3277,7 @@ _optional_float = optional_float
 
 def _parse_proof_timestamp(value: Any) -> Any:
     """Parse an ISO8601 proof timestamp into an aware UTC datetime."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     if not value:
         return None
@@ -3302,23 +3286,23 @@ def _parse_proof_timestamp(value: Any) -> Any:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _edge_runtime_proof_freshness(
     proof: dict[str, Any],
     *,
-    max_age_seconds: Optional[float],
+    max_age_seconds: float | None,
 ) -> dict[str, Any]:
     """Return freshness status for an edge-runtime proof export timestamp."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     exported_at = proof.get("exported_at")
     exported = _parse_proof_timestamp(exported_at)
     result: dict[str, Any] = {
         "schema_version": "temms-edge-runtime-proof-freshness/v1",
-        "checked_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "checked_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "exported_at": exported_at,
         "max_age_seconds": max_age_seconds,
         "age_seconds": None,
@@ -3332,7 +3316,7 @@ def _edge_runtime_proof_freshness(
         result["errors"] = ["proof exported_at timestamp is missing or invalid"]
         return result
 
-    age_seconds = max(0.0, (datetime.now(timezone.utc) - exported).total_seconds())
+    age_seconds = max(0.0, (datetime.now(UTC) - exported).total_seconds())
     result["age_seconds"] = age_seconds
     if age_seconds > max_age_seconds:
         result["status"] = "stale"
@@ -3399,11 +3383,11 @@ def _hub_edge_runtime_proof_payload(
     payload: dict[str, Any],
     readiness: dict[str, Any],
     require_go: bool,
-    min_runtime_fit: Optional[float],
+    min_runtime_fit: float | None,
     require_best_runtime: bool,
     require_capability_lock: bool,
     gate_failures: list[str],
-    signing_key: Optional[str] = None,
+    signing_key: str | None = None,
 ) -> dict[str, Any]:
     """Build a portable proof envelope for selected model/runtime/edge checks."""
     from temms.hub_lite import build_edge_runtime_proof
@@ -3420,16 +3404,16 @@ def _hub_edge_runtime_proof_payload(
     )
 
 
-def _verify_edge_runtime_proof(
+def _verify_edge_runtime_proof(  # noqa: C901  (tracked in #54)
     path: Path,
     *,
     require_go: bool,
-    min_runtime_fit: Optional[float],
+    min_runtime_fit: float | None,
     require_best_runtime: bool,
     require_capability_lock: bool,
-    max_proof_age_seconds: Optional[float],
+    max_proof_age_seconds: float | None,
     expected_path: dict[str, Any],
-    signing_key: Optional[str] = None,
+    signing_key: str | None = None,
     require_attestation: bool = False,
 ) -> dict[str, Any]:
     """Verify a portable edge-runtime proof without contacting Hub Lite."""
@@ -3532,7 +3516,7 @@ def _verify_edge_runtime_proof(
         if isinstance(proof.get("edge_execution_contract"), dict)
         else {}
     )
-    requested_gate_failures = _hub_gate_failures(
+    requested_gate_failures = proof_gates.proof_gate_failures(
         gate_action,
         gate_payload,
         require_go=require_go,
@@ -3589,7 +3573,7 @@ def _verify_edge_runtime_proof(
 
     runtime_fit_score = proof.get("runtime_fit_score")
     if runtime_fit_score is None:
-        runtime_fit_score = _hub_runtime_fit_score(gate_action, gate_payload)
+        runtime_fit_score = proof_gates.runtime_fit_score(gate_action, gate_payload)
     target_runtime_coverage = _edge_target_runtime_coverage(
         edge_execution_contract or runtime_decision
     )
@@ -3857,7 +3841,7 @@ def json_dumps(payload: Any, **kwargs: Any) -> str:
     return json.dumps(payload, **kwargs)
 
 
-def _parse_key_value_options(values: Optional[list[str]]) -> dict[str, str]:
+def _parse_key_value_options(values: list[str] | None) -> dict[str, str]:
     """Parse repeated key=value CLI options."""
     parsed: dict[str, str] = {}
     for value in values or []:
@@ -3870,7 +3854,7 @@ def _parse_key_value_options(values: Optional[list[str]]) -> dict[str, str]:
     return parsed
 
 
-def _parse_json_key_value_options(values: Optional[list[str]]) -> dict[str, Any]:
+def _parse_json_key_value_options(values: list[str] | None) -> dict[str, Any]:
     """Parse repeated key=JSON CLI options."""
     import json
 
@@ -3888,7 +3872,7 @@ def _parse_json_key_value_options(values: Optional[list[str]]) -> dict[str, Any]
     return parsed
 
 
-def _print_control_payload(action: str, payload: dict) -> None:
+def _print_control_payload(action: str, payload: dict) -> None:  # noqa: C901  (tracked in #54)
     """Print local edge control responses in operator-readable form."""
     if action in {"offline", "online"}:
         mode = "offline" if payload.get("offline_mode") else "online"
@@ -4576,7 +4560,7 @@ def _print_hub_readiness(payload: dict[str, Any]) -> None:
         console.print(action_table)
 
 
-def _print_mission_package_plan(payload: dict[str, Any], *, downloaded: bool) -> None:
+def _print_mission_package_plan(payload: dict[str, Any], *, downloaded: bool) -> None:  # noqa: C901  (tracked in #54)
     """Print a compact mission package handoff summary."""
     selection = payload.get("selection") if isinstance(payload.get("selection"), dict) else {}
     mission = payload.get("mission") if isinstance(payload.get("mission"), dict) else {}
@@ -4856,7 +4840,7 @@ def _edge_runtime_decision_trace_row(target: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-def _edge_runtime_decision_trace_consistency(
+def _edge_runtime_decision_trace_consistency(  # noqa: C901  (tracked in #54)
     proof: dict[str, Any],
     trace: dict[str, Any],
 ) -> dict[str, Any]:
@@ -4947,7 +4931,7 @@ def _edge_runtime_decision_trace_consistency(
     }
 
 
-def _edge_execution_manifest_consistency(proof: dict[str, Any]) -> dict[str, Any]:
+def _edge_execution_manifest_consistency(proof: dict[str, Any]) -> dict[str, Any]:  # noqa: C901  (tracked in #54)
     manifest = (
         proof.get("edge_execution_manifest")
         if isinstance(proof.get("edge_execution_manifest"), dict)
@@ -6059,11 +6043,11 @@ def _hub_status_color(status: str) -> str:
 
 
 @app.command()
-def mlflow(
+def mlflow(  # noqa: C901  (tracked in #54)
     action: str = typer.Argument(..., help="Action: list, register, pull"),
-    model_name: Optional[str] = typer.Argument(None, help="Model name (for pull)"),
-    model_version: Optional[str] = typer.Option(None, "--version", "-v", help="Model version"),
-    tracking_uri: Optional[str] = typer.Option(None, "--tracking-uri", help="MLflow tracking URI"),
+    model_name: str | None = typer.Argument(None, help="Model name (for pull)"),
+    model_version: str | None = typer.Option(None, "--version", "-v", help="Model version"),
+    tracking_uri: str | None = typer.Option(None, "--tracking-uri", help="MLflow tracking URI"),
     allow_dev_pull: bool = typer.Option(
         False,
         "--allow-dev-pull",
@@ -6137,8 +6121,8 @@ def mlflow(
         console.print(table)
 
     elif action == "register":
-        from temms.core.config import Config
         from temms.core.cache import ModelCache
+        from temms.core.config import Config
 
         if not config_path.exists():
             console.print("[red]TEMMS not initialized. Run 'temms init' first.[/red]")

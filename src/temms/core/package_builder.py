@@ -14,10 +14,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from temms.core.package_archive import create_package_archive, default_archive_path
-from temms.core.runtime_profiles import normalize_device_profile
 from temms.core.identifiers import slugify
+from temms.core.package_archive import create_package_archive, default_archive_path
 from temms.core.package_validation import validate_package
+from temms.core.runtime_profiles import normalize_device_profile
 from temms.core.signing import sha256_file, sign_package
 
 
@@ -52,7 +52,7 @@ def parse_mlflow_model_uri(uri: str) -> MLflowModelRef:
     raise ValueError("Expected models:/name/version or models:/name@alias")
 
 
-def build_package_from_mlflow(
+def build_package_from_mlflow(  # noqa: C901  (tracked in #54)
     model_uri: str,
     slot: str,
     policy_path: Path | None,
@@ -423,7 +423,7 @@ def _find_mlmodel_file(artifact_root: Path, model_file: Path) -> Path | None:
     return None
 
 
-def _model_file_from_mlmodel(root: Path, extensions: set[str]) -> Path | None:
+def _model_file_from_mlmodel(root: Path, extensions: set[str]) -> Path | None:  # noqa: C901  (tracked in #54)
     """Return the model data file declared by MLflow flavor metadata when unambiguous."""
     declared: list[Path] = []
     for mlmodel_path in sorted(root.rglob("MLmodel")):

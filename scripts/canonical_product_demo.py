@@ -150,7 +150,7 @@ def _yaml_string(value: Path | str) -> str:
     return json.dumps(str(value))
 
 
-def _run_demo_in_workspace(
+def _run_demo_in_workspace(  # noqa: C901  (tracked in #54)
     run_root: Path,
     evidence_output: Path,
     *,

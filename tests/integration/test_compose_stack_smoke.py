@@ -15,7 +15,6 @@ from urllib import error, parse, request
 
 import pytest
 
-
 pytestmark = pytest.mark.skipif(
     os.getenv("TEMMS_COMPOSE_SMOKE") != "1",
     reason="compose smoke tests require a running docker compose stack",

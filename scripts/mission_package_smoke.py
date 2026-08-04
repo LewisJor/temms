@@ -16,7 +16,6 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-
 DEFAULT_BODY: dict[str, Any] = {
     "package_id": "pkg-vision-models-20240115",
     "model_id": "model-yolov8-lowlight-001",

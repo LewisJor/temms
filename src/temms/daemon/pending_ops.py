@@ -6,11 +6,10 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from temms.core.atomic import write_json_atomic
 from temms.core.signing import SIGNATURE_ALGORITHM, signing_key_fingerprint
-
 
 PENDING_OPERATION_SIGNATURE_SCHEMA = "temms-pending-operation-signature/v1"
 
@@ -34,7 +33,7 @@ class PendingOperationsStore:
     def enqueue(
         self,
         operation: str,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         *,
         signing_key: str | None = None,
         signer: str | None = None,
@@ -54,10 +53,10 @@ class PendingOperationsStore:
         entries.append(entry)
         write_json_atomic(self.path, entries, indent=2)
 
-    def read_all(self) -> List[Dict[str, Any]]:
+    def read_all(self) -> list[dict[str, Any]]:
         return json.loads(self.path.read_text(encoding="utf-8"))
 
-    def read_dead_letter(self) -> List[Dict[str, Any]]:
+    def read_dead_letter(self) -> list[dict[str, Any]]:
         if not self.dead_letter_path.exists():
             return []
         return json.loads(self.dead_letter_path.read_text(encoding="utf-8"))
@@ -65,22 +64,22 @@ class PendingOperationsStore:
     def clear(self) -> None:
         write_json_atomic(self.path, [])
 
-    def replace_all(self, entries: List[Dict[str, Any]]) -> None:
+    def replace_all(self, entries: list[dict[str, Any]]) -> None:
         """Replace the active queue while preserving each entry unchanged."""
         write_json_atomic(self.path, entries, indent=2)
 
-    def retarget_runtime(
+    def retarget_runtime(  # noqa: C901  (tracked in #54)
         self,
         *,
         payload_sha256: str,
         runtime_target_id: str,
         actor: str,
         reason: str,
-        runtime_target_proof: Dict[str, Any] | None = None,
+        runtime_target_proof: dict[str, Any] | None = None,
         signing_key: str | None = None,
         signer: str | None = None,
         require_signature: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Rewrite one queued deploy intent to a new runtime target."""
         target_digest = _normalize_payload_sha256(payload_sha256)
         if not target_digest:
@@ -90,8 +89,8 @@ class PendingOperationsStore:
             raise ValueError("runtime_target_id is required")
 
         entries = self.read_all()
-        updated_entries: list[Dict[str, Any]] = []
-        retargeted: Dict[str, Any] | None = None
+        updated_entries: list[dict[str, Any]] = []
+        retargeted: dict[str, Any] | None = None
         retargeted_at = datetime.now().isoformat()
 
         for entry in entries:
@@ -161,16 +160,16 @@ class PendingOperationsStore:
         self,
         *,
         indexes: set[int],
-        preflight_entries: Dict[int, Dict[str, Any]],
+        preflight_entries: dict[int, dict[str, Any]],
         actor: str,
         reason: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Move selected pending operations to a dead-letter ledger."""
         entries = self.read_all()
         dead_letters = self.read_dead_letter()
         quarantined_at = datetime.now().isoformat()
-        remaining: list[Dict[str, Any]] = []
-        quarantined: list[Dict[str, Any]] = []
+        remaining: list[dict[str, Any]] = []
+        quarantined: list[dict[str, Any]] = []
         for index, entry in enumerate(entries):
             if index not in indexes:
                 remaining.append(entry)
@@ -203,12 +202,12 @@ class PendingOperationsStore:
         actor: str,
         reason: str,
         payload_sha256s: set[str] | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Mark quarantined operations as handled while preserving audit history."""
         dead_letters = self.read_dead_letter()
         acknowledged_at = datetime.now().isoformat()
-        acknowledged: list[Dict[str, Any]] = []
-        updated_dead_letters: list[Dict[str, Any]] = []
+        acknowledged: list[dict[str, Any]] = []
+        updated_dead_letters: list[dict[str, Any]] = []
         for record in dead_letters:
             if not isinstance(record, dict):
                 updated_dead_letters.append(record)
@@ -240,7 +239,7 @@ class PendingOperationsStore:
         actor: str,
         reason: str,
         payload_sha256s: set[str] | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Move quarantined operations back to the active queue without losing audit."""
         entries = self.read_all()
         pending_hashes = {
@@ -250,8 +249,8 @@ class PendingOperationsStore:
         }
         dead_letters = self.read_dead_letter()
         requeued_at = datetime.now().isoformat()
-        requeued: list[Dict[str, Any]] = []
-        updated_dead_letters: list[Dict[str, Any]] = []
+        requeued: list[dict[str, Any]] = []
+        updated_dead_letters: list[dict[str, Any]] = []
 
         for record in dead_letters:
             if not isinstance(record, dict):
@@ -296,11 +295,11 @@ class PendingOperationsStore:
 
 
 def sign_pending_operation(
-    entry: Dict[str, Any],
+    entry: dict[str, Any],
     signing_key: str,
     *,
     signer: str | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return tamper-evident signature metadata for one pending operation."""
     payload = _signature_payload(entry)
     return {
@@ -315,9 +314,9 @@ def sign_pending_operation(
 
 
 def verify_pending_operation_signature(
-    entry: Dict[str, Any],
+    entry: dict[str, Any],
     signing_key: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Verify one signed pending operation and return compact signature metadata."""
     signature = entry.get("signature")
     if not isinstance(signature, dict):
@@ -352,11 +351,11 @@ def verify_pending_operation_signature(
 
 
 def pending_operation_signature_status(
-    entry: Dict[str, Any],
+    entry: dict[str, Any],
     *,
     signing_key: str | None = None,
     require_signature: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return non-secret verification status for a queued DDIL operation."""
     signature = entry.get("signature")
     if signing_key and isinstance(signature, dict):
@@ -395,7 +394,7 @@ def pending_operation_signature_status(
     }
 
 
-def _signature_metadata(signature: Dict[str, Any]) -> Dict[str, Any]:
+def _signature_metadata(signature: dict[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": signature.get("schema_version"),
         "algorithm": signature.get("algorithm"),
@@ -413,12 +412,12 @@ def _normalize_payload_sha256(value: str) -> str:
     return text
 
 
-def _entry_payload_sha256(entry: Dict[str, Any]) -> str:
+def _entry_payload_sha256(entry: dict[str, Any]) -> str:
     payload = entry.get("payload") if isinstance(entry, dict) else {}
     return _canonical_hash(payload if isinstance(payload, dict) else {})
 
 
-def _signature_payload(entry: Dict[str, Any]) -> Dict[str, Any]:
+def _signature_payload(entry: dict[str, Any]) -> dict[str, Any]:
     return {
         "operation": entry.get("operation"),
         "payload": entry.get("payload"),
@@ -426,11 +425,11 @@ def _signature_payload(entry: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _canonical_hash(payload: Dict[str, Any]) -> str:
+def _canonical_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(_canonical_bytes(payload)).hexdigest()
 
 
-def _signature_for_payload(payload: Dict[str, Any], signing_key: str) -> str:
+def _signature_for_payload(payload: dict[str, Any], signing_key: str) -> str:
     return hmac.new(
         signing_key.encode("utf-8"),
         _canonical_bytes(payload),
@@ -438,7 +437,7 @@ def _signature_for_payload(payload: Dict[str, Any], signing_key: str) -> str:
     ).hexdigest()
 
 
-def _canonical_bytes(payload: Dict[str, Any]) -> bytes:
+def _canonical_bytes(payload: dict[str, Any]) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode(
         "utf-8"
     )

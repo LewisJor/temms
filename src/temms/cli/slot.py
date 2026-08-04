@@ -2,9 +2,9 @@
 Slot management CLI commands for autonomous systems.
 """
 
-import typer
 from pathlib import Path
-from typing import Optional
+
+import typer
 from rich.console import Console
 from rich.table import Table
 
@@ -20,8 +20,8 @@ def create(
     name: str = typer.Argument(..., help="Slot name"),
     description: str = typer.Option(..., "--description", "-d", help="Slot description"),
     required: bool = typer.Option(False, "--required", "-r", help="Required for operation"),
-    default_model: Optional[str] = typer.Option(None, "--default", help="Default model name"),
-    candidates: Optional[str] = typer.Option(None, "--candidates", help="Candidate models (comma-separated)"),
+    default_model: str | None = typer.Option(None, "--default", help="Default model name"),
+    candidates: str | None = typer.Option(None, "--candidates", help="Candidate models (comma-separated)"),
     config_path: Path = typer.Option(
         Path("/etc/temms/temms.yaml"),
         "--config",
@@ -35,7 +35,7 @@ def create(
 
     candidate_list = candidates.split(",") if candidates else []
 
-    slot = manager.create_slot(
+    manager.create_slot(
         name=name,
         description=description,
         required=required,
@@ -117,14 +117,14 @@ def status(
     console.print(f"Updated: {slot.updated_at}")
 
     if slot.candidates:
-        console.print(f"\nCandidate models:")
+        console.print("\nCandidate models:")
         for candidate in slot.candidates:
             console.print(f"  - {candidate}")
 
     # Show recent decisions
     decisions = manager.get_decision_log(slot_name=slot_name, limit=5)
     if decisions:
-        console.print(f"\n[bold]Recent decisions:[/bold]")
+        console.print("\n[bold]Recent decisions:[/bold]")
         for decision in decisions:
             console.print(
                 f"  {decision['created_at']}: {decision['from_model'] or 'none'} → "
@@ -180,7 +180,7 @@ def set(
 
 @app.command()
 def decisions(
-    slot_name: Optional[str] = typer.Option(None, "--slot", "-s", help="Filter by slot"),
+    slot_name: str | None = typer.Option(None, "--slot", "-s", help="Filter by slot"),
     limit: int = typer.Option(20, "--limit", "-l", help="Number of decisions to show"),
     config_path: Path = typer.Option(
         Path("/etc/temms/temms.yaml"),
