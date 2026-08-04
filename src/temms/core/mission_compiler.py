@@ -23,6 +23,7 @@ from temms.core.mission_spec import (
     MissionPackageSpec,
     load_mission_spec,
 )
+from temms.core.identifiers import slugify
 from temms.core.model_resolver import ResolvedModel, resolve_model_source
 from temms.core.signing import sign_package
 
@@ -37,7 +38,8 @@ _FORMAT_EXTENSIONS = {
 
 
 def _safe_id(value: str) -> str:
-    return "".join(c if c.isalnum() or c in "-_" else "-" for c in value).strip("-").lower()
+    # Lowercased, '-'-stripped slug for on-disk package/model directory names.
+    return slugify(value, extra_allowed="-_", strip="-", lowercase=True)
 
 
 def _artifact_filename(model_id: str, fmt: str, resolved: ResolvedModel) -> str:

@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from temms.core.signing import validate_package
+from temms.core.package_validation import validate_package
 from temms.mlflow_bridge import MLflowBridge
 
 

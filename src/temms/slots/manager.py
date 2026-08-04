@@ -11,11 +11,12 @@ from enum import Enum
 import json
 
 from temms.core.database import Database
-from temms.core.mission_package import canonical_json_hash
+from temms.slots.decision_chain import DECISION_CHAIN_GENESIS, DecisionChain
 from temms.observability import model_swaps_total
 
-# Genesis link for the tamper-evident decision chain (issue #27).
-DECISION_CHAIN_GENESIS = "0" * 64
+# DECISION_CHAIN_GENESIS is re-exported from decision_chain for existing importers
+# (evidence.py, tests) that reference it via this module.
+__all__ = ["SlotManager", "Slot", "SlotState", "OperatorOverride", "DECISION_CHAIN_GENESIS"]
 
 
 class SlotState(str, Enum):
@@ -102,88 +103,15 @@ class SlotManager(Database):
             )
         """)
 
-        # Decision log - every model switch
-        self.execute("""
-            CREATE TABLE IF NOT EXISTS slot_decisions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                slot TEXT NOT NULL,
-                from_model TEXT,
-                to_model TEXT,
-                trigger_type TEXT,
-                trigger_detail TEXT,
-                conditions_snapshot JSON,
-                audit_metadata JSON,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        columns = {row["name"] for row in self.fetchall("PRAGMA table_info(slot_decisions)")}
-        if "audit_metadata" not in columns:
-            self.execute("ALTER TABLE slot_decisions ADD COLUMN audit_metadata JSON")
-        # Tamper-evident decision chain (issue #27): every decision embeds the
-        # hash of the previous one, so deletion/reorder/mutation is detectable
-        # offline against the signed chain head.
-        for chain_column in ("entry_hash", "prev_hash"):
-            if chain_column not in columns:
-                self.execute(f"ALTER TABLE slot_decisions ADD COLUMN {chain_column} TEXT")
-
-        self.conn.commit()
-        self._backfill_decision_chain()
+        # The tamper-evident decision chain owns the slot_decisions table and its
+        # schema/backfill (issue #27). SlotManager composes one and delegates.
+        self._chain = DecisionChain(self)
+        self._chain.ensure_schema()
 
     @staticmethod
     def _decision_entry_hash(content: Dict[str, Any], prev_hash: str) -> str:
-        """Return the canonical hash linking one decision to the previous one."""
-        return canonical_json_hash(
-            {
-                "slot": content.get("slot"),
-                "from_model": content.get("from_model"),
-                "to_model": content.get("to_model"),
-                "trigger_type": content.get("trigger_type"),
-                "trigger_detail": content.get("trigger_detail"),
-                "conditions_snapshot": content.get("conditions_snapshot"),
-                "audit_metadata": content.get("audit_metadata"),
-                "created_at": content.get("created_at"),
-                "prev_hash": prev_hash,
-            }
-        )
-
-    @staticmethod
-    def _decision_chain_content(row: sqlite3.Row) -> Dict[str, Any]:
-        """Parse a decision row into the content hashed for the chain."""
-        return {
-            "slot": row["slot"],
-            "from_model": row["from_model"],
-            "to_model": row["to_model"],
-            "trigger_type": row["trigger_type"],
-            "trigger_detail": row["trigger_detail"],
-            "conditions_snapshot": json.loads(row["conditions_snapshot"] or "{}"),
-            "audit_metadata": json.loads(row["audit_metadata"] or "{}"),
-            "created_at": row["created_at"],
-        }
-
-    def _latest_chain_hash(self) -> str:
-        row = self.fetchone(
-            "SELECT entry_hash FROM slot_decisions WHERE entry_hash IS NOT NULL "
-            "ORDER BY id DESC LIMIT 1"
-        )
-        return row["entry_hash"] if row and row["entry_hash"] else DECISION_CHAIN_GENESIS
-
-    def _backfill_decision_chain(self) -> None:
-        """Compute chain links for any legacy rows written before the chain existed."""
-        rows = self.fetchall(
-            "SELECT * FROM slot_decisions WHERE entry_hash IS NULL ORDER BY id ASC"
-        )
-        if not rows:
-            return
-        prev_hash = self._latest_chain_hash()
-        for row in rows:
-            content = self._decision_chain_content(row)
-            entry_hash = self._decision_entry_hash(content, prev_hash)
-            self.execute(
-                "UPDATE slot_decisions SET entry_hash = ?, prev_hash = ? WHERE id = ?",
-                (entry_hash, prev_hash, row["id"]),
-            )
-            prev_hash = entry_hash
-        self.conn.commit()
+        """Hash linking a decision to the previous one (kept for offline verifiers)."""
+        return DecisionChain.entry_hash(content, prev_hash)
 
     @staticmethod
     def _row_to_slot(row: sqlite3.Row) -> Slot:
@@ -311,10 +239,9 @@ class SlotManager(Database):
             (model_id, SlotState.RUNNING.value, updated_at, slot_name),
         )
 
-        # Log decision, linked into the tamper-evident chain.
-        created_at = updated_at.isoformat()
-        prev_hash = self._latest_chain_hash()
-        entry_hash = self._decision_entry_hash(
+        # Append the decision to the tamper-evident chain. The commit below makes
+        # the slot update and the decision entry land atomically.
+        self._chain.append(
             {
                 "slot": slot_name,
                 "from_model": from_model,
@@ -323,113 +250,32 @@ class SlotManager(Database):
                 "trigger_detail": trigger_detail,
                 "conditions_snapshot": conditions,
                 "audit_metadata": audit_metadata,
-                "created_at": created_at,
-            },
-            prev_hash,
-        )
-        self.execute(
-            """
-            INSERT INTO slot_decisions
-            (slot, from_model, to_model, trigger_type, trigger_detail,
-             conditions_snapshot, audit_metadata, created_at, prev_hash, entry_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                slot_name,
-                from_model,
-                model_id,
-                trigger_type,
-                trigger_detail,
-                json.dumps(conditions),
-                json.dumps(audit_metadata),
-                created_at,
-                prev_hash,
-                entry_hash,
-            ),
+                "created_at": updated_at.isoformat(),
+            }
         )
 
         self.conn.commit()
         model_swaps_total.inc()
 
     def decision_count(self) -> int:
-        """Return the number of decisions in the chain (cheap; for metrics)."""
-        row = self.fetchone("SELECT COUNT(*) AS n FROM slot_decisions")
-        return int(row["n"]) if row else 0
+        """Number of decisions in the chain (cheap; for metrics)."""
+        return self._chain.count()
 
     def verify_decision_chain(self) -> Dict[str, Any]:
-        """Verify the decision chain end to end.
-
-        Recomputes each entry hash and checks that every entry links to the
-        previous one. Detects deletion, reordering, or mutation of any decision.
-        """
-        rows = self.fetchall("SELECT * FROM slot_decisions ORDER BY id ASC")
-        prev_hash = DECISION_CHAIN_GENESIS
-        for index, row in enumerate(rows):
-            if row["prev_hash"] != prev_hash:
-                return {
-                    "valid": False,
-                    "length": len(rows),
-                    "broken_at": index,
-                    "reason": "prev_hash link mismatch",
-                }
-            expected = self._decision_entry_hash(
-                self._decision_chain_content(row), prev_hash
-            )
-            if expected != row["entry_hash"]:
-                return {
-                    "valid": False,
-                    "length": len(rows),
-                    "broken_at": index,
-                    "reason": "entry content does not match its hash",
-                }
-            prev_hash = row["entry_hash"]
-        return {"valid": True, "length": len(rows), "head_hash": prev_hash}
+        """Verify the tamper-evident decision chain end to end."""
+        return self._chain.verify()
 
     def decision_chain_head(self) -> str:
         """Return the current head hash of the decision chain."""
-        return self._latest_chain_hash()
+        return self._chain.head()
 
     def export_decision_chain(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Return the ordered decision chain (content + hashes) for offline audit.
-
-        Each entry carries exactly the content that was hashed, so a recipient
-        can re-walk and verify the chain on another machine without this DB.
-        """
-        sql = "SELECT * FROM slot_decisions ORDER BY id ASC"
-        params: tuple = ()
-        if limit is not None:
-            sql = "SELECT * FROM slot_decisions ORDER BY id DESC LIMIT ?"
-            params = (limit,)
-        rows = self.fetchall(sql, params)
-        if limit is not None:
-            rows = list(reversed(rows))
-        entries: List[Dict[str, Any]] = []
-        for row in rows:
-            content = self._decision_chain_content(row)
-            entries.append(
-                {
-                    **content,
-                    "prev_hash": row["prev_hash"],
-                    "entry_hash": row["entry_hash"],
-                }
-            )
-        return entries
+        """Return the ordered decision chain (content + hashes) for offline audit."""
+        return self._chain.export(limit)
 
     def sign_decision_chain_head(self, signing_key: str, signer: str = "temms") -> Dict[str, Any]:
         """Sign the current chain head so the log is offline-verifiable (issue #27)."""
-        from temms.core.signing import ed25519_sign, signing_key_fingerprint
-
-        head = self._latest_chain_hash()
-        verification = self.verify_decision_chain()
-        return {
-            "schema_version": "temms-decision-chain-head/v1",
-            "head_hash": head,
-            "length": verification.get("length", 0),
-            "signed_at": datetime.now().isoformat(),
-            "signer": signer,
-            "key_fingerprint": signing_key_fingerprint(signing_key),
-            "signature": ed25519_sign(head.encode("utf-8"), signing_key),
-        }
+        return self._chain.sign_head(signing_key, signer)
 
     def set_operator_override(
         self,
