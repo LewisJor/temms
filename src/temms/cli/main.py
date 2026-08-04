@@ -4082,380 +4082,398 @@ def _short_digest(value: Any) -> str:
     return text[:12] if text else ""
 
 
-def _print_hub_payload(action: str, payload: dict) -> None:
-    """Print common Hub Lite payloads in compact tables."""
-    if action == "enroll":
-        console.print("[green]Hub device enrolled[/green]")
-        console.print(f"Device: {payload.get('device_id', '')}")
-        console.print(f"Profile: {payload.get('profile', '')}")
-        return
+def _render_enroll(action: str, payload: dict) -> None:
+    """Render `temms hub enroll`."""
+    console.print("[green]Hub device enrolled[/green]")
+    console.print(f"Device: {payload.get('device_id', '')}")
+    console.print(f"Profile: {payload.get('profile', '')}")
 
-    if action == "devices":
-        table = Table(title="Hub Devices")
-        table.add_column("Device")
-        table.add_column("Profile")
-        table.add_column("Status")
-        table.add_column("Last Seen")
-        for device in payload.get("devices", []):
-            table.add_row(
-                device.get("device_id", ""),
-                device.get("profile", ""),
-                device.get("status", ""),
-                device.get("last_seen_at", ""),
-            )
-        console.print(table)
-        return
 
-    if action == "packages":
-        table = Table(title="Hub Packages")
-        table.add_column("Package")
-        table.add_column("Name")
-        table.add_column("Version")
-        table.add_column("Promotion")
-        table.add_column("Profiles")
-        for package in payload.get("packages", []):
-            promotion = (
-                package.get("promotion") if isinstance(package.get("promotion"), dict) else {}
-            )
-            table.add_row(
-                package.get("package_id", ""),
-                package.get("name", ""),
-                package.get("version", ""),
-                promotion.get("state", "candidate"),
-                ", ".join(package.get("device_profiles", []) or []),
-            )
-        console.print(table)
-        return
-
-    if action == "promote-package":
-        promotion = payload.get("promotion") if isinstance(payload.get("promotion"), dict) else {}
-        console.print("[green]Hub package promoted[/green]")
-        console.print(f"Package: {payload.get('package_id', '')}")
-        console.print(f"State: {promotion.get('state', '')}")
-        console.print(f"Actor: {promotion.get('actor') or ''}")
-        return
-
-    if action == "runtime-targets":
-        table = Table(title="Hub Runtime Targets")
-        table.add_column("Target")
-        table.add_column("Image")
-        table.add_column("OS/Arch")
-        table.add_column("Profiles")
-        table.add_column("Source")
-        for target in payload.get("runtime_targets", []):
-            table.add_row(
-                target.get("runtime_target_id", ""),
-                target.get("image", ""),
-                f"{target.get('os', 'linux')}/{target.get('arch') or ''}",
-                ", ".join(target.get("device_profiles", []) or []),
-                target.get("source", ""),
-            )
-        console.print(table)
-        return
-
-    if action == "readiness":
-        _print_hub_readiness(payload)
-        return
-
-    if action == "edge-runtime-mission":
-        _print_edge_runtime_mission(payload)
-        return
-
-    if action in {"mission-package-plan", "mission-package-download"}:
-        _print_mission_package_plan(payload, downloaded=action == "mission-package-download")
-        return
-
-    if action == "mission-package-stage":
-        rollout = payload.get("rollout") if isinstance(payload.get("rollout"), dict) else payload
-        console.print("[green]Mission package deployment intent staged[/green]")
-        console.print(
-            f"Rollout: {payload.get('rollout_id') or rollout.get('rollout_id', '')} "
-            f"({payload.get('rollout_state') or rollout.get('state', 'unknown')})"
+def _render_devices(action: str, payload: dict) -> None:
+    """Render `temms hub devices`."""
+    table = Table(title="Hub Devices")
+    table.add_column("Device")
+    table.add_column("Profile")
+    table.add_column("Status")
+    table.add_column("Last Seen")
+    for device in payload.get("devices", []):
+        table.add_row(
+            device.get("device_id", ""),
+            device.get("profile", ""),
+            device.get("status", ""),
+            device.get("last_seen_at", ""),
         )
-        if payload.get("package_identity_sha256"):
-            console.print(
-                f"Package identity: {payload.get('package_identity_sha256')}"
-            )
-        if rollout.get("device_id"):
-            console.print(f"Device: {rollout.get('device_id')}")
-        if rollout.get("package_id"):
-            console.print(f"Package: {rollout.get('package_id')}")
-        return
+    console.print(table)
 
-    if action == "register-runtime":
-        console.print("[green]Runtime target registered[/green]")
-        console.print(f"Target: {payload.get('runtime_target_id', '')}")
-        console.print(f"Image: {payload.get('image', '')}")
-        return
 
-    if action == "package-from-mlflow":
-        package = payload.get("package", {})
-        console.print("[green]Hub package built from MLflow[/green]")
-        console.print(f"Package: {package.get('package_id', '')}")
-        console.print(f"Path: {payload.get('package_path', '')}")
-        console.print(f"Signed: {payload.get('signed', False)}")
-        return
-
-    if action == "validate-runtime":
-        status = "ready" if payload.get("dry_run") else "passed" if payload.get("ok") else "failed"
-        color = "green" if payload.get("ok") else "red"
-        console.print(f"[{color}]Runtime target validation {status}[/{color}]")
-        console.print(f"Target: {payload.get('runtime_target_id', '')}")
-        console.print(f"Image: {payload.get('image', '')}")
-        validation_record = payload.get("validation_record") or {}
-        if validation_record.get("validation_id"):
-            console.print(f"Evidence: {validation_record.get('validation_id')}")
-        console.print(f"Command: {payload.get('command_text', '')}")
-        if payload.get("exit_code") is not None:
-            console.print(f"Exit code: {payload.get('exit_code')}")
-        stdout = (payload.get("stdout") or "").strip()
-        stderr = (payload.get("stderr") or "").strip()
-        if stdout:
-            console.print(f"stdout:\n{stdout}")
-        if stderr:
-            console.print(f"stderr:\n{stderr}")
-        return
-
-    if action == "runtime-validations":
-        table = Table(title="Hub Runtime Validations")
-        table.add_column("Validation")
-        table.add_column("Package")
-        table.add_column("Runtime")
-        table.add_column("Result")
-        table.add_column("Actor")
-        table.add_column("Created")
-        for validation in payload.get("runtime_validations", []):
-            result = validation.get("result") or {}
-            status = "preview" if result.get("dry_run") else "pass" if result.get("ok") else "fail"
-            table.add_row(
-                validation.get("validation_id", ""),
-                validation.get("package_id") or validation.get("package_path") or "",
-                validation.get("runtime_target_id", ""),
-                status,
-                validation.get("actor") or "",
-                validation.get("created_at") or "",
-            )
-        console.print(table)
-        return
-
-    if action == "benchmarks":
-        table = Table(title="Hub Benchmarks")
-        table.add_column("Benchmark")
-        table.add_column("Device")
-        table.add_column("Package")
-        table.add_column("Runtime")
-        table.add_column("Model")
-        table.add_column("p95 ms")
-        table.add_column("Created")
-        for benchmark in payload.get("benchmarks", []):
-            result = benchmark.get("result") or {}
-            latency = result.get("latency_ms") if isinstance(result.get("latency_ms"), dict) else {}
-            p95 = latency.get("p95")
-            table.add_row(
-                benchmark.get("benchmark_id", ""),
-                benchmark.get("device_id") or "",
-                benchmark.get("package_id") or "",
-                benchmark.get("runtime_target_id") or "",
-                benchmark.get("model_id") or result.get("model_id") or "",
-                "" if p95 is None else str(p95),
-                benchmark.get("created_at") or "",
-            )
-        console.print(table)
-        return
-
-    if action == "preview-compatibility":
-        color = "green" if payload.get("compatible") else "red"
-        status = "compatible" if payload.get("compatible") else "blocked"
-        device = payload.get("device") or {}
-        package = payload.get("package") or {}
-        runtime_target = payload.get("runtime_target") or {}
-        console.print(f"[{color}]Rollout compatibility {status}[/{color}]")
-        console.print(f"Device: {device.get('device_id', '')} ({device.get('profile', 'unknown')})")
-        console.print(f"Package: {package.get('package_id', '')} v{package.get('version', '')}")
-        console.print(
-            "Runtime: "
-            + (
-                f"{runtime_target.get('runtime_target_id')} ({runtime_target.get('image')})"
-                if runtime_target
-                else "auto / device inventory"
-            )
+def _render_packages(action: str, payload: dict) -> None:
+    """Render `temms hub packages`."""
+    table = Table(title="Hub Packages")
+    table.add_column("Package")
+    table.add_column("Name")
+    table.add_column("Version")
+    table.add_column("Promotion")
+    table.add_column("Profiles")
+    for package in payload.get("packages", []):
+        promotion = (
+            package.get("promotion") if isinstance(package.get("promotion"), dict) else {}
         )
-        for failure in payload.get("failures", []):
-            console.print(f"[red]Failure:[/red] {failure}")
-        return
-
-    if action == "compatibility-matrix":
-        counts = payload.get("counts") if isinstance(payload.get("counts"), dict) else {}
-        table = Table(title="Hub Compatibility Matrix")
-        table.add_column("Package")
-        table.add_column("Model")
-        table.add_column("Device")
-        table.add_column("Runtime")
-        table.add_column("Compatible")
-        table.add_column("Ready")
-        table.add_column("Validation")
-        table.add_column("Blockers")
-        for cell in payload.get("cells", []):
-            runtime = cell.get("runtime_target_id") or "device inventory"
-            validation = (
-                "pass"
-                if cell.get("runtime_validation_ready")
-                else "missing" if cell.get("runtime_target_id") else "inventory"
-            )
-            blockers = list(cell.get("assignment_blockers") or cell.get("failures") or [])
-            blockers_text = "; ".join(str(blocker) for blocker in blockers[:2])
-            if len(blockers) > 2:
-                blockers_text += f"; +{len(blockers) - 2} more"
-            table.add_row(
-                cell.get("package_id", ""),
-                cell.get("model_id") or "package",
-                cell.get("device_id", ""),
-                runtime,
-                "yes" if cell.get("compatible") else "no",
-                "yes" if cell.get("assignment_ready") else "no",
-                validation,
-                blockers_text or "ready",
-            )
-        console.print(table)
-        console.print(
-            "Ready: " f"{counts.get('assignment_ready', 0)}/{counts.get('cells', 0)} " "cells"
+        table.add_row(
+            package.get("package_id", ""),
+            package.get("name", ""),
+            package.get("version", ""),
+            promotion.get("state", "candidate"),
+            ", ".join(package.get("device_profiles", []) or []),
         )
-        return
+    console.print(table)
 
-    if action == "rollout-plans":
-        table = Table(title="Hub Rollout Plans")
-        table.add_column("Plan")
-        table.add_column("Package")
-        table.add_column("Slot")
-        table.add_column("Runtime")
-        table.add_column("State")
-        table.add_column("Batch")
-        table.add_column("Targets")
-        table.add_column("Updated")
-        for plan in payload.get("rollout_plans", []):
-            counts = plan.get("counts") if isinstance(plan.get("counts"), dict) else {}
-            target_summary = (
-                f"{counts.get('assigned', 0)} assigned / "
-                f"{counts.get('pending', 0)} pending / "
-                f"{counts.get('blocked', 0)} blocked"
-            )
-            table.add_row(
-                plan.get("plan_id", ""),
-                plan.get("package_id", ""),
-                plan.get("slot", "") or "",
-                plan.get("runtime_target_id", "") or "auto",
-                plan.get("state", ""),
-                str(plan.get("current_batch", 0)),
-                target_summary,
-                plan.get("updated_at", "") or "",
-            )
-        console.print(table)
-        return
 
-    if action in {
-        "create-rollout-plan",
-        "advance-rollout-plan",
-        "pause-rollout-plan",
-        "resume-rollout-plan",
-    }:
-        counts = payload.get("counts") if isinstance(payload.get("counts"), dict) else {}
-        console.print(f"[green]Rollout plan {payload.get('state', 'updated')}[/green]")
-        console.print(f"Plan: {payload.get('plan_id', '')}")
-        console.print(f"Package: {payload.get('package_id', '')}")
+def _render_promote_package(action: str, payload: dict) -> None:
+    """Render `temms hub promote-package`."""
+    promotion = payload.get("promotion") if isinstance(payload.get("promotion"), dict) else {}
+    console.print("[green]Hub package promoted[/green]")
+    console.print(f"Package: {payload.get('package_id', '')}")
+    console.print(f"State: {promotion.get('state', '')}")
+    console.print(f"Actor: {promotion.get('actor') or ''}")
+
+
+def _render_runtime_targets(action: str, payload: dict) -> None:
+    """Render `temms hub runtime-targets`."""
+    table = Table(title="Hub Runtime Targets")
+    table.add_column("Target")
+    table.add_column("Image")
+    table.add_column("OS/Arch")
+    table.add_column("Profiles")
+    table.add_column("Source")
+    for target in payload.get("runtime_targets", []):
+        table.add_row(
+            target.get("runtime_target_id", ""),
+            target.get("image", ""),
+            f"{target.get('os', 'linux')}/{target.get('arch') or ''}",
+            ", ".join(target.get("device_profiles", []) or []),
+            target.get("source", ""),
+        )
+    console.print(table)
+
+
+def _render_readiness(action: str, payload: dict) -> None:
+    """Render `temms hub readiness`."""
+    _print_hub_readiness(payload)
+
+
+def _render_edge_runtime_mission(action: str, payload: dict) -> None:
+    """Render `temms hub edge-runtime-mission`."""
+    _print_edge_runtime_mission(payload)
+
+
+def _render_mission_package_plan(action: str, payload: dict) -> None:
+    """Render `temms hub` mission-package-plan / mission-package-download."""
+    _print_mission_package_plan(payload, downloaded=action == "mission-package-download")
+
+
+def _render_mission_package_stage(action: str, payload: dict) -> None:
+    """Render `temms hub mission-package-stage`."""
+    rollout = payload.get("rollout") if isinstance(payload.get("rollout"), dict) else payload
+    console.print("[green]Mission package deployment intent staged[/green]")
+    console.print(
+        f"Rollout: {payload.get('rollout_id') or rollout.get('rollout_id', '')} "
+        f"({payload.get('rollout_state') or rollout.get('state', 'unknown')})"
+    )
+    if payload.get("package_identity_sha256"):
         console.print(
-            "Targets: "
+            f"Package identity: {payload.get('package_identity_sha256')}"
+        )
+    if rollout.get("device_id"):
+        console.print(f"Device: {rollout.get('device_id')}")
+    if rollout.get("package_id"):
+        console.print(f"Package: {rollout.get('package_id')}")
+
+
+def _render_register_runtime(action: str, payload: dict) -> None:
+    """Render `temms hub register-runtime`."""
+    console.print("[green]Runtime target registered[/green]")
+    console.print(f"Target: {payload.get('runtime_target_id', '')}")
+    console.print(f"Image: {payload.get('image', '')}")
+
+
+def _render_package_from_mlflow(action: str, payload: dict) -> None:
+    """Render `temms hub package-from-mlflow`."""
+    package = payload.get("package", {})
+    console.print("[green]Hub package built from MLflow[/green]")
+    console.print(f"Package: {package.get('package_id', '')}")
+    console.print(f"Path: {payload.get('package_path', '')}")
+    console.print(f"Signed: {payload.get('signed', False)}")
+
+
+def _render_validate_runtime(action: str, payload: dict) -> None:
+    """Render `temms hub validate-runtime`."""
+    status = "ready" if payload.get("dry_run") else "passed" if payload.get("ok") else "failed"
+    color = "green" if payload.get("ok") else "red"
+    console.print(f"[{color}]Runtime target validation {status}[/{color}]")
+    console.print(f"Target: {payload.get('runtime_target_id', '')}")
+    console.print(f"Image: {payload.get('image', '')}")
+    validation_record = payload.get("validation_record") or {}
+    if validation_record.get("validation_id"):
+        console.print(f"Evidence: {validation_record.get('validation_id')}")
+    console.print(f"Command: {payload.get('command_text', '')}")
+    if payload.get("exit_code") is not None:
+        console.print(f"Exit code: {payload.get('exit_code')}")
+    stdout = (payload.get("stdout") or "").strip()
+    stderr = (payload.get("stderr") or "").strip()
+    if stdout:
+        console.print(f"stdout:\n{stdout}")
+    if stderr:
+        console.print(f"stderr:\n{stderr}")
+
+
+def _render_runtime_validations(action: str, payload: dict) -> None:
+    """Render `temms hub runtime-validations`."""
+    table = Table(title="Hub Runtime Validations")
+    table.add_column("Validation")
+    table.add_column("Package")
+    table.add_column("Runtime")
+    table.add_column("Result")
+    table.add_column("Actor")
+    table.add_column("Created")
+    for validation in payload.get("runtime_validations", []):
+        result = validation.get("result") or {}
+        status = "preview" if result.get("dry_run") else "pass" if result.get("ok") else "fail"
+        table.add_row(
+            validation.get("validation_id", ""),
+            validation.get("package_id") or validation.get("package_path") or "",
+            validation.get("runtime_target_id", ""),
+            status,
+            validation.get("actor") or "",
+            validation.get("created_at") or "",
+        )
+    console.print(table)
+
+
+def _render_benchmarks(action: str, payload: dict) -> None:
+    """Render `temms hub benchmarks`."""
+    table = Table(title="Hub Benchmarks")
+    table.add_column("Benchmark")
+    table.add_column("Device")
+    table.add_column("Package")
+    table.add_column("Runtime")
+    table.add_column("Model")
+    table.add_column("p95 ms")
+    table.add_column("Created")
+    for benchmark in payload.get("benchmarks", []):
+        result = benchmark.get("result") or {}
+        latency = result.get("latency_ms") if isinstance(result.get("latency_ms"), dict) else {}
+        p95 = latency.get("p95")
+        table.add_row(
+            benchmark.get("benchmark_id", ""),
+            benchmark.get("device_id") or "",
+            benchmark.get("package_id") or "",
+            benchmark.get("runtime_target_id") or "",
+            benchmark.get("model_id") or result.get("model_id") or "",
+            "" if p95 is None else str(p95),
+            benchmark.get("created_at") or "",
+        )
+    console.print(table)
+
+
+def _render_preview_compatibility(action: str, payload: dict) -> None:
+    """Render `temms hub preview-compatibility`."""
+    color = "green" if payload.get("compatible") else "red"
+    status = "compatible" if payload.get("compatible") else "blocked"
+    device = payload.get("device") or {}
+    package = payload.get("package") or {}
+    runtime_target = payload.get("runtime_target") or {}
+    console.print(f"[{color}]Rollout compatibility {status}[/{color}]")
+    console.print(f"Device: {device.get('device_id', '')} ({device.get('profile', 'unknown')})")
+    console.print(f"Package: {package.get('package_id', '')} v{package.get('version', '')}")
+    console.print(
+        "Runtime: "
+        + (
+            f"{runtime_target.get('runtime_target_id')} ({runtime_target.get('image')})"
+            if runtime_target
+            else "auto / device inventory"
+        )
+    )
+    for failure in payload.get("failures", []):
+        console.print(f"[red]Failure:[/red] {failure}")
+
+
+def _render_compatibility_matrix(action: str, payload: dict) -> None:
+    """Render `temms hub compatibility-matrix`."""
+    counts = payload.get("counts") if isinstance(payload.get("counts"), dict) else {}
+    table = Table(title="Hub Compatibility Matrix")
+    table.add_column("Package")
+    table.add_column("Model")
+    table.add_column("Device")
+    table.add_column("Runtime")
+    table.add_column("Compatible")
+    table.add_column("Ready")
+    table.add_column("Validation")
+    table.add_column("Blockers")
+    for cell in payload.get("cells", []):
+        runtime = cell.get("runtime_target_id") or "device inventory"
+        validation = (
+            "pass"
+            if cell.get("runtime_validation_ready")
+            else "missing" if cell.get("runtime_target_id") else "inventory"
+        )
+        blockers = list(cell.get("assignment_blockers") or cell.get("failures") or [])
+        blockers_text = "; ".join(str(blocker) for blocker in blockers[:2])
+        if len(blockers) > 2:
+            blockers_text += f"; +{len(blockers) - 2} more"
+        table.add_row(
+            cell.get("package_id", ""),
+            cell.get("model_id") or "package",
+            cell.get("device_id", ""),
+            runtime,
+            "yes" if cell.get("compatible") else "no",
+            "yes" if cell.get("assignment_ready") else "no",
+            validation,
+            blockers_text or "ready",
+        )
+    console.print(table)
+    console.print(
+        "Ready: " f"{counts.get('assignment_ready', 0)}/{counts.get('cells', 0)} " "cells"
+    )
+
+
+def _render_rollout_plans(action: str, payload: dict) -> None:
+    """Render `temms hub rollout-plans`."""
+    table = Table(title="Hub Rollout Plans")
+    table.add_column("Plan")
+    table.add_column("Package")
+    table.add_column("Slot")
+    table.add_column("Runtime")
+    table.add_column("State")
+    table.add_column("Batch")
+    table.add_column("Targets")
+    table.add_column("Updated")
+    for plan in payload.get("rollout_plans", []):
+        counts = plan.get("counts") if isinstance(plan.get("counts"), dict) else {}
+        target_summary = (
             f"{counts.get('assigned', 0)} assigned / "
             f"{counts.get('pending', 0)} pending / "
             f"{counts.get('blocked', 0)} blocked"
         )
-        rollout_ids = [
-            target.get("rollout_id")
-            for target in payload.get("targets", [])
-            if target.get("rollout_id")
-        ]
-        if rollout_ids:
-            console.print("Rollouts: " + ", ".join(str(rollout_id) for rollout_id in rollout_ids))
-        return
+        table.add_row(
+            plan.get("plan_id", ""),
+            plan.get("package_id", ""),
+            plan.get("slot", "") or "",
+            plan.get("runtime_target_id", "") or "auto",
+            plan.get("state", ""),
+            str(plan.get("current_batch", 0)),
+            target_summary,
+            plan.get("updated_at", "") or "",
+        )
+    console.print(table)
 
-    if action == "rollouts":
-        table = Table(title="Hub Rollouts")
-        table.add_column("Rollout")
-        table.add_column("Device")
-        table.add_column("Package")
-        table.add_column("Slot")
-        table.add_column("Runtime")
-        table.add_column("State")
-        table.add_column("Approval")
-        for rollout in payload.get("rollouts", []):
-            approval = rollout.get("approval") if isinstance(rollout.get("approval"), dict) else {}
-            table.add_row(
-                rollout.get("rollout_id", ""),
-                rollout.get("device_id", ""),
-                rollout.get("package_id", ""),
-                rollout.get("slot", "") or "",
-                rollout.get("runtime_target_id", "") or "auto",
-                rollout.get("state", ""),
-                approval.get("state", "not_required"),
-            )
-        console.print(table)
-        return
 
-    if action == "status":
-        devices = payload.get("devices", {})
-        deployments = payload.get("deployment_status", {})
-        rollouts = payload.get("rollouts", {})
-        telemetry = payload.get("telemetry_events", {})
-        console.print("[bold]Hub Deployment Status[/bold]")
-        console.print(f"Devices: {len(devices)}")
-        console.print(f"Deployment snapshots: {len(deployments)}")
-        console.print(f"Rollouts: {len(rollouts)}")
-        console.print(f"Replayed telemetry events: {len(telemetry)}")
-        return
+def _render_create_rollout_plan(action: str, payload: dict) -> None:
+    """Render `temms hub` create-rollout-plan / advance-rollout-plan / pause-rollout-plan / resume-rollout-plan."""
+    counts = payload.get("counts") if isinstance(payload.get("counts"), dict) else {}
+    console.print(f"[green]Rollout plan {payload.get('state', 'updated')}[/green]")
+    console.print(f"Plan: {payload.get('plan_id', '')}")
+    console.print(f"Package: {payload.get('package_id', '')}")
+    console.print(
+        "Targets: "
+        f"{counts.get('assigned', 0)} assigned / "
+        f"{counts.get('pending', 0)} pending / "
+        f"{counts.get('blocked', 0)} blocked"
+    )
+    rollout_ids = [
+        target.get("rollout_id")
+        for target in payload.get("targets", [])
+        if target.get("rollout_id")
+    ]
+    if rollout_ids:
+        console.print("Rollouts: " + ", ".join(str(rollout_id) for rollout_id in rollout_ids))
 
-    if action == "telemetry":
-        table = Table(title="Hub Replayed Telemetry")
-        table.add_column("Event")
-        table.add_column("Type")
-        table.add_column("Device")
-        table.add_column("Timestamp")
-        for event in payload.get("events", []):
-            table.add_row(
-                event.get("event_id", ""),
-                event.get("event_type", ""),
-                event.get("device_id", "") or "",
-                event.get("timestamp", ""),
-            )
-        console.print(table)
-        return
 
-    if action == "evidence":
-        table = Table(title="Hub Evidence Bundles")
-        table.add_column("Evidence")
-        table.add_column("Device")
-        table.add_column("Exported")
-        table.add_column("Ingested")
-        table.add_column("Headline")
-        for record in payload.get("evidence_bundles", []):
-            table.add_row(
-                record.get("evidence_id", ""),
-                record.get("device_id", "") or "",
-                record.get("exported_at", "") or "",
-                record.get("ingested_at", "") or "",
-                record.get("headline", "") or "",
-            )
-        console.print(table)
-        return
+def _render_rollouts(action: str, payload: dict) -> None:
+    """Render `temms hub rollouts`."""
+    table = Table(title="Hub Rollouts")
+    table.add_column("Rollout")
+    table.add_column("Device")
+    table.add_column("Package")
+    table.add_column("Slot")
+    table.add_column("Runtime")
+    table.add_column("State")
+    table.add_column("Approval")
+    for rollout in payload.get("rollouts", []):
+        approval = rollout.get("approval") if isinstance(rollout.get("approval"), dict) else {}
+        table.add_row(
+            rollout.get("rollout_id", ""),
+            rollout.get("device_id", ""),
+            rollout.get("package_id", ""),
+            rollout.get("slot", "") or "",
+            rollout.get("runtime_target_id", "") or "auto",
+            rollout.get("state", ""),
+            approval.get("state", "not_required"),
+        )
+    console.print(table)
 
-    if action == "ingest-evidence":
-        record = payload.get("evidence") if isinstance(payload.get("evidence"), dict) else {}
-        duplicate = " duplicate" if record.get("duplicate") else ""
-        console.print(f"[green]Evidence ingested{duplicate}[/green]")
-        console.print(f"Evidence: {record.get('evidence_id', '')}")
-        console.print(f"Device: {record.get('device_id', '') or 'unknown'}")
-        if record.get("headline"):
-            console.print(f"Headline: {record.get('headline')}")
-        return
 
+def _render_status(action: str, payload: dict) -> None:
+    """Render `temms hub status`."""
+    devices = payload.get("devices", {})
+    deployments = payload.get("deployment_status", {})
+    rollouts = payload.get("rollouts", {})
+    telemetry = payload.get("telemetry_events", {})
+    console.print("[bold]Hub Deployment Status[/bold]")
+    console.print(f"Devices: {len(devices)}")
+    console.print(f"Deployment snapshots: {len(deployments)}")
+    console.print(f"Rollouts: {len(rollouts)}")
+    console.print(f"Replayed telemetry events: {len(telemetry)}")
+
+
+def _render_telemetry(action: str, payload: dict) -> None:
+    """Render `temms hub telemetry`."""
+    table = Table(title="Hub Replayed Telemetry")
+    table.add_column("Event")
+    table.add_column("Type")
+    table.add_column("Device")
+    table.add_column("Timestamp")
+    for event in payload.get("events", []):
+        table.add_row(
+            event.get("event_id", ""),
+            event.get("event_type", ""),
+            event.get("device_id", "") or "",
+            event.get("timestamp", ""),
+        )
+    console.print(table)
+
+
+def _render_evidence(action: str, payload: dict) -> None:
+    """Render `temms hub evidence`."""
+    table = Table(title="Hub Evidence Bundles")
+    table.add_column("Evidence")
+    table.add_column("Device")
+    table.add_column("Exported")
+    table.add_column("Ingested")
+    table.add_column("Headline")
+    for record in payload.get("evidence_bundles", []):
+        table.add_row(
+            record.get("evidence_id", ""),
+            record.get("device_id", "") or "",
+            record.get("exported_at", "") or "",
+            record.get("ingested_at", "") or "",
+            record.get("headline", "") or "",
+        )
+    console.print(table)
+
+
+def _render_ingest_evidence(action: str, payload: dict) -> None:
+    """Render `temms hub ingest-evidence`."""
+    record = payload.get("evidence") if isinstance(payload.get("evidence"), dict) else {}
+    duplicate = " duplicate" if record.get("duplicate") else ""
+    console.print(f"[green]Evidence ingested{duplicate}[/green]")
+    console.print(f"Evidence: {record.get('evidence_id', '')}")
+    console.print(f"Device: {record.get('device_id', '') or 'unknown'}")
+    if record.get("headline"):
+        console.print(f"Headline: {record.get('headline')}")
+
+
+def _render_generic_hub_payload(action: str, payload: dict) -> None:
+    """Fallback for actions without a dedicated renderer."""
     console.print("[green]Hub command succeeded[/green]")
     if "rollout_id" in payload:
         console.print(f"Rollout: {payload['rollout_id']} ({payload.get('state', 'unknown')})")
@@ -4463,6 +4481,43 @@ def _print_hub_payload(action: str, payload: dict) -> None:
         console.print(f"Package: {payload['package_id']} v{payload.get('version', '')}")
     elif "status" in payload:
         console.print(f"Status: {payload['status']}")
+
+
+HUB_PRINTERS: dict[str, Callable[[str, dict], None]] = {
+    "enroll": _render_enroll,
+    "devices": _render_devices,
+    "packages": _render_packages,
+    "promote-package": _render_promote_package,
+    "runtime-targets": _render_runtime_targets,
+    "readiness": _render_readiness,
+    "edge-runtime-mission": _render_edge_runtime_mission,
+    "mission-package-plan": _render_mission_package_plan,
+    "mission-package-download": _render_mission_package_plan,
+    "mission-package-stage": _render_mission_package_stage,
+    "register-runtime": _render_register_runtime,
+    "package-from-mlflow": _render_package_from_mlflow,
+    "validate-runtime": _render_validate_runtime,
+    "runtime-validations": _render_runtime_validations,
+    "benchmarks": _render_benchmarks,
+    "preview-compatibility": _render_preview_compatibility,
+    "compatibility-matrix": _render_compatibility_matrix,
+    "rollout-plans": _render_rollout_plans,
+    "create-rollout-plan": _render_create_rollout_plan,
+    "advance-rollout-plan": _render_create_rollout_plan,
+    "pause-rollout-plan": _render_create_rollout_plan,
+    "resume-rollout-plan": _render_create_rollout_plan,
+    "rollouts": _render_rollouts,
+    "status": _render_status,
+    "telemetry": _render_telemetry,
+    "evidence": _render_evidence,
+    "ingest-evidence": _render_ingest_evidence,
+}
+
+
+def _print_hub_payload(action: str, payload: dict) -> None:
+    """Print a Hub Lite payload using the renderer registered for its action."""
+    HUB_PRINTERS.get(action, _render_generic_hub_payload)(action, payload)
+
 
 
 def _print_hub_readiness(payload: dict[str, Any]) -> None:
@@ -5705,7 +5760,8 @@ def _edge_runtime_trace_next(row: dict[str, Any]) -> str:
     return f"{label} ({kind})" if label else ""
 
 
-def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
+def _print_proof_header(payload: dict) -> None:
+    """Render the header section of a proof verification."""
     """Print local edge proof verification in an operator-readable format."""
     valid = bool(payload.get("valid"))
     color = "green" if valid else "red"
@@ -5722,6 +5778,9 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
             f"{path.get('device_id') or 'edge'}"
         )
 
+
+def _print_proof_path(payload: dict) -> None:
+    """Render the path section of a proof verification."""
     console.print(f"Mission status: {payload.get('status') or 'unknown'}")
     runtime_fit_score = payload.get("runtime_fit_score")
     if runtime_fit_score is not None:
@@ -5730,6 +5789,10 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
         except (TypeError, ValueError):
             score_text = f"{runtime_fit_score}/100"
         console.print(f"Runtime fit: {score_text}")
+
+
+def _print_proof_runtime_fit(payload: dict) -> None:
+    """Render the runtime fit section of a proof verification."""
     console.print(f"Recorded gate: {payload.get('gate_status') or 'unknown'}")
     console.print(f"Requested gate: {payload.get('requested_gate_status') or 'unknown'}")
     proof_freshness = (
@@ -5753,6 +5816,10 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
             except (TypeError, ValueError):
                 freshness_detail += f" / max {max_age}s"
         console.print(f"Proof freshness: {freshness_status}{freshness_detail}")
+
+
+def _print_proof_freshness(payload: dict) -> None:
+    """Render the freshness section of a proof verification."""
     path_expectations = (
         payload.get("path_expectations")
         if isinstance(payload.get("path_expectations"), dict)
@@ -5761,6 +5828,10 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
     if path_expectations and path_expectations.get("status") != "not_requested":
         console.print(f"Path binding: {path_expectations.get('status') or 'unknown'}")
 
+
+def _print_proof_runtime_decision_and_contract(payload: dict) -> None:
+    """Render the runtime decision and contract section of a proof verification."""
+    path = payload.get("path") if isinstance(payload.get("path"), dict) else {}
     runtime_decision = (
         payload.get("runtime_decision")
         if isinstance(payload.get("runtime_decision"), dict)
@@ -5847,6 +5918,10 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
             "Runtime trace consistency: "
             f"{trace_consistency.get('status') or 'unknown'}"
         )
+
+
+def _print_proof_trace_consistency(payload: dict) -> None:
+    """Render the trace consistency section of a proof verification."""
     manifest_consistency = (
         payload.get("edge_execution_manifest_consistency")
         if isinstance(payload.get("edge_execution_manifest_consistency"), dict)
@@ -5857,6 +5932,10 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
             "Execution manifest: "
             f"{manifest_consistency.get('status') or 'unknown'}"
         )
+
+
+def _print_proof_manifest_consistency(payload: dict) -> None:
+    """Render the manifest consistency section of a proof verification."""
     component_digest_consistency = (
         payload.get("component_digest_consistency")
         if isinstance(payload.get("component_digest_consistency"), dict)
@@ -5868,11 +5947,17 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
             f"{component_digest_consistency.get('status') or 'unknown'}"
         )
 
+
+def _print_proof_component_digests(payload: dict) -> None:
+    """Render the component digests section of a proof verification."""
     integrity = payload.get("integrity") if isinstance(payload.get("integrity"), dict) else {}
     recorded_hash = integrity.get("recorded_payload_sha256")
     if recorded_hash:
         console.print(f"Payload SHA256: {recorded_hash}")
 
+
+def _print_proof_integrity(payload: dict) -> None:
+    """Render the integrity section of a proof verification."""
     attestation = payload.get("attestation") if isinstance(payload.get("attestation"), dict) else {}
     if attestation:
         console.print(f"Attestation: {attestation.get('status') or 'unknown'}")
@@ -5881,12 +5966,35 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
         if attestation.get("signer"):
             console.print(f"Attestation signer: {attestation['signer']}")
 
+
+def _print_proof_attestation(payload: dict) -> None:
+    """Render the attestation section of a proof verification."""
     for error in payload.get("errors", []) or []:
         console.print(f"[red]Proof invalid:[/red] {error}")
+
+
+def _print_proof_failures(payload: dict) -> None:
+    """Render the failures section of a proof verification."""
     for failure in payload.get("gate_failures", []) or []:
         console.print(f"[yellow]Recorded gate failed:[/yellow] {failure}")
     for failure in payload.get("requested_gate_failures", []) or []:
         console.print(f"[red]Requested gate failed:[/red] {failure}")
+
+
+def _print_edge_runtime_proof_verification(payload: dict) -> None:
+    """Render an edge-runtime proof verification, section by section."""
+    _print_proof_header(payload)
+    _print_proof_path(payload)
+    _print_proof_runtime_fit(payload)
+    _print_proof_freshness(payload)
+    _print_proof_runtime_decision_and_contract(payload)
+    _print_proof_trace_consistency(payload)
+    _print_proof_manifest_consistency(payload)
+    _print_proof_component_digests(payload)
+    _print_proof_integrity(payload)
+    _print_proof_attestation(payload)
+    _print_proof_failures(payload)
+
 
 
 def _mission_metric_label(key: str) -> str:
