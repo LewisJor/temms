@@ -11,12 +11,13 @@ build machine.
 
 from __future__ import annotations
 
-import hashlib
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlparse
+
+from temms.core.signing import sha256_file
 
 
 class ModelResolutionError(ValueError):
@@ -43,14 +44,6 @@ class ModelResolver(Protocol):
     scheme: str
 
     def resolve(self, uri: str) -> ResolvedModel: ...
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(65536), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 class FileModelResolver:
@@ -85,7 +78,7 @@ class FileModelResolver:
 
         return ResolvedModel(
             artifact_path=path,
-            sha256=_sha256_file(path),
+            sha256=sha256_file(path),
             provenance={
                 "registry": "file",
                 "resolved_uri": uri,
@@ -167,7 +160,7 @@ class MLflowModelResolver:
 
         return ResolvedModel(
             artifact_path=artifact,
-            sha256=_sha256_file(artifact),
+            sha256=sha256_file(artifact),
             provenance={
                 "registry": "mlflow",
                 "resolved_uri": uri,

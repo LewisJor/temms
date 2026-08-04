@@ -184,11 +184,6 @@ class PolicyEngine:
         }
         return eligible
 
-    def _evaluate_rule(self, rule: PolicyRule) -> bool:
-        """Evaluate a single rule (ignores dwell; conditions only)."""
-        matched, _ = self._explain_condition_group(rule.conditions)
-        return matched
-
     def _explain_rule(
         self,
         policy: SlotPolicy,
@@ -209,11 +204,6 @@ class PolicyEngine:
             },
             "conditions": condition_group,
         }
-
-    def _evaluate_condition_group(self, group: ConditionGroup) -> bool:
-        """Evaluate a condition group (AND/OR logic)."""
-        matched, _ = self._explain_condition_group(group)
-        return matched
 
     def _explain_condition_group(
         self,
@@ -237,10 +227,6 @@ class PolicyEngine:
             }
 
         return False, {"mode": "none", "items": []}
-
-    def _evaluate_condition(self, condition: Condition) -> bool:
-        """Evaluate a single condition."""
-        return self._explain_condition(condition)["matched"]
 
     def _explain_condition(self, condition: Condition) -> dict[str, Any]:
         """Evaluate one condition and return the values used for audit."""
