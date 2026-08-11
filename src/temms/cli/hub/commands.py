@@ -313,3 +313,404 @@ class Readiness:
             return HubResult(readiness, proof=readiness)
         mission = readiness.get("edge_runtime_mission")
         return HubResult(mission if isinstance(mission, dict) else {}, proof=readiness)
+
+
+# --------------------------------------------------------------------------
+# Rollout and plan lifecycle.
+#
+# Six actions are "POST a verb at a resource with a small body". Expressing
+# that once keeps the difference between them visible: the path segment and
+# which fields the body carries.
+# --------------------------------------------------------------------------
+
+
+class _ResourceAction:
+    """POST ``/{collection}/{id}/{verb}`` with a body the subclass builds."""
+
+    collection: str
+    verb: str
+
+    def __init__(self, transport: HubTransport, *, resource_id: str, **fields: Any) -> None:
+        self._transport = transport
+        self._resource_id = resource_id
+        self._fields = fields
+
+    def _body(self) -> dict[str, Any]:
+        return self._fields
+
+    def execute(self) -> HubResult:
+        return HubResult(
+            self._transport.post(
+                f"/{self.collection}/{self._resource_id}/{self.verb}", json=self._body()
+            )
+        )
+
+
+class AdvanceRolloutPlan(_ResourceAction):
+    collection, verb = "rollout-plans", "advance"
+
+    def _body(self) -> dict[str, Any]:
+        return {"limit": self._fields.get("batch_size"), "actor": self._fields.get("actor")}
+
+
+class ApproveRollout(_ResourceAction):
+    collection, verb = "rollouts", "approve"
+
+    def _body(self) -> dict[str, Any]:
+        return {"reason": self._fields.get("reason"), "actor": self._fields.get("actor")}
+
+
+class RollbackRollout(ApproveRollout):
+    verb = "rollback"
+
+
+class ApplyRollout(_ResourceAction):
+    collection, verb = "rollouts", "apply"
+
+    def _body(self) -> dict[str, Any]:
+        return {
+            "require_signature": self._fields.get("require_signature"),
+            "signing_key": self._fields.get("signing_key"),
+            "actor": self._fields.get("actor"),
+        }
+
+
+class PromotePackage(_ResourceAction):
+    collection, verb = "packages", "promote"
+
+    def _body(self) -> dict[str, Any]:
+        return {
+            "state": self._fields.get("state"),
+            "reason": self._fields.get("reason"),
+            "actor": self._fields.get("actor"),
+        }
+
+
+# --------------------------------------------------------------------------
+# Bundle uploads: read a JSON file, post it with attribution.
+# --------------------------------------------------------------------------
+
+
+class _BundleUpload:
+    path: str
+
+    def __init__(
+        self,
+        transport: HubTransport,
+        *,
+        bundle_path: Path,
+        device_id: str | None = None,
+        actor: str | None = None,
+    ) -> None:
+        self._transport = transport
+        self._bundle_path = bundle_path
+        self._device_id = device_id
+        self._actor = actor
+
+    def execute(self) -> HubResult:
+        import json
+
+        bundle = json.loads(self._bundle_path.read_text(encoding="utf-8"))
+        return HubResult(
+            self._transport.post(
+                self.path,
+                json={"bundle": bundle, "device_id": self._device_id, "actor": self._actor},
+            )
+        )
+
+
+class ReplayTelemetry(_BundleUpload):
+    path = "/telemetry/replay"
+
+
+class IngestEvidence(_BundleUpload):
+    path = "/evidence/ingest"
+
+
+# --------------------------------------------------------------------------
+# Compatibility.
+# --------------------------------------------------------------------------
+
+
+class PreviewCompatibility:
+    def __init__(
+        self,
+        transport: HubTransport,
+        *,
+        device_id: str,
+        package_id: str,
+        runtime_target_id: str | None = None,
+        model_id: str | None = None,
+    ) -> None:
+        self._transport = transport
+        self._request: dict[str, Any] = {
+            "device_id": device_id,
+            "package_id": package_id,
+            "runtime_target_id": runtime_target_id,
+        }
+        if model_id:
+            self._request["model_id"] = model_id
+
+    def execute(self) -> HubResult:
+        return HubResult(self._transport.post("/compatibility/preview", json=self._request))
+
+
+class CompatibilityMatrix:
+    """Every filter is optional; each is sent as a single-element list."""
+
+    def __init__(
+        self,
+        transport: HubTransport,
+        *,
+        package_id: str | None = None,
+        device_id: str | None = None,
+        runtime_target_id: str | None = None,
+        model_id: str | None = None,
+        include_device_inventory: bool = False,
+    ) -> None:
+        self._transport = transport
+        self._request: dict[str, Any] = {
+            "package_ids": [package_id] if package_id else None,
+            "device_ids": [device_id] if device_id else None,
+            "runtime_target_ids": [runtime_target_id] if runtime_target_id else None,
+            "include_device_inventory": include_device_inventory,
+        }
+        if model_id:
+            self._request["model_ids"] = [model_id]
+
+    def execute(self) -> HubResult:
+        return HubResult(self._transport.post("/compatibility/matrix", json=self._request))
+
+
+# --------------------------------------------------------------------------
+# Rollouts and plans: creation.
+# --------------------------------------------------------------------------
+
+
+class AssignRollout:
+    def __init__(
+        self,
+        transport: HubTransport,
+        *,
+        device_id: str,
+        package_id: str,
+        slot: str | None = None,
+        rollout_id: str | None = None,
+        runtime_target_id: str | None = None,
+        require_runtime_validation: bool = False,
+        require_approval: bool = False,
+        actor: str | None = None,
+        model_id: str | None = None,
+    ) -> None:
+        self._transport = transport
+        self._request: dict[str, Any] = {
+            "device_id": device_id,
+            "package_id": package_id,
+            "slot": slot,
+            "rollout_id": rollout_id,
+            "runtime_target_id": runtime_target_id,
+            "require_runtime_validation": require_runtime_validation,
+            "require_approval": require_approval,
+            "actor": actor,
+        }
+        if model_id:
+            self._request["model_id"] = model_id
+
+    def execute(self) -> HubResult:
+        return HubResult(self._transport.post("/rollouts", json=self._request))
+
+
+class CreateRolloutPlan:
+    """``device_ids`` merges the repeatable --target-device with --device-id."""
+
+    def __init__(
+        self,
+        transport: HubTransport,
+        *,
+        package_id: str,
+        device_ids: list[str],
+        plan_id: str | None = None,
+        slot: str | None = None,
+        runtime_target_id: str | None = None,
+        batch_size: int | None = None,
+        require_runtime_validation: bool = False,
+        require_approval: bool = False,
+        actor: str | None = None,
+        model_id: str | None = None,
+    ) -> None:
+        if not device_ids:
+            raise ValueError("a rollout plan needs at least one target device")
+        self._transport = transport
+        self._request: dict[str, Any] = {
+            "plan_id": plan_id,
+            "package_id": package_id,
+            "device_ids": device_ids,
+            "slot": slot,
+            "runtime_target_id": runtime_target_id,
+            "batch_size": batch_size,
+            "require_runtime_validation": require_runtime_validation,
+            "require_approval": require_approval,
+            "actor": actor,
+        }
+        if model_id:
+            self._request["model_id"] = model_id
+
+    def execute(self) -> HubResult:
+        return HubResult(self._transport.post("/rollout-plans", json=self._request))
+
+
+# --------------------------------------------------------------------------
+# Packages.
+# --------------------------------------------------------------------------
+
+
+class RegisterPackage:
+    def __init__(
+        self,
+        transport: HubTransport,
+        *,
+        package_path: Path,
+        require_signature: bool = False,
+        signing_key: str | None = None,
+        device_profile: str | None = None,
+        strict_metadata: bool = True,
+        actor: str | None = None,
+    ) -> None:
+        self._transport = transport
+        self._request = {
+            "package_path": str(package_path.expanduser()),
+            "require_signature": require_signature,
+            "signing_key": signing_key,
+            "device_profiles": [device_profile] if device_profile else None,
+            "strict_metadata": strict_metadata,
+            "actor": actor,
+        }
+
+    def execute(self) -> HubResult:
+        return HubResult(self._transport.post("/packages/register", json=self._request))
+
+
+class BuildPackageFromMLflow:
+    def __init__(
+        self,
+        transport: HubTransport,
+        *,
+        model_uri: str,
+        slot: str,
+        tracking_uri: str | None = None,
+        device_profile: str | None = None,
+        runtimes: list[str] | None = None,
+        providers: list[str] | None = None,
+        accelerators: list[str] | None = None,
+        model_artifact: str | None = None,
+        require_schema: bool = True,
+        require_signature: bool = False,
+        signing_key: str | None = None,
+        archive: bool = False,
+        overwrite: bool = False,
+        strict_metadata: bool = True,
+        actor: str | None = None,
+    ) -> None:
+        self._transport = transport
+        constraints: dict[str, Any] = {}
+        if device_profile:
+            constraints["device_profiles"] = [device_profile]
+        if runtimes:
+            constraints["runtimes"] = runtimes
+        if providers:
+            constraints["preferred_providers"] = providers
+        if accelerators:
+            constraints["accelerators"] = accelerators
+        self._request = {
+            "model_uri": model_uri,
+            "slot": slot,
+            "tracking_uri": tracking_uri,
+            "device_profile": device_profile,
+            "runtime_constraints": constraints,
+            "runtime_options": {"providers": providers} if providers else {},
+            "model_artifact_path": model_artifact,
+            "require_schema": require_schema,
+            "require_signature": require_signature,
+            "signing_key": signing_key,
+            "archive": archive,
+            "overwrite": overwrite,
+            "strict_metadata": strict_metadata,
+            "actor": actor,
+        }
+
+    def execute(self) -> HubResult:
+        return HubResult(self._transport.post("/packages/from-mlflow", json=self._request))
+
+
+class RegisterRuntimeTarget:
+    def __init__(
+        self,
+        transport: HubTransport,
+        *,
+        runtime_target_id: str,
+        image: str,
+        os_name: str | None = None,
+        arch: str | None = None,
+        device_profile: str | None = None,
+        runtimes: list[str] | None = None,
+        providers: list[str] | None = None,
+        accelerators: list[str] | None = None,
+        labels: dict[str, str] | None = None,
+        actor: str | None = None,
+    ) -> None:
+        self._transport = transport
+        runtime_inventory: dict[str, Any] = {r: {"available": True} for r in runtimes or []}
+        if providers:
+            runtime_inventory.setdefault("onnxruntime", {"available": True})["providers"] = providers
+        constraints: dict[str, Any] = {}
+        if device_profile:
+            constraints["device_profiles"] = [device_profile]
+        if runtimes:
+            constraints["runtimes"] = runtimes
+        if providers:
+            constraints["preferred_providers"] = providers
+        if accelerators:
+            constraints["accelerators"] = accelerators
+        self._request = {
+            "runtime_target_id": runtime_target_id,
+            "name": runtime_target_id,
+            "image": image,
+            "os": os_name,
+            "arch": arch,
+            "device_profiles": [device_profile] if device_profile else [],
+            "runtimes": runtime_inventory,
+            "accelerators": {a: {"available": True} for a in accelerators or []},
+            "runtime_constraints": constraints,
+            "labels": labels or {},
+            "actor": actor,
+        }
+
+    def execute(self) -> HubResult:
+        return HubResult(self._transport.post("/runtime-targets", json=self._request))
+
+
+# --------------------------------------------------------------------------
+# Mission packages: the request body is assembled by the CLI layer, since it
+# is drawn from ~20 options. The command owns only the call.
+# --------------------------------------------------------------------------
+
+
+class MissionPackagePlan:
+    def __init__(
+        self, transport: HubTransport, *, request: dict[str, Any], download: bool = False
+    ) -> None:
+        self._transport = transport
+        self._request = request
+        self._path = "/mission-package/download" if download else "/mission-package/plan"
+
+    def execute(self) -> HubResult:
+        return HubResult(self._transport.post(self._path, json=self._request))
+
+
+class MissionPackageStage:
+    def __init__(self, transport: HubTransport, *, request: dict[str, Any]) -> None:
+        self._transport = transport
+        self._request = request
+
+    def execute(self) -> HubResult:
+        return HubResult(self._transport.post("/mission-package/stage", json=self._request))

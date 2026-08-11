@@ -10,9 +10,11 @@ so a test is three lines.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
+from temms.cli.hub import commands
 from temms.cli.hub.commands import (
     DeploymentStatus,
     EnrollDevice,
@@ -303,3 +305,198 @@ def test_gate_failures_are_quiet_in_json_mode():
     emitter, console, _ = _emitter(json_output=False)
     emitter.report_gate_failures(["fit too low"])
     assert any("fit too low" in line for line in console.lines)
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle verbs: the base class means the interesting part of each subclass
+# is its path and body, so that is what these assert.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_path", "expected_body"),
+    [
+        (
+            lambda t: commands.ApproveRollout(t, resource_id="r1", reason="ok", actor="op"),
+            "/rollouts/r1/approve",
+            {"reason": "ok", "actor": "op"},
+        ),
+        (
+            lambda t: commands.RollbackRollout(t, resource_id="r1", reason="bad", actor="op"),
+            "/rollouts/r1/rollback",
+            {"reason": "bad", "actor": "op"},
+        ),
+        (
+            lambda t: commands.ApplyRollout(
+                t, resource_id="r1", require_signature=True, signing_key="K", actor="op"
+            ),
+            "/rollouts/r1/apply",
+            {"require_signature": True, "signing_key": "K", "actor": "op"},
+        ),
+        (
+            lambda t: commands.AdvanceRolloutPlan(t, resource_id="p1", batch_size=5, actor="op"),
+            "/rollout-plans/p1/advance",
+            {"limit": 5, "actor": "op"},
+        ),
+        (
+            lambda t: commands.PromotePackage(
+                t, resource_id="pkg", state="released", reason="r", actor="op"
+            ),
+            "/packages/pkg/promote",
+            {"state": "released", "reason": "r", "actor": "op"},
+        ),
+    ],
+    ids=["approve", "rollback", "apply", "advance-plan", "promote"],
+)
+def test_lifecycle_verbs_post_their_own_path_and_body(command, expected_path, expected_body):
+    transport = FakeTransport({"ok": True})
+    command(transport).execute()
+    assert transport.calls == [("POST", expected_path, expected_body)]
+
+
+def test_apply_rollout_does_not_leak_the_approval_body():
+    """Apply and approve share a base class but must not share a body shape."""
+    transport = FakeTransport({"ok": True})
+    commands.ApplyRollout(transport, resource_id="r1", actor="op").execute()
+    (_, _, body) = transport.calls[0]
+    assert "reason" not in body
+    assert set(body) == {"require_signature", "signing_key", "actor"}
+
+
+# ---------------------------------------------------------------------------
+# Bundle uploads.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("factory", "expected_path"),
+    [
+        (commands.ReplayTelemetry, "/telemetry/replay"),
+        (commands.IngestEvidence, "/evidence/ingest"),
+    ],
+    ids=["telemetry", "evidence"],
+)
+def test_bundle_upload_posts_the_parsed_file(tmp_path, factory, expected_path):
+    bundle = tmp_path / "bundle.json"
+    bundle.write_text(json.dumps({"records": [1, 2]}), encoding="utf-8")
+
+    transport = FakeTransport({"ok": True})
+    factory(transport, bundle_path=bundle, device_id="edge-1", actor="op").execute()
+
+    assert transport.calls == [
+        (
+            "POST",
+            expected_path,
+            {"bundle": {"records": [1, 2]}, "device_id": "edge-1", "actor": "op"},
+        )
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Compatibility: optional fields are omitted, not sent as null.
+# ---------------------------------------------------------------------------
+
+
+def test_preview_compatibility_omits_model_id_when_absent():
+    transport = FakeTransport({"compatible": True})
+    commands.PreviewCompatibility(transport, device_id="d", package_id="p").execute()
+    (_, _, body) = transport.calls[0]
+    assert "model_id" not in body
+
+
+def test_compatibility_matrix_wraps_each_filter_in_a_list():
+    transport = FakeTransport({"rows": []})
+    commands.CompatibilityMatrix(
+        transport, package_id="p", device_id="d", runtime_target_id="rt", model_id="m"
+    ).execute()
+    (_, _, body) = transport.calls[0]
+    assert body["package_ids"] == ["p"]
+    assert body["device_ids"] == ["d"]
+    assert body["runtime_target_ids"] == ["rt"]
+    assert body["model_ids"] == ["m"]
+
+
+def test_compatibility_matrix_sends_null_for_unfiltered_dimensions():
+    """A null dimension means "all"; an empty list would mean "none"."""
+    transport = FakeTransport({"rows": []})
+    commands.CompatibilityMatrix(transport, package_id="p").execute()
+    (_, _, body) = transport.calls[0]
+    assert body["device_ids"] is None
+    assert body["runtime_target_ids"] is None
+
+
+# ---------------------------------------------------------------------------
+# Creation.
+# ---------------------------------------------------------------------------
+
+
+def test_create_rollout_plan_rejects_an_empty_target_set():
+    """A plan with no devices is meaningless, so it fails before the network."""
+    transport = FakeTransport({})
+    with pytest.raises(ValueError, match="at least one target device"):
+        commands.CreateRolloutPlan(transport, package_id="p", device_ids=[])
+    assert transport.calls == []
+
+
+def test_register_package_expands_the_package_path():
+    transport = FakeTransport({"package_id": "p"})
+    commands.RegisterPackage(transport, package_path=Path("~/pkg.tar.gz")).execute()
+    (_, _, body) = transport.calls[0]
+    assert not body["package_path"].startswith("~")
+    assert body["package_path"].endswith("/pkg.tar.gz")
+
+
+def test_register_runtime_target_marks_declared_capabilities_available():
+    transport = FakeTransport({"runtime_target_id": "rt"})
+    commands.RegisterRuntimeTarget(
+        transport,
+        runtime_target_id="rt",
+        image="img",
+        runtimes=["onnxruntime"],
+        providers=["CPUExecutionProvider"],
+        accelerators=["cuda"],
+    ).execute()
+    (_, _, body) = transport.calls[0]
+    assert body["runtimes"]["onnxruntime"] == {
+        "available": True,
+        "providers": ["CPUExecutionProvider"],
+    }
+    assert body["accelerators"] == {"cuda": {"available": True}}
+    assert body["runtime_constraints"]["preferred_providers"] == ["CPUExecutionProvider"]
+
+
+def test_register_runtime_target_records_providers_without_a_declared_runtime():
+    """Providers imply onnxruntime, so an operator need not restate it."""
+    transport = FakeTransport({"runtime_target_id": "rt"})
+    commands.RegisterRuntimeTarget(
+        transport, runtime_target_id="rt", image="img", providers=["CPUExecutionProvider"]
+    ).execute()
+    (_, _, body) = transport.calls[0]
+    assert body["runtimes"]["onnxruntime"]["available"] is True
+
+
+def test_build_package_from_mlflow_defaults_to_strict_metadata():
+    """The CLI's default is strict; the object must not silently relax it."""
+    transport = FakeTransport({"package_id": "p"})
+    commands.BuildPackageFromMLflow(transport, model_uri="models:/m/1", slot="vision").execute()
+    (_, _, body) = transport.calls[0]
+    assert body["strict_metadata"] is True
+
+
+# ---------------------------------------------------------------------------
+# Mission packages: the endpoint is the only difference between plan and
+# download, and that difference is a flag rather than an action-string branch.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("download", "expected_path"),
+    [(False, "/mission-package/plan"), (True, "/mission-package/download")],
+    ids=["plan", "download"],
+)
+def test_mission_package_plan_selects_its_endpoint(download, expected_path):
+    transport = FakeTransport({"plan": {}})
+    commands.MissionPackagePlan(
+        transport, request={"mission": "m"}, download=download
+    ).execute()
+    assert transport.calls == [("POST", expected_path, {"mission": "m"})]
