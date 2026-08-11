@@ -560,6 +560,19 @@ def test_every_hub_action_is_registered_as_a_subcommand():
     assert registered == HUB_SUBCOMMANDS
 
 
+def _plain(output: str) -> str:
+    """Strip ANSI escape sequences.
+
+    In CI, rich detects color support and styles the help output; the escape
+    codes land inside the option names, so a raw substring check passes
+    locally and fails in Actions. Assertions here are about *content*, so
+    they compare against the unstyled text.
+    """
+    import re
+
+    return re.sub(r"\x1b\[[0-9;]*m", "", output)
+
+
 def test_a_subcommand_rejects_an_option_belonging_to_another_action():
     """The point of the split: options are no longer global to `hub`.
 
@@ -571,8 +584,9 @@ def test_a_subcommand_rejects_an_option_belonging_to_another_action():
     from temms.cli.main import app
 
     result = CliRunner().invoke(app, ["hub", "devices", "--archive"])
+    output = _plain(result.output).lower()
     assert result.exit_code != 0
-    assert "no such option" in result.output.lower() or "unexpected" in result.output.lower()
+    assert "no such option" in output or "unexpected" in output
 
 
 def test_help_for_one_action_does_not_list_every_option():
@@ -581,11 +595,12 @@ def test_help_for_one_action_does_not_list_every_option():
     from temms.cli.main import app
 
     result = CliRunner().invoke(app, ["hub", "devices", "--help"])
+    output = _plain(result.output)
     assert result.exit_code == 0
-    assert "--hub-url" in result.output
+    assert "--hub-url" in output
     # Options belonging to other actions must not appear.
     for foreign in ("--archive", "--mission-yaml", "--promotion-state", "--batch-size"):
-        assert foreign not in result.output
+        assert foreign not in output
 
 
 def test_enroll_without_a_device_id_exits_before_any_request():
@@ -596,7 +611,7 @@ def test_enroll_without_a_device_id_exits_before_any_request():
 
     result = CliRunner().invoke(app, ["hub", "enroll"])
     assert result.exit_code == 1
-    assert "device id required" in result.output.lower()
+    assert "device id required" in _plain(result.output).lower()
 
 
 @pytest.mark.parametrize(
