@@ -325,18 +325,17 @@ class Readiness:
 
 
 class _ResourceAction:
-    """POST ``/{collection}/{id}/{verb}`` with a body the subclass builds."""
+    """POST ``/{collection}/{id}/{verb}``. Subclasses own their body."""
 
     collection: str
     verb: str
 
-    def __init__(self, transport: HubTransport, *, resource_id: str, **fields: Any) -> None:
+    def __init__(self, transport: HubTransport, *, resource_id: str) -> None:
         self._transport = transport
         self._resource_id = resource_id
-        self._fields = fields
 
     def _body(self) -> dict[str, Any]:
-        return self._fields
+        raise NotImplementedError
 
     def execute(self) -> HubResult:
         return HubResult(
@@ -349,15 +348,39 @@ class _ResourceAction:
 class AdvanceRolloutPlan(_ResourceAction):
     collection, verb = "rollout-plans", "advance"
 
+    def __init__(
+        self,
+        transport: HubTransport,
+        *,
+        resource_id: str,
+        batch_size: int | None = None,
+        actor: str | None = None,
+    ) -> None:
+        super().__init__(transport, resource_id=resource_id)
+        self._batch_size = batch_size
+        self._actor = actor
+
     def _body(self) -> dict[str, Any]:
-        return {"limit": self._fields.get("batch_size"), "actor": self._fields.get("actor")}
+        return {"limit": self._batch_size, "actor": self._actor}
 
 
 class ApproveRollout(_ResourceAction):
     collection, verb = "rollouts", "approve"
 
+    def __init__(
+        self,
+        transport: HubTransport,
+        *,
+        resource_id: str,
+        reason: str | None = None,
+        actor: str | None = None,
+    ) -> None:
+        super().__init__(transport, resource_id=resource_id)
+        self._reason = reason
+        self._actor = actor
+
     def _body(self) -> dict[str, Any]:
-        return {"reason": self._fields.get("reason"), "actor": self._fields.get("actor")}
+        return {"reason": self._reason, "actor": self._actor}
 
 
 class RollbackRollout(ApproveRollout):
@@ -367,23 +390,47 @@ class RollbackRollout(ApproveRollout):
 class ApplyRollout(_ResourceAction):
     collection, verb = "rollouts", "apply"
 
+    def __init__(
+        self,
+        transport: HubTransport,
+        *,
+        resource_id: str,
+        require_signature: bool = True,
+        signing_key: str | None = None,
+        actor: str | None = None,
+    ) -> None:
+        super().__init__(transport, resource_id=resource_id)
+        self._require_signature = require_signature
+        self._signing_key = signing_key
+        self._actor = actor
+
     def _body(self) -> dict[str, Any]:
         return {
-            "require_signature": self._fields.get("require_signature"),
-            "signing_key": self._fields.get("signing_key"),
-            "actor": self._fields.get("actor"),
+            "require_signature": self._require_signature,
+            "signing_key": self._signing_key,
+            "actor": self._actor,
         }
 
 
 class PromotePackage(_ResourceAction):
     collection, verb = "packages", "promote"
 
+    def __init__(
+        self,
+        transport: HubTransport,
+        *,
+        resource_id: str,
+        state: str | None = None,
+        reason: str | None = None,
+        actor: str | None = None,
+    ) -> None:
+        super().__init__(transport, resource_id=resource_id)
+        self._state = state
+        self._reason = reason
+        self._actor = actor
+
     def _body(self) -> dict[str, Any]:
-        return {
-            "state": self._fields.get("state"),
-            "reason": self._fields.get("reason"),
-            "actor": self._fields.get("actor"),
-        }
+        return {"state": self._state, "reason": self._reason, "actor": self._actor}
 
 
 # --------------------------------------------------------------------------
@@ -714,3 +761,53 @@ class MissionPackageStage:
 
     def execute(self) -> HubResult:
         return HubResult(self._transport.post("/mission-package/stage", json=self._request))
+
+
+class ValidateRuntimeTarget:
+    """The one action that is not a single request.
+
+    It reads the runtime targets, runs the package against the named one
+    locally, then records the outcome back on the Hub. The local validator is
+    injected so this class stays a coordinator: it sequences the three steps
+    and owns none of them.
+    """
+
+    def __init__(
+        self,
+        transport: HubTransport,
+        *,
+        package_path: Path,
+        runtime_target_id: str,
+        validator: Any,
+        find_target: Any,
+        package_id: str | None = None,
+        actor: str | None = None,
+    ) -> None:
+        self._transport = transport
+        self._package_path = package_path
+        self._runtime_target_id = runtime_target_id
+        self._validate = validator
+        self._find_target = find_target
+        self._package_id = package_id
+        self._actor = actor
+
+    def execute(self) -> HubResult:
+        targets = self._transport.get("/runtime-targets")
+        target = self._find_target(
+            targets.get("runtime_targets", []), self._runtime_target_id
+        )
+        outcome = {
+            "schema_version": "temms-runtime-target-validation/v1",
+            **self._validate(target, self._package_path).to_dict(),
+        }
+        record = self._transport.post(
+            "/runtime-targets/validations",
+            json={
+                "runtime_target_id": self._runtime_target_id,
+                "package_id": self._package_id,
+                "package_path": str(self._package_path.expanduser()),
+                "result": dict(outcome),
+                "actor": self._actor,
+            },
+        )
+        return HubResult({**outcome, "validation_record": record})

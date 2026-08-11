@@ -37,6 +37,10 @@ class HttpHubTransport:
         self._client = client
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        # An unfiltered read sends no query string, so it should not send an
+        # empty `params` either -- the call made should be the call meant.
+        if params is None:
+            return self._checked(self._client.get(path))
         return self._checked(self._client.get(path, params=params))
 
     def post(self, path: str, json: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -47,4 +51,5 @@ class HttpHubTransport:
         """Turn an HTTP error response into an exception with a usable message."""
         if response.status_code >= 400:
             raise HubTransportError(f"HTTP {response.status_code}: {response.text}")
-        return response.json()
+        payload: dict[str, Any] = response.json()
+        return payload

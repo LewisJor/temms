@@ -6005,10 +6005,16 @@ class TestHubActionCharacterization:
         assert calls == [("POST", "/airgap/import", bundle)]
 
     def test_import_requires_a_bundle_path(self, monkeypatch):
+        """Missing arguments are now a usage error, caught before any request.
+
+        The bundle path is declared required, so Typer rejects the invocation
+        and prints usage -- exit 2, the convention for bad usage -- instead of
+        the hand-written check that exited 1 with a bare message.
+        """
         calls = []
         monkeypatch.setattr("httpx.Client", self._fake_client(calls))
 
         result = runner.invoke(app, ["hub", "import"])
 
-        assert result.exit_code == 1
+        assert result.exit_code == 2
         assert calls == []

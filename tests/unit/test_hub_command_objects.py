@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 import pytest
+import typer
 
 from temms.cli.hub import commands
 from temms.cli.hub.commands import (
@@ -500,3 +501,139 @@ def test_mission_package_plan_selects_its_endpoint(download, expected_path):
         transport, request={"mission": "m"}, download=download
     ).execute()
     assert transport.calls == [("POST", expected_path, {"mission": "m"})]
+
+
+# ---------------------------------------------------------------------------
+# The CLI surface.
+#
+# Every action is a sub-command, and the set is frozen here: renaming or
+# dropping one is a breaking change to an operator-facing command, so it should
+# fail a test rather than a field deployment.
+# ---------------------------------------------------------------------------
+
+HUB_SUBCOMMANDS = frozenset(
+    {
+        "advance-rollout-plan",
+        "apply",
+        "approve",
+        "assign",
+        "benchmarks",
+        "compatibility-matrix",
+        "create-rollout-plan",
+        "devices",
+        "edge-runtime-mission",
+        "enroll",
+        "evidence",
+        "export",
+        "import",
+        "ingest-evidence",
+        "mission-package-download",
+        "mission-package-plan",
+        "mission-package-stage",
+        "package-from-mlflow",
+        "packages",
+        "pause-rollout-plan",
+        "preview-compatibility",
+        "promote-package",
+        "readiness",
+        "register-package",
+        "register-runtime",
+        "replay-telemetry",
+        "resume-rollout-plan",
+        "rollback",
+        "rollout-plans",
+        "rollouts",
+        "runtime-targets",
+        "runtime-validations",
+        "status",
+        "telemetry",
+        "validate-runtime",
+        "verify-edge-proof",
+    }
+)
+
+
+def test_every_hub_action_is_registered_as_a_subcommand():
+    from temms.cli.hub.app import hub_app
+
+    registered = {command.name for command in hub_app.registered_commands}
+    assert registered == HUB_SUBCOMMANDS
+
+
+def test_a_subcommand_rejects_an_option_belonging_to_another_action():
+    """The point of the split: options are no longer global to `hub`.
+
+    `--archive` belongs to package-from-mlflow. Under the single hub() it
+    parsed for every action and was silently ignored.
+    """
+    from typer.testing import CliRunner
+
+    from temms.cli.main import app
+
+    result = CliRunner().invoke(app, ["hub", "devices", "--archive"])
+    assert result.exit_code != 0
+    assert "no such option" in result.output.lower() or "unexpected" in result.output.lower()
+
+
+def test_help_for_one_action_does_not_list_every_option():
+    from typer.testing import CliRunner
+
+    from temms.cli.main import app
+
+    result = CliRunner().invoke(app, ["hub", "devices", "--help"])
+    assert result.exit_code == 0
+    assert "--hub-url" in result.output
+    # Options belonging to other actions must not appear.
+    for foreign in ("--archive", "--mission-yaml", "--promotion-state", "--batch-size"):
+        assert foreign not in result.output
+
+
+def test_enroll_without_a_device_id_exits_before_any_request():
+    """`enroll` accepts the ID positionally or as --device-id; neither is an error."""
+    from typer.testing import CliRunner
+
+    from temms.cli.main import app
+
+    result = CliRunner().invoke(app, ["hub", "enroll"])
+    assert result.exit_code == 1
+    assert "device id required" in result.output.lower()
+
+
+@pytest.mark.parametrize(
+    ("subcommand", "option", "expected"),
+    [
+        ("register-package", "--require-signature", True),
+        ("package-from-mlflow", "--require-signature", True),
+        ("apply", "--require-signature", True),
+        ("validate-runtime", "--require-signature", True),
+        ("package-from-mlflow", "--archive", True),
+        ("package-from-mlflow", "--require-schema", True),
+        ("register-package", "--strict-metadata", True),
+        ("register-runtime", "--os", "linux"),
+        ("validate-runtime", "--timeout-s", 300),
+        ("create-rollout-plan", "--batch-size", 1),
+        ("assign", "--require-approval", False),
+        ("export", "--include-packages", False),
+    ],
+)
+def test_safe_defaults_are_preserved(subcommand, option, expected):
+    """Defaults are security- and behaviour-relevant, so they are pinned.
+
+    `--require-signature` defaulting to True is what makes an unsigned package
+    a refusal rather than a silent accept. A refactor that flips one of these
+    changes what the CLI does while every other test still passes.
+    """
+    import click
+
+    from temms.cli.hub.app import hub_app
+
+    command = next(c for c in hub_app.registered_commands if c.name == subcommand)
+    params = typer.main.get_command_from_info(
+        command, pretty_exceptions_short=False, rich_markup_mode=None
+    ).params
+    param = next(
+        p
+        for p in params
+        if isinstance(p, click.Option) and option in p.opts + p.secondary_opts
+    )
+    assert param.default == expected
