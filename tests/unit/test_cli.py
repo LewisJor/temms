@@ -5907,3 +5907,107 @@ class TestMissionCommand:
         result = runner.invoke(app, ["mission", "build", str(mission), "--out", str(out)])
         assert result.exit_code == 1
         assert not out.exists() or not any(out.iterdir())
+
+
+class TestHubActionCharacterization:
+    """Pin the request each hub action issues.
+
+    Characterization tests: they assert the *current* wire behaviour (method,
+    path, body) of actions that had no CLI-level coverage, so the hub()
+    decomposition cannot silently change what an action sends. Written before
+    that refactor, deliberately.
+    """
+
+    @staticmethod
+    def _fake_client(calls, payload=None):
+        class FakeResponse:
+            status_code = 200
+            text = "ok"
+
+            def json(self):
+                return payload if payload is not None else {"ok": True}
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def get(self, path, params=None):
+                calls.append(("GET", path, params))
+                return FakeResponse()
+
+            def post(self, path, json=None):
+                calls.append(("POST", path, json))
+                return FakeResponse()
+
+        return FakeClient
+
+    @pytest.mark.parametrize(
+        "action,path",
+        [
+            ("devices", "/devices"),
+            ("packages", "/packages"),
+            ("rollouts", "/rollouts"),
+            ("telemetry", "/telemetry"),
+        ],
+    )
+    def test_listing_actions_issue_a_plain_get(self, action, path, monkeypatch):
+        calls = []
+        monkeypatch.setattr("httpx.Client", self._fake_client(calls))
+
+        result = runner.invoke(app, ["hub", action, "--json"])
+
+        assert result.exit_code == 0
+        assert calls == [("GET", path, None)]
+
+    @pytest.mark.parametrize("action", ["pause-rollout-plan", "resume-rollout-plan"])
+    def test_plan_lifecycle_actions_post_reason_and_actor(self, action, monkeypatch):
+        calls = []
+        monkeypatch.setattr("httpx.Client", self._fake_client(calls))
+
+        result = runner.invoke(
+            app,
+            ["hub", action, "plan-7", "--reason", "weather", "--actor", "operator:jo", "--json"],
+        )
+
+        assert result.exit_code == 0
+        verb, path, body = calls[0]
+        assert verb == "POST"
+        assert path == f"/rollout-plans/plan-7/{action.split('-')[0]}"
+        assert body == {"reason": "weather", "actor": "operator:jo"}
+
+    @pytest.mark.parametrize("action", ["pause-rollout-plan", "resume-rollout-plan"])
+    def test_plan_lifecycle_requires_a_plan_id(self, action, monkeypatch):
+        calls = []
+        monkeypatch.setattr("httpx.Client", self._fake_client(calls))
+
+        result = runner.invoke(app, ["hub", action])
+
+        assert result.exit_code == 1
+        assert calls == []
+
+    def test_import_posts_the_bundle_contents(self, temp_dir, monkeypatch):
+        calls = []
+        monkeypatch.setattr("httpx.Client", self._fake_client(calls))
+        bundle = {"schema_version": "temms-airgap/v1", "packages": [{"id": "pkg-a"}]}
+        bundle_path = temp_dir / "bundle.json"
+        bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+
+        result = runner.invoke(app, ["hub", "import", str(bundle_path), "--json"])
+
+        assert result.exit_code == 0
+        assert calls == [("POST", "/airgap/import", bundle)]
+
+    def test_import_requires_a_bundle_path(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr("httpx.Client", self._fake_client(calls))
+
+        result = runner.invoke(app, ["hub", "import"])
+
+        assert result.exit_code == 1
+        assert calls == []
