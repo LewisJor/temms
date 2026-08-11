@@ -15,27 +15,30 @@ import logging
 import os
 import socket
 import time
-from typing import Any, Dict, List, Optional
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from contextlib import asynccontextmanager
+from typing import Any
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Request, Body, Response
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from prometheus_client import make_asgi_app
 from pydantic import BaseModel, Field
 
-from temms.controller import ActivationPreflightBlocked, AdaptiveInferenceController
-from temms.slots.manager import SlotManager, SlotState
 from temms.conditions.store import ConditionStore
-from temms.policy.engine import PolicyEngine
+from temms.controller import ActivationPreflightBlocked, AdaptiveInferenceController
 from temms.core.cache import ModelCache
-from temms.core.storage import ModelStorage
 from temms.core.mission_package import (
     edge_mission_package_mission_contract_hash,
     edge_mission_package_runtime_capability_lock_hash,
     hydrate_mission_spec_from_yaml,
 )
-from temms.inference.runtime import InferenceRuntime, InvalidInputError
+from temms.core.storage import ModelStorage
+from temms.daemon.pending_preflight import (
+    RUNTIME_TARGET_ASSESSMENT_DIGEST_SCHEMA_VERSION,
+    deploy_intent_context,
+    pending_sync_preflight,
+    runtime_target_assessment_sha256,
+)
 from temms.hub_lite import (
     EDGE_MISSION_PACKAGE_SCHEMA_VERSION,
     PackageArtifactIntegrityError,
@@ -45,20 +48,17 @@ from temms.hub_lite import (
     deployment_readiness_apply_blocking_gates,
     edge_mission_package_identity_hash,
 )
-from temms.daemon.pending_preflight import (
-    RUNTIME_TARGET_ASSESSMENT_DIGEST_SCHEMA_VERSION,
-    deploy_intent_context,
-    pending_sync_preflight,
-    runtime_target_assessment_sha256,
-)
+from temms.inference.runtime import InferenceRuntime, InvalidInputError
 from temms.observability import (
-    inference_request_count,
-    inference_errors_total,
-    invalid_input_total,
-    inference_latency_ms,
     condition_update_count,
     deployment_count,
+    inference_errors_total,
+    inference_latency_ms,
+    inference_request_count,
+    invalid_input_total,
 )
+from temms.policy.engine import PolicyEngine
+from temms.slots.manager import SlotManager, SlotState
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ class InferenceResponse(BaseModel):
     slot: str
     model: str
     model_version: str
-    predictions: List[Any]
+    predictions: list[Any]
     latency_ms: float
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
 
@@ -86,9 +86,9 @@ class SlotStatusResponse(BaseModel):
     description: str
     state: str
     required: bool
-    active_model: Optional[str]
-    default_model: Optional[str]
-    candidates: List[str]
+    active_model: str | None
+    default_model: str | None
+    candidates: list[str]
     updated_at: str
 
 
@@ -96,7 +96,7 @@ class SystemStatusResponse(BaseModel):
     """Full system status."""
 
     status: str  # healthy, degraded, error
-    slots: Dict[str, Dict[str, Any]]
+    slots: dict[str, dict[str, Any]]
     conditions_count: int
     policies_count: int
     uptime_seconds: float
@@ -106,14 +106,14 @@ class SlotOverrideRequest(BaseModel):
     """Request to override slot's model."""
 
     model: str
-    reason: Optional[str] = None
-    duration_s: Optional[int] = None  # None = permanent until cleared
+    reason: str | None = None
+    duration_s: int | None = None  # None = permanent until cleared
 
 
 class ConditionUpdateRequest(BaseModel):
     """Request to update conditions."""
 
-    conditions: Dict[str, Any]  # path -> value
+    conditions: dict[str, Any]  # path -> value
 
 
 class SlotEvaluateRequest(BaseModel):
@@ -125,7 +125,7 @@ class SlotEvaluateRequest(BaseModel):
 class ConditionUpdateResponse(BaseModel):
     """Response from condition update."""
 
-    updated: List[str]
+    updated: list[str]
     timestamp: str
 
 
@@ -139,18 +139,18 @@ class HealthResponse(BaseModel):
 class DeviceEnrollRequest(BaseModel):
     """Hub Lite device enrollment request."""
 
-    device_id: Optional[str] = None
-    profile: Optional[str] = None
-    labels: Dict[str, str] = Field(default_factory=dict)
-    inventory: Dict[str, Any] = Field(default_factory=dict)
+    device_id: str | None = None
+    profile: str | None = None
+    labels: dict[str, str] = Field(default_factory=dict)
+    inventory: dict[str, Any] = Field(default_factory=dict)
 
 
 class HeartbeatRequest(BaseModel):
     """Hub Lite heartbeat request."""
 
     status: str = "online"
-    inventory: Dict[str, Any] = Field(default_factory=dict)
-    deployment_status: Dict[str, Any] = Field(default_factory=dict)
+    inventory: dict[str, Any] = Field(default_factory=dict)
+    deployment_status: dict[str, Any] = Field(default_factory=dict)
 
 
 class HubPackageRequest(BaseModel):
@@ -159,11 +159,11 @@ class HubPackageRequest(BaseModel):
     package_id: str
     name: str
     version: str
-    path: Optional[str] = None
-    sha256: Optional[str] = None
-    device_profiles: List[str] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    actor: Optional[str] = None
+    path: str | None = None
+    sha256: str | None = None
+    device_profiles: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    actor: str | None = None
 
 
 class HubPackageRegisterRequest(BaseModel):
@@ -171,21 +171,21 @@ class HubPackageRegisterRequest(BaseModel):
 
     package_path: str
     require_signature: bool = False
-    signing_key: Optional[str] = None
-    device_profiles: Optional[List[str]] = None
-    sign: Optional[bool] = None
+    signing_key: str | None = None
+    device_profiles: list[str] | None = None
+    sign: bool | None = None
     signer: str = "temms-hub-lite"
     strict_metadata: bool = True
-    actor: Optional[str] = None
+    actor: str | None = None
 
 
 class HubPackagePromotionRequest(BaseModel):
     """Promote a Hub Lite package through the deployment lifecycle."""
 
     state: str
-    reason: Optional[str] = None
-    actor: Optional[str] = None
-    evidence: Dict[str, Any] = Field(default_factory=dict)
+    reason: str | None = None
+    actor: str | None = None
+    evidence: dict[str, Any] = Field(default_factory=dict)
 
 
 class HubPackageFromMLflowRequest(BaseModel):
@@ -193,43 +193,43 @@ class HubPackageFromMLflowRequest(BaseModel):
 
     model_uri: str
     slot: str
-    policy_path: Optional[str] = None
-    output_dir: Optional[str] = None
-    tracking_uri: Optional[str] = None
-    model_format: Optional[str] = None
+    policy_path: str | None = None
+    output_dir: str | None = None
+    tracking_uri: str | None = None
+    model_format: str | None = None
     require_schema: bool = True
     require_runtime_constraints: bool = True
-    device_profile: Optional[str] = None
-    runtime_constraints: Dict[str, Any] = Field(default_factory=dict)
-    runtime_options: Dict[str, Any] = Field(default_factory=dict)
-    model_artifact_path: Optional[str] = None
+    device_profile: str | None = None
+    runtime_constraints: dict[str, Any] = Field(default_factory=dict)
+    runtime_options: dict[str, Any] = Field(default_factory=dict)
+    model_artifact_path: str | None = None
     require_signature: bool = False
-    signing_key: Optional[str] = None
-    sign: Optional[bool] = None
+    signing_key: str | None = None
+    sign: bool | None = None
     signer: str = "temms-hub-lite"
     strict_metadata: bool = True
     archive: bool = True
     overwrite: bool = False
-    actor: Optional[str] = None
+    actor: str | None = None
 
 
 class RuntimeTargetRequest(BaseModel):
     """Register a Hub Lite container runtime target."""
 
     runtime_target_id: str
-    name: Optional[str] = None
-    description: Optional[str] = None
+    name: str | None = None
+    description: str | None = None
     image: str
-    registry: Optional[str] = None
+    registry: str | None = None
     os: str = "linux"
-    arch: Optional[str] = None
-    device_profiles: List[str] = Field(default_factory=list)
-    runtimes: Dict[str, Any] = Field(default_factory=dict)
-    accelerators: Dict[str, Any] = Field(default_factory=dict)
-    runtime_constraints: Dict[str, Any] = Field(default_factory=dict)
-    labels: Dict[str, str] = Field(default_factory=dict)
+    arch: str | None = None
+    device_profiles: list[str] = Field(default_factory=list)
+    runtimes: dict[str, Any] = Field(default_factory=dict)
+    accelerators: dict[str, Any] = Field(default_factory=dict)
+    runtime_constraints: dict[str, Any] = Field(default_factory=dict)
+    labels: dict[str, str] = Field(default_factory=dict)
     source: str = "byo"
-    actor: Optional[str] = None
+    actor: str | None = None
 
 
 class HubCompatibilityPreviewRequest(BaseModel):
@@ -237,39 +237,39 @@ class HubCompatibilityPreviewRequest(BaseModel):
 
     device_id: str
     package_id: str
-    model_id: Optional[str] = None
-    runtime_target_id: Optional[str] = None
+    model_id: str | None = None
+    runtime_target_id: str | None = None
 
 
 class HubCompatibilityMatrixRequest(BaseModel):
     """Build a package/device/runtime compatibility matrix."""
 
-    package_ids: Optional[List[str]] = None
-    model_ids: Optional[List[str]] = None
-    device_ids: Optional[List[str]] = None
-    runtime_target_ids: Optional[List[str]] = None
+    package_ids: list[str] | None = None
+    model_ids: list[str] | None = None
+    device_ids: list[str] | None = None
+    runtime_target_ids: list[str] | None = None
     include_device_inventory: bool = False
 
 
 class MissionPackagePlanRequest(BaseModel):
     """Plan the mission-to-edge package bundle for a selected runtime path."""
 
-    package_id: Optional[str] = None
-    model_id: Optional[str] = None
-    device_id: Optional[str] = None
-    runtime_target_id: Optional[str] = None
-    slot: Optional[str] = None
-    goal: Optional[str] = None
-    mission_yaml: Optional[str] = None
-    sensor: Optional[str] = None
-    latency_budget_ms: Optional[float] = None
-    min_throughput_ips: Optional[float] = None
-    switch_policy: Optional[str] = None
-    confidence_threshold: Optional[float] = None
-    fallback_model_id: Optional[str] = None
-    ddil_mode: Optional[str] = None
+    package_id: str | None = None
+    model_id: str | None = None
+    device_id: str | None = None
+    runtime_target_id: str | None = None
+    slot: str | None = None
+    goal: str | None = None
+    mission_yaml: str | None = None
+    sensor: str | None = None
+    latency_budget_ms: float | None = None
+    min_throughput_ips: float | None = None
+    switch_policy: str | None = None
+    confidence_threshold: float | None = None
+    fallback_model_id: str | None = None
+    ddil_mode: str | None = None
     require_go: bool = True
-    min_runtime_fit: Optional[float] = 95
+    min_runtime_fit: float | None = 95
     require_best_runtime: bool = True
     require_capability_lock: bool = True
     require_proof_signature: bool = True
@@ -278,113 +278,113 @@ class MissionPackagePlanRequest(BaseModel):
 class MissionPackageStageRequest(BaseModel):
     """Stage the deployment intent embedded in a mission package artifact."""
 
-    mission_package: Dict[str, Any]
-    rollout_id: Optional[str] = None
-    reason: Optional[str] = None
-    actor: Optional[str] = None
+    mission_package: dict[str, Any]
+    rollout_id: str | None = None
+    reason: str | None = None
+    actor: str | None = None
 
 
 class RuntimeValidationRecordRequest(BaseModel):
     """Record runtime target validation evidence in Hub Lite."""
 
     runtime_target_id: str
-    result: Dict[str, Any]
-    package_id: Optional[str] = None
-    package_path: Optional[str] = None
-    actor: Optional[str] = None
+    result: dict[str, Any]
+    package_id: str | None = None
+    package_path: str | None = None
+    actor: str | None = None
 
 
 class BenchmarkRecordRequest(BaseModel):
     """Record hardware-aware benchmark evidence in Hub Lite."""
 
-    result: Dict[str, Any]
-    device_id: Optional[str] = None
-    package_id: Optional[str] = None
-    runtime_target_id: Optional[str] = None
-    actor: Optional[str] = None
+    result: dict[str, Any]
+    device_id: str | None = None
+    package_id: str | None = None
+    runtime_target_id: str | None = None
+    actor: str | None = None
 
 
 class RolloutAssignRequest(BaseModel):
     """Hub Lite rollout assignment request."""
 
-    rollout_id: Optional[str] = None
+    rollout_id: str | None = None
     device_id: str
     package_id: str
-    model_id: Optional[str] = None
-    slot: Optional[str] = None
-    runtime_target_id: Optional[str] = None
+    model_id: str | None = None
+    slot: str | None = None
+    runtime_target_id: str | None = None
     require_runtime_validation: bool = False
     require_approval: bool = False
-    reason: Optional[str] = None
-    actor: Optional[str] = None
+    reason: str | None = None
+    actor: str | None = None
 
 
 class RolloutPlanCreateRequest(BaseModel):
     """Create a coordinated Hub Lite rollout plan."""
 
-    plan_id: Optional[str] = None
+    plan_id: str | None = None
     package_id: str
-    model_id: Optional[str] = None
-    device_ids: List[str]
-    slot: Optional[str] = None
-    runtime_target_id: Optional[str] = None
+    model_id: str | None = None
+    device_ids: list[str]
+    slot: str | None = None
+    runtime_target_id: str | None = None
     batch_size: int = 1
     require_runtime_validation: bool = False
     require_approval: bool = False
-    reason: Optional[str] = None
-    actor: Optional[str] = None
+    reason: str | None = None
+    actor: str | None = None
 
 
 class RolloutPlanAdvanceRequest(BaseModel):
     """Advance a coordinated rollout plan by one batch."""
 
-    limit: Optional[int] = None
-    actor: Optional[str] = None
+    limit: int | None = None
+    actor: str | None = None
 
 
 class RolloutPlanStateRequest(BaseModel):
     """Pause or resume a coordinated rollout plan."""
 
-    reason: Optional[str] = None
-    actor: Optional[str] = None
+    reason: str | None = None
+    actor: str | None = None
 
 
 class RolloutApprovalRequest(BaseModel):
     """Approve a rollout before edge apply."""
 
-    reason: Optional[str] = None
-    actor: Optional[str] = None
+    reason: str | None = None
+    actor: str | None = None
 
 
 class RolloutStatusRequest(BaseModel):
     """Hub Lite rollout status update request."""
 
     state: str
-    detail: Optional[str] = None
-    actor: Optional[str] = None
+    detail: str | None = None
+    actor: str | None = None
 
 
 class RolloutApplyRequest(BaseModel):
     """Apply a Hub Lite rollout on this edge agent."""
 
-    model_id: Optional[str] = None
+    model_id: str | None = None
     require_signature: bool = False
-    signing_key: Optional[str] = None
-    actor: Optional[str] = None
-    actor: Optional[str] = None
+    signing_key: str | None = None
+    actor: str | None = None
+    actor: str | None = None
 
 
 class RolloutRollbackRequest(BaseModel):
     """Rollback a Hub Lite rollout on this edge agent."""
 
-    reason: Optional[str] = None
-    actor: Optional[str] = None
+    reason: str | None = None
+    actor: str | None = None
 
 
 class TelemetryExportRequest(BaseModel):
     """Telemetry export request."""
 
-    limit: Optional[int] = None
+    limit: int | None = None
 
 
 class TelemetryReplayRequest(BaseModel):
@@ -396,23 +396,23 @@ class TelemetryReplayRequest(BaseModel):
 class HubTelemetryReplayRequest(BaseModel):
     """Hub Lite telemetry replay ingestion request."""
 
-    bundle: Dict[str, Any]
-    device_id: Optional[str] = None
-    actor: Optional[str] = None
+    bundle: dict[str, Any]
+    device_id: str | None = None
+    actor: str | None = None
 
 
 class HubEvidenceIngestRequest(BaseModel):
     """Hub Lite full evidence bundle ingestion request."""
 
-    bundle: Dict[str, Any]
-    device_id: Optional[str] = None
-    actor: Optional[str] = None
+    bundle: dict[str, Any]
+    device_id: str | None = None
+    actor: str | None = None
 
 
 class EvidenceExportRequest(BaseModel):
     """Evidence bundle export request."""
 
-    telemetry_limit: Optional[int] = None
+    telemetry_limit: int | None = None
     decision_limit: int = 100
     include_benchmarks: bool = True
     summary: bool = False
@@ -476,7 +476,7 @@ class AppState:
 
 
 # Global state - set during app creation
-_app_state: Optional[AppState] = None
+_app_state: AppState | None = None
 
 
 def get_state(request: Request) -> AppState:
@@ -503,8 +503,8 @@ def create_app(
     pending_operations: Any = None,
     deployment_state: Any = None,
     daemon_config: Any = None,
-    api_token: Optional[str] = None,
-    rbac_token_roles: Optional[dict[str, set[str]]] = None,
+    api_token: str | None = None,
+    rbac_token_roles: dict[str, set[str]] | None = None,
     hub_lite: Any = None,
     telemetry: Any = None,
 ) -> FastAPI:
@@ -688,7 +688,7 @@ def require_rbac_role(request: Request, state: AppState, *allowed_roles: str) ->
     raise HTTPException(status_code=403, detail=f"Requires one of roles: {required}")
 
 
-def request_actor(request: Request, explicit: Optional[str] = None, default: str = "api") -> str:
+def request_actor(request: Request, explicit: str | None = None, default: str = "api") -> str:
     """Return a non-secret actor label for audit history."""
     actor = (
         explicit or request.headers.get("x-temms-actor") or request.headers.get("x-forwarded-user")
@@ -701,9 +701,9 @@ def request_actor(request: Request, explicit: Optional[str] = None, default: str
 def rollout_signature_policy(
     state: AppState,
     require_signature: bool = False,
-    signing_key: Optional[str] = None,
+    signing_key: str | None = None,
     resolve_key: bool = True,
-) -> tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """Resolve package signature policy from the request and daemon config."""
     from temms.core.signing import read_signing_key
 
@@ -724,7 +724,7 @@ def rollout_signature_policy(
     return effective_require_signature, effective_key
 
 
-def _pending_operation_signing_key(state: AppState) -> Optional[str]:
+def _pending_operation_signing_key(state: AppState) -> str | None:
     """Return the daemon signing key for DDIL pending-operation signatures."""
     _require_signature, signing_key = rollout_signature_policy(state)
     return signing_key
@@ -733,7 +733,7 @@ def _pending_operation_signing_key(state: AppState) -> Optional[str]:
 def _enqueue_pending_operation(
     state: AppState,
     operation: str,
-    payload: Dict[str, Any],
+    payload: dict[str, Any],
     *,
     signer: str = "temms-ddil",
 ) -> None:
@@ -754,7 +754,7 @@ def _normalize_payload_sha256(value: Any) -> str:
     return text
 
 
-def _runtime_retarget_audit(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _runtime_retarget_audit(payload: dict[str, Any]) -> dict[str, Any]:
     records = [
         record
         for record in payload.get("_temms_runtime_retarget", [])
@@ -776,7 +776,7 @@ def _runtime_retarget_audit(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def package_signature_verified(package: Optional[Dict[str, Any]]) -> bool:
+def package_signature_verified(package: dict[str, Any] | None) -> bool:
     """Return whether a Hub Lite catalog entry carries verified signature metadata."""
     if not package:
         return False
@@ -787,7 +787,7 @@ def package_signature_verified(package: Optional[Dict[str, Any]]) -> bool:
     return metadata.get("signature_verified") is True
 
 
-def package_strict_metadata_verified(package: Optional[Dict[str, Any]]) -> bool:
+def package_strict_metadata_verified(package: dict[str, Any] | None) -> bool:
     """Return whether a catalog entry was validated with production metadata checks."""
     if not package:
         return False
@@ -799,10 +799,10 @@ def package_strict_metadata_verified(package: Optional[Dict[str, Any]]) -> bool:
 
 
 def _enrich_readiness_with_evidence(
-    readiness: Dict[str, Any],
-    summary: Dict[str, Any],
-    mission_replay: Dict[str, Any],
-) -> Dict[str, Any]:
+    readiness: dict[str, Any],
+    summary: dict[str, Any],
+    mission_replay: dict[str, Any],
+) -> dict[str, Any]:
     """Append runtime evidence gates and recompute the deployment verdict."""
     gates = list(readiness.get("gates") or [])
     gates.extend(
@@ -816,10 +816,10 @@ def _enrich_readiness_with_evidence(
 
 
 def _enrich_edge_runtime_mission(
-    readiness: Dict[str, Any],
-    summary: Dict[str, Any],
-    mission_replay: Dict[str, Any],
-) -> Dict[str, Any]:
+    readiness: dict[str, Any],
+    summary: dict[str, Any],
+    mission_replay: dict[str, Any],
+) -> dict[str, Any]:
     mission = _dict_of(readiness.get("edge_runtime_mission"))
     if not mission:
         return readiness
@@ -844,9 +844,9 @@ def _enrich_edge_runtime_mission(
 
 
 def _edge_runtime_ddil_repair_metric(
-    summary: Dict[str, Any],
-    mission_replay: Dict[str, Any],
-) -> Dict[str, Any]:
+    summary: dict[str, Any],
+    mission_replay: dict[str, Any],
+) -> dict[str, Any]:
     runtime = _dict_of(summary.get("runtime"))
     preflight = _dict_of(runtime.get("pending_operation_preflight"))
     pending = _int_of(runtime.get("pending_operations_count"))
@@ -911,7 +911,7 @@ def _runtime_repair_detail(previous: Any, target: Any, delta: Any) -> str:
     return f"{path}{f' (+{delta} fit)' if delta is not None else ''}"
 
 
-def _latest_runtime_retarget_replay_proof(mission_replay: Dict[str, Any]) -> str:
+def _latest_runtime_retarget_replay_proof(mission_replay: dict[str, Any]) -> str:
     for event in mission_replay.get("events") or []:
         if not isinstance(event, dict):
             continue
@@ -952,8 +952,8 @@ def _edge_runtime_mission_headline(status: str) -> str:
 
 
 def _edge_runtime_mission_detail(
-    readiness: Dict[str, Any],
-    mission: Dict[str, Any],
+    readiness: dict[str, Any],
+    mission: dict[str, Any],
 ) -> str:
     path = _dict_of(mission.get("path"))
     label = str(path.get("label") or "selected edge path")
@@ -962,7 +962,7 @@ def _edge_runtime_mission_detail(
     return f"{readiness.get('headline')}: {label}"
 
 
-def _ddil_readiness_gate(summary: Dict[str, Any]) -> Dict[str, Any]:
+def _ddil_readiness_gate(summary: dict[str, Any]) -> dict[str, Any]:
     runtime = _dict_of(summary.get("runtime"))
     verification = _dict_of(runtime.get("pending_operation_verification"))
     preflight = _dict_of(runtime.get("pending_operation_preflight"))
@@ -1073,9 +1073,9 @@ def _ddil_readiness_gate(summary: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _evidence_chain_readiness_gate(
-    summary: Dict[str, Any],
-    mission_replay: Dict[str, Any],
-) -> Dict[str, Any]:
+    summary: dict[str, Any],
+    mission_replay: dict[str, Any],
+) -> dict[str, Any]:
     outcome = _dict_of(mission_replay.get("outcome"))
     phases = mission_replay.get("phases") if isinstance(mission_replay.get("phases"), list) else []
     incomplete = (
@@ -1139,7 +1139,7 @@ def _evidence_chain_readiness_gate(
     )
 
 
-def _ddil_readiness_refs(runtime: Dict[str, Any]) -> Dict[str, Any]:
+def _ddil_readiness_refs(runtime: dict[str, Any]) -> dict[str, Any]:
     verification = _dict_of(runtime.get("pending_operation_verification"))
     preflight = _dict_of(runtime.get("pending_operation_preflight"))
     pending_records = runtime.get("pending_operations")
@@ -1186,7 +1186,7 @@ def _evidence_readiness_refs(
     completed: int,
     total_phases: int,
     incomplete: list[Any],
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return _readiness_refs(
         {
             "proof_events": proof_events,
@@ -1201,7 +1201,7 @@ def _evidence_readiness_refs(
     )
 
 
-def _readiness_payload_hashes(records: list[Dict[str, Any]], limit: int = 5) -> list[str]:
+def _readiness_payload_hashes(records: list[dict[str, Any]], limit: int = 5) -> list[str]:
     hashes: list[str] = []
     for record in records:
         digest = record.get("payload_sha256")
@@ -1212,7 +1212,7 @@ def _readiness_payload_hashes(records: list[Dict[str, Any]], limit: int = 5) -> 
     return hashes
 
 
-def _readiness_refs(refs: Dict[str, Any]) -> Dict[str, Any]:
+def _readiness_refs(refs: dict[str, Any]) -> dict[str, Any]:
     return {
         key: value
         for key, value in refs.items()
@@ -1225,8 +1225,8 @@ def _readiness_action(
     label: str,
     kind: str,
     *,
-    refs: Dict[str, Any] | None = None,
-) -> Dict[str, Any]:
+    refs: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     action_refs = _readiness_refs(refs or {})
     action = {
         "action_id": action_id,
@@ -1242,8 +1242,8 @@ def _readiness_action(
 
 def _readiness_action_command(
     kind: str,
-    refs: Dict[str, Any],
-) -> Dict[str, Any] | None:
+    refs: dict[str, Any],
+) -> dict[str, Any] | None:
     if kind == "restore_online":
         return _readiness_command("POST", "/v1/control/online")
     if kind == "sync_pending":
@@ -1291,9 +1291,9 @@ def _readiness_action_command(
 def _readiness_command(
     method: str,
     path: str,
-    body: Dict[str, Any] | None = None,
-) -> Dict[str, Any]:
-    command: Dict[str, Any] = {"method": method, "path": path}
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    command: dict[str, Any] = {"method": method, "path": path}
     if body is not None:
         command["body"] = _readiness_refs(body)
     return command
@@ -1306,9 +1306,9 @@ def _readiness_gate(
     state: str,
     detail: str,
     *,
-    refs: Dict[str, Any] | None = None,
-    actions: list[Dict[str, Any]] | None = None,
-) -> Dict[str, Any]:
+    refs: dict[str, Any] | None = None,
+    actions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     return {
         "gate_id": gate_id,
         "label": label,
@@ -1320,7 +1320,7 @@ def _readiness_gate(
     }
 
 
-def _finalize_readiness_response(readiness: Dict[str, Any]) -> Dict[str, Any]:
+def _finalize_readiness_response(readiness: dict[str, Any]) -> dict[str, Any]:
     gates = [gate for gate in readiness.get("gates", []) if isinstance(gate, dict)]
     summary = {
         "go": sum(1 for gate in gates if gate.get("status") == "go"),
@@ -1362,8 +1362,8 @@ def _finalize_readiness_response(readiness: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _readiness_actions(gates: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
-    actions: list[Dict[str, Any]] = []
+def _readiness_actions(gates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
     seen: set[str] = set()
     for gate in gates:
         if gate.get("status") == "go":
@@ -1380,13 +1380,13 @@ def _readiness_actions(gates: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
 
 
 def _first_gate_with_status(
-    gates: list[Dict[str, Any]],
+    gates: list[dict[str, Any]],
     status: str,
-) -> Dict[str, Any] | None:
+) -> dict[str, Any] | None:
     return next((gate for gate in gates if gate.get("status") == status), None)
 
 
-def _dict_of(value: Any) -> Dict[str, Any]:
+def _dict_of(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
@@ -1400,7 +1400,7 @@ def _int_of(value: Any) -> int:
 def emit_telemetry(
     state: AppState,
     event_type: str,
-    payload: Dict[str, Any],
+    payload: dict[str, Any],
     source: str = "api",
 ) -> None:
     """Best-effort telemetry append."""
@@ -1415,12 +1415,12 @@ def emit_telemetry(
 def _rollout_apply_preflight(
     state: AppState,
     hub: Any,
-    rollout: Dict[str, Any],
+    rollout: dict[str, Any],
     *,
     package_id: str,
     model_id: str | None,
     actor: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Fail closed before edge activation when runtime or edge evidence is stale."""
     runtime_target_id = rollout.get("runtime_target_id")
     try:
@@ -1485,8 +1485,8 @@ def _control_activation_preflight(
     model_id: str,
     trigger_type: str,
     trigger_detail: str,
-    conditions: Dict[str, Any],
-) -> Dict[str, Any] | None:
+    conditions: dict[str, Any],
+) -> dict[str, Any] | None:
     """Admission-control adaptive activations when Hub Lite has edge context."""
     hub = state.hub_lite
     if hub is None:
@@ -1550,7 +1550,7 @@ def _control_activation_preflight(
     )
 
 
-def _control_activation_blocking_gates(readiness: Dict[str, Any]) -> list[Dict[str, Any]]:
+def _control_activation_blocking_gates(readiness: dict[str, Any]) -> list[dict[str, Any]]:
     blocked_gate_ids = {
         "model_package",
         "runtime_target",
@@ -1559,7 +1559,7 @@ def _control_activation_blocking_gates(readiness: Dict[str, Any]) -> list[Dict[s
         "edge_target",
     }
     attention_gate_ids = {"performance_fit", "resource_envelope", "edge_target"}
-    blocking: list[Dict[str, Any]] = []
+    blocking: list[dict[str, Any]] = []
     for gate in readiness.get("gates") or []:
         if not isinstance(gate, dict):
             continue
@@ -1585,7 +1585,7 @@ def _control_activation_blocking_gates(readiness: Dict[str, Any]) -> list[Dict[s
     return blocking
 
 
-def _control_gate_summary(gates: list[Dict[str, Any]]) -> str:
+def _control_gate_summary(gates: list[dict[str, Any]]) -> str:
     parts = [
         f"{gate.get('label') or gate.get('gate_id')} {gate.get('state')}: {gate.get('detail')}"
         for gate in gates[:3]
@@ -1603,8 +1603,8 @@ def _control_activation_preflight_or_409(
     model_id: str,
     trigger_type: str,
     trigger_detail: str,
-    conditions: Dict[str, Any],
-) -> Dict[str, Any] | None:
+    conditions: dict[str, Any],
+) -> dict[str, Any] | None:
     """Run activation preflight for control-plane activations or raise HTTP 409."""
     try:
         return _control_activation_preflight(
@@ -1632,7 +1632,7 @@ def _control_activation_preflight_or_409(
 
 def _preserve_pending_replay_remainder(
     state: AppState,
-    entries: list[Dict[str, Any]],
+    entries: list[dict[str, Any]],
     failed_index: int,
     *,
     replayed: int,
@@ -1822,7 +1822,7 @@ async def _activate_fallback_after_inference_failure(
     return None
 
 
-def model_audit_metadata(state: AppState, model_id: str | None) -> Dict[str, Any]:
+def model_audit_metadata(state: AppState, model_id: str | None) -> dict[str, Any]:
     """Return compact model/package context for decision logs and telemetry."""
     if not model_id:
         return {}
@@ -1843,7 +1843,7 @@ def model_audit_metadata(state: AppState, model_id: str | None) -> Dict[str, Any
     }
 
 
-def package_audit_metadata(state: AppState, package_id: str | None) -> Dict[str, Any]:
+def package_audit_metadata(state: AppState, package_id: str | None) -> dict[str, Any]:
     """Return package provenance and verification context for audit logs."""
     if not package_id:
         return {}
@@ -2158,7 +2158,7 @@ async def export_edge_evidence(
     replay: bool = False,
     replay_limit: int = 50,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Export local decision evidence from the edge runtime state."""
     from temms.evidence import (
         build_evidence_bundle,
@@ -2188,7 +2188,7 @@ async def override_model(
     request: SlotOverrideRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Operator override - force specific model on a slot.
 
@@ -2287,7 +2287,7 @@ async def evaluate_slot_control(
     request: SlotEvaluateRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Evaluate local adaptive model selection for a slot."""
     if request.apply:
         require_rbac_role(http_request, state, "operator", "edge")
@@ -2302,7 +2302,7 @@ async def rollback_slot(
     slot_name: str,
     request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Rollback a slot to the previous active model in the decision log."""
     require_rbac_role(request, state, "operator")
     actor = request_actor(request, default="operator")
@@ -2316,16 +2316,16 @@ async def rollback_slot(
     )
 
 
-async def _rollback_slot_to_previous_model(
+async def _rollback_slot_to_previous_model(  # noqa: C901  (tracked in #54)
     *,
     state: AppState,
     slot_name: str,
     trigger_detail: str,
-    telemetry_payload: Dict[str, Any],
-    rollout_id: Optional[str] = None,
+    telemetry_payload: dict[str, Any],
+    rollout_id: str | None = None,
     update_rollout_for_slot: bool = False,
-    actor: Optional[str] = None,
-) -> Dict[str, Any]:
+    actor: str | None = None,
+) -> dict[str, Any]:
     """Rollback a slot to its previous model and optionally update Hub Lite state."""
     slot = state.slot_manager.get_slot(slot_name)
     if slot is None:
@@ -2475,7 +2475,7 @@ async def update_conditions(
 async def clear_condition_overrides(
     request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Clear all operator condition overrides."""
     require_rbac_role(request, state, "operator")
     count = state.condition_store.clear_operator_overrides()
@@ -2489,7 +2489,7 @@ async def clear_condition_overrides(
 
 
 @control_router.post("/offline")
-async def set_offline(request: Request, state: AppState = Depends(get_state)) -> Dict[str, Any]:
+async def set_offline(request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:
     require_rbac_role(request, state, "operator")
     state.offline_mode = True
     if state.daemon_config is not None:
@@ -2505,7 +2505,7 @@ async def set_offline(request: Request, state: AppState = Depends(get_state)) ->
 
 
 @control_router.post("/online")
-async def set_online(request: Request, state: AppState = Depends(get_state)) -> Dict[str, Any]:
+async def set_online(request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:
     require_rbac_role(request, state, "operator")
     state.offline_mode = False
     if state.daemon_config is not None:
@@ -2524,8 +2524,8 @@ async def set_online(request: Request, state: AppState = Depends(get_state)) -> 
 
 async def _replay_deploy_operation(
     state: AppState,
-    payload: Dict[str, Any],
-) -> Dict[str, Any]:
+    payload: dict[str, Any],
+) -> dict[str, Any]:
     """Replay a queued deploy intent when it names a concrete slot/model pair."""
     context = deploy_intent_context(payload)
     slot_name = context.get("slot")
@@ -2611,8 +2611,8 @@ async def _replay_deploy_operation(
 
 async def _replay_override_model_operation(
     state: AppState,
-    payload: Dict[str, Any],
-) -> Dict[str, Any]:
+    payload: dict[str, Any],
+) -> dict[str, Any]:
     """Replay a queued operator override intent with the same refs as preflight."""
     context = deploy_intent_context(payload)
     slot_name = context.get("slot")
@@ -2683,7 +2683,7 @@ async def _replay_override_model_operation(
 
 
 @control_router.post("/sync")
-async def sync_pending(request: Request, state: AppState = Depends(get_state)) -> Dict[str, Any]:
+async def sync_pending(request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:  # noqa: C901  (tracked in #54)
     require_rbac_role(request, state, "operator")
     if state.pending_operations is None:
         return {"status": "success", "replayed": 0}
@@ -2793,7 +2793,7 @@ async def sync_pending(request: Request, state: AppState = Depends(get_state)) -
 async def sync_pending_preview(
     request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     require_rbac_role(request, state, "operator")
     if state.pending_operations is None:
         return pending_sync_preflight(state, [])
@@ -2803,9 +2803,9 @@ async def sync_pending_preview(
 @control_router.post("/sync/quarantine-blocked")
 async def quarantine_blocked_pending(
     request: Request,
-    body: Dict[str, Any] = Body(default_factory=dict),
+    body: dict[str, Any] = Body(default_factory=dict),
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     require_rbac_role(request, state, "operator")
     if state.pending_operations is None:
         return {"status": "success", "quarantined": 0, "remaining": 0}
@@ -2861,9 +2861,9 @@ async def quarantine_blocked_pending(
 
 
 def _pending_preflight_entry_for_payload(
-    preflight: Dict[str, Any],
+    preflight: dict[str, Any],
     payload_sha256: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     digest = _normalize_payload_sha256(payload_sha256)
     for entry in preflight.get("entries", []):
         if not isinstance(entry, dict):
@@ -2873,7 +2873,7 @@ def _pending_preflight_entry_for_payload(
     return None
 
 
-def _runtime_retarget_candidate(entry: Dict[str, Any]) -> Optional[str]:
+def _runtime_retarget_candidate(entry: dict[str, Any]) -> str | None:
     gate_lists = [
         entry.get("hub_optimization_gates"),
         entry.get("hub_blocking_gates"),
@@ -2897,10 +2897,10 @@ def _runtime_retarget_candidate(entry: Dict[str, Any]) -> Optional[str]:
     return best_runtime_target_id or None
 
 
-def _runtime_retarget_target_proof(
-    entry: Dict[str, Any],
+def _runtime_retarget_target_proof(  # noqa: C901  (tracked in #54)
+    entry: dict[str, Any],
     runtime_target_id: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     assessments = entry.get("hub_target_assessments")
     if not isinstance(assessments, list) or not assessments:
         raise HTTPException(
@@ -3070,7 +3070,7 @@ def _runtime_retarget_target_proof(
     )
 
 
-def _compact_runtime_retarget_proof(proof: Dict[str, Any]) -> Dict[str, Any]:
+def _compact_runtime_retarget_proof(proof: dict[str, Any]) -> dict[str, Any]:
     return {
         key: value
         for key, value in proof.items()
@@ -3078,7 +3078,7 @@ def _compact_runtime_retarget_proof(proof: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _optional_float(value: Any) -> Optional[float]:
+def _optional_float(value: Any) -> float | None:
     if value is None or isinstance(value, bool):
         return None
     try:
@@ -3090,9 +3090,9 @@ def _optional_float(value: Any) -> Optional[float]:
 @control_router.post("/sync/retarget-runtime")
 async def retarget_pending_runtime(
     request: Request,
-    body: Dict[str, Any] = Body(default_factory=dict),
+    body: dict[str, Any] = Body(default_factory=dict),
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     require_rbac_role(request, state, "operator")
     if state.pending_operations is None:
         return {"status": "success", "retargeted": 0, "remaining": 0}
@@ -3182,9 +3182,9 @@ async def retarget_pending_runtime(
 @control_router.post("/sync/acknowledge-dead-letters")
 async def acknowledge_pending_dead_letters(
     request: Request,
-    body: Dict[str, Any] = Body(default_factory=dict),
+    body: dict[str, Any] = Body(default_factory=dict),
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     require_rbac_role(request, state, "operator")
     if state.pending_operations is None:
         return {"status": "success", "acknowledged": 0, "dead_letters": 0}
@@ -3228,7 +3228,7 @@ async def acknowledge_pending_dead_letters(
     }
 
 
-def _body_bool(body: Dict[str, Any], key: str, *, default: bool = False) -> bool:
+def _body_bool(body: dict[str, Any], key: str, *, default: bool = False) -> bool:
     value = body.get(key) if isinstance(body, dict) else None
     if value is None:
         return default
@@ -3307,9 +3307,9 @@ def _requeue_ready_payload_sha256s(
 @control_router.post("/sync/requeue-dead-letters")
 async def requeue_pending_dead_letters(
     request: Request,
-    body: Dict[str, Any] = Body(default_factory=dict),
+    body: dict[str, Any] = Body(default_factory=dict),
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     require_rbac_role(request, state, "operator")
     if state.pending_operations is None:
         return {"status": "success", "requeued": 0, "pending": 0, "dead_letters": 0}
@@ -3372,10 +3372,10 @@ async def requeue_pending_dead_letters(
 
 @control_router.post("/deploy")
 async def request_deploy(
-    request: Dict[str, Any],
+    request: dict[str, Any],
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     require_rbac_role(http_request, state, "operator")
     deployment_count.inc()
     emit_telemetry(state, "deploy.requested", request)
@@ -3389,7 +3389,7 @@ async def request_deploy(
 async def export_telemetry(
     request: TelemetryExportRequest,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Export buffered telemetry for air-gapped replay."""
     if state.telemetry is None:
         raise HTTPException(status_code=503, detail="Telemetry buffer is not configured")
@@ -3401,7 +3401,7 @@ async def replay_telemetry(
     request: TelemetryReplayRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Replay buffered telemetry locally, optionally clearing it."""
     require_rbac_role(http_request, state, "operator")
     if state.telemetry is None:
@@ -3410,7 +3410,7 @@ async def replay_telemetry(
 
 
 @control_router.delete("/telemetry")
-async def clear_telemetry(request: Request, state: AppState = Depends(get_state)) -> Dict[str, Any]:
+async def clear_telemetry(request: Request, state: AppState = Depends(get_state)) -> dict[str, Any]:
     """Clear buffered telemetry after successful off-box transfer."""
     require_rbac_role(request, state, "operator")
     if state.telemetry is None:
@@ -3425,10 +3425,10 @@ async def clear_telemetry(request: Request, state: AppState = Depends(get_state)
 
 @control_router.get("/audit/timeline")
 async def audit_timeline(
-    slot: Optional[str] = None,
+    slot: str | None = None,
     limit: int = 100,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return a merged decision and telemetry timeline for operator audit."""
     from temms.evidence import (
         combined_timeline,
@@ -3499,7 +3499,7 @@ async def enroll_device(
     request: DeviceEnrollRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     require_rbac_role(http_request, state, "operator", "edge")
     hub = get_hub_store(state)
     return hub.enroll_device(
@@ -3516,7 +3516,7 @@ async def heartbeat(
     request: HeartbeatRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     require_rbac_role(http_request, state, "operator", "edge")
     hub = get_hub_store(state)
     return hub.heartbeat(
@@ -3528,7 +3528,7 @@ async def heartbeat(
 
 
 @hub_router.get("/devices")
-async def list_devices(state: AppState = Depends(get_state)) -> Dict[str, Any]:
+async def list_devices(state: AppState = Depends(get_state)) -> dict[str, Any]:
     hub = get_hub_store(state)
     return {"devices": hub.list_devices()}
 
@@ -3538,7 +3538,7 @@ async def upsert_hub_package(
     request: HubPackageRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     require_rbac_role(http_request, state, "operator")
     hub = get_hub_store(state)
     actor = request_actor(http_request, request.actor, default="operator")
@@ -3570,7 +3570,7 @@ async def register_hub_package(
     request: HubPackageRegisterRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     require_rbac_role(http_request, state, "operator")
     hub = get_hub_store(state)
     actor = request_actor(http_request, request.actor, default="operator")
@@ -3607,7 +3607,7 @@ async def package_hub_mlflow_model(
     request: HubPackageFromMLflowRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build, sign, and register a package from an MLflow registry model."""
     require_rbac_role(http_request, state, "operator")
     hub = get_hub_store(state)
@@ -3666,7 +3666,7 @@ async def package_hub_mlflow_model(
 
 
 @hub_router.get("/packages")
-async def list_hub_packages(state: AppState = Depends(get_state)) -> Dict[str, Any]:
+async def list_hub_packages(state: AppState = Depends(get_state)) -> dict[str, Any]:
     hub = get_hub_store(state)
     return {"packages": hub.list_packages()}
 
@@ -3677,7 +3677,7 @@ async def promote_hub_package(
     request: HubPackagePromotionRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Promote a package candidate toward release or retirement."""
     requested_state = request.state.lower().strip()
     if requested_state == "approved":
@@ -3699,7 +3699,7 @@ async def promote_hub_package(
 
 
 @hub_router.get("/runtime-targets")
-async def list_runtime_targets(state: AppState = Depends(get_state)) -> Dict[str, Any]:
+async def list_runtime_targets(state: AppState = Depends(get_state)) -> dict[str, Any]:
     hub = get_hub_store(state)
     return {"runtime_targets": hub.list_runtime_targets()}
 
@@ -3709,7 +3709,7 @@ async def upsert_runtime_target(
     request: RuntimeTargetRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     require_rbac_role(http_request, state, "operator")
     hub = get_hub_store(state)
     actor = request_actor(http_request, request.actor, default="operator")
@@ -3726,12 +3726,12 @@ def _deployment_readiness_with_evidence(
     state: AppState,
     hub,
     *,
-    package_id: Optional[str],
-    model_id: Optional[str],
-    device_id: Optional[str],
-    runtime_target_id: Optional[str],
-    slot: Optional[str],
-) -> Dict[str, Any]:
+    package_id: str | None,
+    model_id: str | None,
+    device_id: str | None,
+    runtime_target_id: str | None,
+    slot: str | None,
+) -> dict[str, Any]:
     readiness = hub.deployment_readiness(
         package_id=package_id,
         model_id=model_id,
@@ -3759,13 +3759,13 @@ def _deployment_readiness_with_evidence(
 @hub_router.get("/readiness")
 async def deployment_readiness(
     http_request: Request,
-    package_id: Optional[str] = None,
-    model_id: Optional[str] = None,
-    device_id: Optional[str] = None,
-    runtime_target_id: Optional[str] = None,
-    slot: Optional[str] = None,
+    package_id: str | None = None,
+    model_id: str | None = None,
+    device_id: str | None = None,
+    runtime_target_id: str | None = None,
+    slot: str | None = None,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return the authoritative Hub Lite deployment readiness verdict."""
     require_rbac_role(http_request, state, "operator", "auditor")
     hub = get_hub_store(state)
@@ -3788,7 +3788,7 @@ async def plan_mission_package(
     request: MissionPackagePlanRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return the authoritative mission spec -> package -> edge plan."""
     require_rbac_role(http_request, state, "operator", "auditor")
     hub = get_hub_store(state)
@@ -3867,7 +3867,7 @@ async def stage_mission_package(
     request: MissionPackageStageRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Stage the rollout embedded in a mission package handoff artifact."""
     require_rbac_role(http_request, state, "operator")
     hub = get_hub_store(state)
@@ -3927,7 +3927,7 @@ async def stage_mission_package(
     }
 
 
-def _mission_package_rollout_binding(stage_proof: Dict[str, Any]) -> Dict[str, Any]:
+def _mission_package_rollout_binding(stage_proof: dict[str, Any]) -> dict[str, Any]:
     """Return compact mission-package proof retained on the staged rollout."""
     edge_handoff = (
         stage_proof.get("edge_handoff")
@@ -3957,7 +3957,7 @@ def _mission_package_plan_for_request(
     state: AppState,
     hub,
     request: MissionPackagePlanRequest,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     request_payload = _mission_package_request_payload(request)
     readiness = _deployment_readiness_with_evidence(
         state,
@@ -3979,9 +3979,9 @@ def _mission_package_plan_for_request(
     )
 
 
-def _mission_package_stage_request_body(
+def _mission_package_stage_request_body(  # noqa: C901  (tracked in #54)
     request: MissionPackageStageRequest,
-) -> tuple[Dict[str, Any], Dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     package_plan = request.mission_package
     if not isinstance(package_plan, dict):
         raise ValueError("mission_package must be an object")
@@ -4075,7 +4075,7 @@ def _mission_package_stage_request_body(
             raise ValueError(
                 f"mission package deployment intent {field_name} does not match selection"
             )
-    body: Dict[str, Any] = dict(command_body)
+    body: dict[str, Any] = dict(command_body)
     for field_name in (
         "package_id",
         "model_id",
@@ -4151,7 +4151,7 @@ def _mission_package_stage_request_body(
     return body, stage_proof
 
 
-def _mission_package_stage_gate(package_plan: Dict[str, Any]) -> Dict[str, Any]:
+def _mission_package_stage_gate(package_plan: dict[str, Any]) -> dict[str, Any]:
     proof_gate = (
         package_plan.get("proof_gate")
         if isinstance(package_plan.get("proof_gate"), dict)
@@ -4191,9 +4191,9 @@ def _normalize_mission_package_stage_path(path: str) -> str:
     return normalized
 
 
-def _verify_mission_package_stage_integrity(
-    package_plan: Dict[str, Any],
-    deployment_intent: Dict[str, Any],
+def _verify_mission_package_stage_integrity(  # noqa: C901  (tracked in #54)
+    package_plan: dict[str, Any],
+    deployment_intent: dict[str, Any],
 ) -> None:
     integrity = (
         package_plan.get("integrity")
@@ -4333,7 +4333,7 @@ def _verify_mission_package_stage_integrity(
             raise ValueError("mission package identity digest does not match artifact body")
 
 
-def _mission_package_request_payload(request: MissionPackagePlanRequest) -> Dict[str, Any]:
+def _mission_package_request_payload(request: MissionPackagePlanRequest) -> dict[str, Any]:
     """Return request fields with missing package-planning values filled from mission YAML."""
     return hydrate_mission_spec_from_yaml(request.model_dump(exclude_none=True))
 
@@ -4341,18 +4341,18 @@ def _mission_package_request_payload(request: MissionPackagePlanRequest) -> Dict
 @hub_router.get("/edge-runtime-proof")
 async def edge_runtime_proof(
     http_request: Request,
-    package_id: Optional[str] = None,
-    model_id: Optional[str] = None,
-    device_id: Optional[str] = None,
-    runtime_target_id: Optional[str] = None,
-    slot: Optional[str] = None,
+    package_id: str | None = None,
+    model_id: str | None = None,
+    device_id: str | None = None,
+    runtime_target_id: str | None = None,
+    slot: str | None = None,
     source_action: str = "edge-runtime-mission",
     require_go: bool = False,
-    min_runtime_fit: Optional[float] = None,
+    min_runtime_fit: float | None = None,
     require_best_runtime: bool = False,
     require_capability_lock: bool = False,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return a hash-verifiable proof envelope for the selected edge runtime path."""
     require_rbac_role(http_request, state, "operator", "auditor")
     hub = get_hub_store(state)
@@ -4383,14 +4383,14 @@ async def edge_runtime_proof(
 @hub_router.get("/edge-runtime-proof/download")
 async def download_edge_runtime_proof(
     http_request: Request,
-    package_id: Optional[str] = None,
-    model_id: Optional[str] = None,
-    device_id: Optional[str] = None,
-    runtime_target_id: Optional[str] = None,
-    slot: Optional[str] = None,
+    package_id: str | None = None,
+    model_id: str | None = None,
+    device_id: str | None = None,
+    runtime_target_id: str | None = None,
+    slot: str | None = None,
     source_action: str = "edge-runtime-mission",
     require_go: bool = False,
-    min_runtime_fit: Optional[float] = None,
+    min_runtime_fit: float | None = None,
     require_best_runtime: bool = False,
     require_capability_lock: bool = False,
     state: AppState = Depends(get_state),
@@ -4469,13 +4469,13 @@ async def download_edge_runtime_proof(
     )
 
 
-def _edge_runtime_proof_signing_key(state: AppState) -> Optional[str]:
+def _edge_runtime_proof_signing_key(state: AppState) -> str | None:
     """Return the daemon signing key used to attest edge-runtime proof artifacts."""
     _require_signature, signing_key = rollout_signature_policy(state)
     return signing_key
 
 
-def _edge_runtime_proof_filename(proof: Dict[str, Any]) -> str:
+def _edge_runtime_proof_filename(proof: dict[str, Any]) -> str:
     selection = proof.get("selection") if isinstance(proof.get("selection"), dict) else {}
     parts = [
         str(selection.get("model_id") or ""),
@@ -4487,7 +4487,7 @@ def _edge_runtime_proof_filename(proof: Dict[str, Any]) -> str:
     return f"temms-edge-runtime-proof{f'-{slug}' if slug else ''}.json"
 
 
-def _mission_package_filename(package_plan: Dict[str, Any]) -> str:
+def _mission_package_filename(package_plan: dict[str, Any]) -> str:
     selection = (
         package_plan.get("selection")
         if isinstance(package_plan.get("selection"), dict)
@@ -4520,7 +4520,7 @@ def _edge_runtime_proof_slug(value: str) -> str:
 async def preview_rollout_compatibility(
     request: HubCompatibilityPreviewRequest,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Preview package/device/runtime compatibility without assigning a rollout."""
     hub = get_hub_store(state)
     try:
@@ -4538,7 +4538,7 @@ async def preview_rollout_compatibility(
 async def rollout_compatibility_matrix(
     request: HubCompatibilityMatrixRequest,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return a package/device/runtime compatibility matrix."""
     hub = get_hub_store(state)
     try:
@@ -4556,11 +4556,11 @@ async def rollout_compatibility_matrix(
 @hub_router.get("/runtime-targets/validations")
 async def list_runtime_validations(
     http_request: Request,
-    package_id: Optional[str] = None,
-    runtime_target_id: Optional[str] = None,
-    limit: Optional[int] = None,
+    package_id: str | None = None,
+    runtime_target_id: str | None = None,
+    limit: int | None = None,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """List recorded runtime target validation evidence."""
     require_rbac_role(http_request, state, "operator", "auditor")
     hub = get_hub_store(state)
@@ -4577,7 +4577,7 @@ async def record_runtime_validation(
     request: RuntimeValidationRecordRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Record runtime target validation evidence."""
     require_rbac_role(http_request, state, "operator", "edge")
     hub = get_hub_store(state)
@@ -4598,13 +4598,13 @@ async def record_runtime_validation(
 @hub_router.get("/benchmarks")
 async def list_hub_benchmarks(
     http_request: Request,
-    device_id: Optional[str] = None,
-    package_id: Optional[str] = None,
-    runtime_target_id: Optional[str] = None,
-    model_id: Optional[str] = None,
-    limit: Optional[int] = None,
+    device_id: str | None = None,
+    package_id: str | None = None,
+    runtime_target_id: str | None = None,
+    model_id: str | None = None,
+    limit: int | None = None,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """List hardware-aware benchmark evidence recorded by edge devices."""
     require_rbac_role(http_request, state, "operator", "auditor")
     hub = get_hub_store(state)
@@ -4623,7 +4623,7 @@ async def record_hub_benchmark(
     request: BenchmarkRecordRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Record one hardware-aware benchmark result from an edge device."""
     require_rbac_role(http_request, state, "operator", "edge")
     hub = get_hub_store(state)
@@ -4675,7 +4675,7 @@ async def assign_rollout(
     request: RolloutAssignRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     require_rbac_role(http_request, state, "operator")
     hub = get_hub_store(state)
     actor = request_actor(http_request, request.actor, default="operator")
@@ -4713,7 +4713,7 @@ async def assign_rollout(
 
 
 @hub_router.get("/rollouts")
-async def list_rollouts(state: AppState = Depends(get_state)) -> Dict[str, Any]:
+async def list_rollouts(state: AppState = Depends(get_state)) -> dict[str, Any]:
     hub = get_hub_store(state)
     return {"rollouts": hub.list_rollouts()}
 
@@ -4723,7 +4723,7 @@ async def create_rollout_plan(
     request: RolloutPlanCreateRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a coordinated rollout plan across multiple devices."""
     require_rbac_role(http_request, state, "operator")
     hub = get_hub_store(state)
@@ -4762,7 +4762,7 @@ async def create_rollout_plan(
 
 
 @hub_router.get("/rollout-plans")
-async def list_rollout_plans(state: AppState = Depends(get_state)) -> Dict[str, Any]:
+async def list_rollout_plans(state: AppState = Depends(get_state)) -> dict[str, Any]:
     """List coordinated rollout plans."""
     hub = get_hub_store(state)
     plans = hub.list_rollout_plans()
@@ -4775,7 +4775,7 @@ async def advance_rollout_plan(
     request: RolloutPlanAdvanceRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Assign the next rollout-plan batch."""
     require_rbac_role(http_request, state, "operator")
     hub = get_hub_store(state)
@@ -4792,7 +4792,7 @@ async def pause_rollout_plan(
     request: RolloutPlanStateRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Pause a rollout plan before assigning more batches."""
     require_rbac_role(http_request, state, "operator")
     hub = get_hub_store(state)
@@ -4809,7 +4809,7 @@ async def resume_rollout_plan(
     request: RolloutPlanStateRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Resume a paused rollout plan."""
     require_rbac_role(http_request, state, "operator")
     hub = get_hub_store(state)
@@ -4826,7 +4826,7 @@ async def update_rollout_status(
     request: RolloutStatusRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     require_rbac_role(http_request, state, "operator", "edge")
     hub = get_hub_store(state)
     actor = request_actor(http_request, request.actor, default="api")
@@ -4847,7 +4847,7 @@ async def approve_rollout(
     request: RolloutApprovalRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Approve a Hub Lite rollout before it is applied on the edge."""
     require_rbac_role(http_request, state, "approver")
     hub = get_hub_store(state)
@@ -4863,12 +4863,12 @@ async def approve_rollout(
 
 
 @hub_router.post("/rollouts/{rollout_id}/apply")
-async def apply_rollout(
+async def apply_rollout(  # noqa: C901  (tracked in #54)
     rollout_id: str,
     request: RolloutApplyRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Apply a local rollout by importing its package and activating the target slot."""
     require_rbac_role(http_request, state, "operator", "edge")
     hub = get_hub_store(state)
@@ -4893,8 +4893,8 @@ async def apply_rollout(
         raise HTTPException(status_code=400, detail=f"Package {package_id} has no path")
 
     try:
-        from temms.core.package_archive import package_directory
         from temms.core.package import PackageImporter
+        from temms.core.package_archive import package_directory
         from temms.core.runtime_profiles import (
             detect_runtime_capabilities,
             package_runtime_constraints,
@@ -5104,7 +5104,7 @@ async def rollback_rollout(
     http_request: Request,
     request: RolloutRollbackRequest = Body(default_factory=RolloutRollbackRequest),
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Rollback the slot targeted by a Hub Lite rollout."""
     require_rbac_role(http_request, state, "operator")
     hub = get_hub_store(state)
@@ -5167,7 +5167,7 @@ async def rollback_rollout(
 async def deployment_status(
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     require_rbac_role(http_request, state, "operator", "auditor")
     hub = get_hub_store(state)
     return hub.deployment_status()
@@ -5178,7 +5178,7 @@ async def replay_hub_telemetry(
     request: HubTelemetryReplayRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Ingest exported edge telemetry into Hub Lite after an offline mission."""
     require_rbac_role(http_request, state, "operator")
     hub = get_hub_store(state)
@@ -5197,9 +5197,9 @@ async def replay_hub_telemetry(
 @hub_router.get("/telemetry")
 async def list_hub_telemetry(
     http_request: Request,
-    limit: Optional[int] = None,
+    limit: int | None = None,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return telemetry events replayed into Hub Lite."""
     require_rbac_role(http_request, state, "operator", "auditor")
     hub = get_hub_store(state)
@@ -5212,7 +5212,7 @@ async def ingest_hub_evidence(
     request: HubEvidenceIngestRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Ingest a full exported edge evidence bundle into Hub Lite."""
     require_rbac_role(http_request, state, "operator", "auditor")
     hub = get_hub_store(state)
@@ -5231,9 +5231,9 @@ async def ingest_hub_evidence(
 @hub_router.get("/evidence")
 async def list_hub_evidence(
     http_request: Request,
-    limit: Optional[int] = None,
+    limit: int | None = None,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return full evidence bundles aggregated into Hub Lite."""
     require_rbac_role(http_request, state, "operator", "auditor")
     hub = get_hub_store(state)
@@ -5246,7 +5246,7 @@ async def export_airgap_bundle(
     http_request: Request,
     request: AirgapExportRequest = Body(default_factory=AirgapExportRequest),
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     require_rbac_role(http_request, state, "operator")
     hub = get_hub_store(state)
     try:
@@ -5260,7 +5260,7 @@ async def export_evidence_bundle(
     request: EvidenceExportRequest,
     http_request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Export Hub Lite plus edge audit evidence for post-mission review."""
     require_rbac_role(http_request, state, "operator", "auditor")
     get_hub_store(state)
@@ -5285,10 +5285,10 @@ async def export_evidence_bundle(
 
 @hub_router.post("/airgap/import")
 async def import_airgap_bundle(
-    bundle: Dict[str, Any],
+    bundle: dict[str, Any],
     request: Request,
     state: AppState = Depends(get_state),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     require_rbac_role(request, state, "operator")
     hub = get_hub_store(state)
     try:

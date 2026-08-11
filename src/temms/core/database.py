@@ -7,10 +7,11 @@ Provides:
 - Generic row-to-object mapping pattern
 """
 
-import sqlite3
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
 import logging
+import sqlite3
+from collections.abc import Callable
+from pathlib import Path
+from typing import TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class Database:
         """
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn: Optional[sqlite3.Connection] = None
+        self._conn: sqlite3.Connection | None = None
         self._setup_connection()
         self._init_tables()
 
@@ -78,12 +79,12 @@ class Database:
         self.conn.executemany(sql, params_list)
         self.conn.commit()
 
-    def fetchone(self, sql: str, params: tuple = ()) -> Optional[sqlite3.Row]:
+    def fetchone(self, sql: str, params: tuple = ()) -> sqlite3.Row | None:
         """Execute SQL and fetch one row."""
         cursor = self.conn.execute(sql, params)
         return cursor.fetchone()
 
-    def fetchall(self, sql: str, params: tuple = ()) -> List[sqlite3.Row]:
+    def fetchall(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
         """Execute SQL and fetch all rows."""
         cursor = self.conn.execute(sql, params)
         return cursor.fetchall()
@@ -92,7 +93,7 @@ class Database:
         """Map a single row using a mapper function."""
         return mapper(row)
 
-    def map_rows(self, rows: List[sqlite3.Row], mapper: Callable[[sqlite3.Row], T]) -> List[T]:
+    def map_rows(self, rows: list[sqlite3.Row], mapper: Callable[[sqlite3.Row], T]) -> list[T]:
         """Map multiple rows using a mapper function."""
         return [mapper(row) for row in rows]
 
@@ -101,7 +102,7 @@ class Database:
         sql: str,
         params: tuple,
         mapper: Callable[[sqlite3.Row], T],
-    ) -> Optional[T]:
+    ) -> T | None:
         """Execute SQL, fetch one row, and map it."""
         row = self.fetchone(sql, params)
         if row is None:
@@ -113,7 +114,7 @@ class Database:
         sql: str,
         params: tuple,
         mapper: Callable[[sqlite3.Row], T],
-    ) -> List[T]:
+    ) -> list[T]:
         """Execute SQL, fetch all rows, and map them."""
         rows = self.fetchall(sql, params)
         return self.map_rows(rows, mapper)

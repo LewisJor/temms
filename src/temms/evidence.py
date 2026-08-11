@@ -1641,7 +1641,7 @@ def _mission_replay_event(entry: dict[str, Any], sequence: int) -> dict[str, Any
     return event
 
 
-def _replay_phase_for_event(entry: dict[str, Any], record: dict[str, Any]) -> str:
+def _replay_phase_for_event(entry: dict[str, Any], record: dict[str, Any]) -> str:  # noqa: C901  (tracked in #54)
     kind = entry.get("kind")
     if kind == "package_import":
         return "signed_package"
@@ -1692,7 +1692,7 @@ def _replay_phase_for_event(entry: dict[str, Any], record: dict[str, Any]) -> st
     return "evidence"
 
 
-def _replay_event_detail(entry: dict[str, Any], record: dict[str, Any]) -> str | None:
+def _replay_event_detail(entry: dict[str, Any], record: dict[str, Any]) -> str | None:  # noqa: C901  (tracked in #54)
     kind = entry.get("kind")
     if kind == "decision":
         retarget = _record_runtime_retarget_fields(record)
@@ -2575,7 +2575,7 @@ def rollout_plan_timeline(state: Any, limit: int = 100) -> list[dict[str, Any]]:
     return events[:limit]
 
 
-def combined_timeline(
+def combined_timeline(  # noqa: C901  (tracked in #54)
     decisions: list[dict[str, Any]],
     telemetry_events: list[dict[str, Any]],
     rollout_events: list[dict[str, Any]] | None = None,

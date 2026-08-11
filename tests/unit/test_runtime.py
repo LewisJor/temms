@@ -2,19 +2,12 @@
 Unit tests for the inference runtime.
 """
 
-import pytest
-from unittest.mock import Mock, patch, AsyncMock
-import numpy as np
 from pathlib import Path
 from types import SimpleNamespace
 
-from temms.inference.runtime import (
-    InferenceRuntime,
-    InvalidInputError,
-    LoadedModel,
-    SimulatedModelRuntime,
-    SlotRuntime,
-)
+import numpy as np
+import pytest
+
 from temms.core.cache import CachedModel, ModelFormat
 from temms.core.loader import ModelLoader, RuntimeType
 from temms.core.runtime_profiles import (
@@ -26,6 +19,12 @@ from temms.core.runtime_profiles import (
     package_runtime_constraints,
     runtime_constraints_satisfied,
     runtime_defaults_for_profile,
+)
+from temms.inference.runtime import (
+    InferenceRuntime,
+    InvalidInputError,
+    SimulatedModelRuntime,
+    SlotRuntime,
 )
 
 

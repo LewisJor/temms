@@ -65,7 +65,7 @@ def validate_package(
         return ValidationResult(False, [str(exc)], [])
 
 
-def _validate_package_dir(
+def _validate_package_dir(  # noqa: C901  (tracked in #54)
     package_path: Path,
     require_signature: bool = False,
     signing_key: str | None = None,

@@ -488,7 +488,7 @@ def runtime_defaults_for_profile(
     return defaults
 
 
-def runtime_constraints_satisfied(
+def runtime_constraints_satisfied(  # noqa: C901  (tracked in #54)
     constraints: dict[str, Any] | None,
     capabilities: RuntimeCapabilities | dict[str, Any] | None = None,
 ) -> tuple[bool, list[str]]:

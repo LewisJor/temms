@@ -17,12 +17,10 @@ No webcam?  No problem.  Default source generates synthetic driving frames
 using pure OpenCV (road + sky + horizon).
 """
 
-import time
-import sys
-import logging
 import argparse
-from pathlib import Path
-from typing import Optional
+import logging
+import sys
+import time
 
 import numpy as np
 
@@ -149,7 +147,7 @@ class SimRunner:
         self._decisions: list = []
         self._effects: dict = {}
 
-    def _get_frame(self, cap=None) -> Optional[np.ndarray]:
+    def _get_frame(self, cap=None) -> np.ndarray | None:
         """Get next frame from source."""
         import cv2
 
@@ -289,7 +287,7 @@ class SimRunner:
 
         return np.vstack([top_row, bar])
 
-    def run_scenario(self, scenario_name: str) -> None:
+    def run_scenario(self, scenario_name: str) -> None:  # noqa: C901  (tracked in #54)
         """
         Run a named scenario with live visualization.
 
@@ -300,8 +298,9 @@ class SimRunner:
         4. Shows a live dashboard window (unless headless)
         """
         import cv2
+
         from temms.sim.scenarios import SCENARIOS
-        from temms.sim.weather import conditions_to_effects, apply_weather
+        from temms.sim.weather import apply_weather, conditions_to_effects
 
         if scenario_name not in SCENARIOS:
             available = ", ".join(SCENARIOS.keys())
@@ -311,7 +310,7 @@ class SimRunner:
 
         scenario = SCENARIOS[scenario_name]
         print(f"\n{'='*60}")
-        print(f"  TEMMS Visual Simulation")
+        print("  TEMMS Visual Simulation")
         print(f"  Scenario: {scenario.name}")
         print(f"  {scenario.description}")
         print(f"{'='*60}\n")
@@ -437,7 +436,7 @@ class SimRunner:
 
         scenario = SCENARIOS[scenario_name]
         print(f"\n{'='*60}")
-        print(f"  TEMMS Headless Simulation")
+        print("  TEMMS Headless Simulation")
         print(f"  Scenario: {scenario.name}")
         print(f"  {scenario.description}")
         print(f"  Daemon: {self.daemon_url}")
@@ -470,7 +469,7 @@ class SimRunner:
                 state = vision.get("state", "unknown")
                 print(f"  → Active model: {model} ({state})")
             else:
-                print(f"  → Daemon not responding")
+                print("  → Daemon not responding")
 
             # Effects summary
             active_effects = {k: v for k, v in effects.items() if v > 0.01}

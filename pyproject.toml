@@ -144,8 +144,44 @@ target-version = ["py311", "py312"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-select = ["E", "F", "I", "N", "W", "UP"]
-ignore = []
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "C901"]
+ignore = [
+    # Long lines are usually help text, URLs, or table rows where wrapping hurts
+    # readability more than it helps. Everything else is enforced.
+    "E501",
+    # Deliberate lazy imports inside functions (optional deps, import cost).
+    "E402",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Deliberate conventions, scoped so the rule still protects new code elsewhere.
+# apiVersion mirrors the YAML key it parses (Kubernetes-style manifests).
+"src/temms/core/mission_spec.py" = ["N815"]
+"src/temms/policy/schema.py" = ["N815"]
+# `class X(str, Enum)` is load-bearing: members must compare and serialise as
+# plain strings across JSON, SQLite, and the API. StrEnum changes that contract.
+"src/temms/core/cache.py" = ["UP042"]
+"src/temms/core/loader.py" = ["UP042", "N806"]
+"src/temms/daemon/deployment_state.py" = ["UP042"]
+"src/temms/slots/manager.py" = ["UP042"]
+# Exception names read as conditions rather than errors at the call site
+# (`except ActivationPreflightBlocked`), which is the clearer reading.
+"src/temms/controller.py" = ["N818"]
+"src/temms/daemon/service.py" = ["N818"]
+"src/temms/hub_lite.py" = ["N818"]
+"scripts/mission_package_smoke.py" = ["N818"]
+# X/Y are the conventional names for a coordinate meshgrid.
+"src/temms/sim/weather.py" = ["N806"]
+# MockPath names a patched class, not a variable.
+"tests/unit/test_collectors.py" = ["N806"]
+
+[tool.ruff.lint.mccabe]
+# The real bar. Existing offenders carry an explicit `# noqa: C901 (tracked in
+# #54)` marker rather than hiding behind a permissive global threshold, so the
+# debt is greppable and finite and new code cannot add to it unnoticed.
+max-complexity = 10
 
 [tool.mypy]
 python_version = "3.11"

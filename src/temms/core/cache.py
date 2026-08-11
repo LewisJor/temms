@@ -2,13 +2,13 @@
 Local model cache (not a registry - just tracks imported packages).
 """
 
-import sqlite3
 import json
-from pathlib import Path
-from typing import Optional, List, Dict, Any
-from datetime import datetime
+import sqlite3
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
+from pathlib import Path
+from typing import Any
 
 from temms.core.database import Database
 
@@ -33,7 +33,7 @@ class CachedModel:
     path: Path
     sha256: str
     size_bytes: int
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     package_id: str  # Which package this came from
     imported_at: datetime
 
@@ -62,7 +62,7 @@ class ImportedPackage:
     version: str
     source: str  # USB path, URL, etc.
     imported_at: datetime
-    manifest: Dict[str, Any]
+    manifest: dict[str, Any]
 
 
 class ModelCache(Database):
@@ -132,7 +132,7 @@ class ModelCache(Database):
         name: str,
         version: str,
         source: str,
-        manifest: Dict[str, Any],
+        manifest: dict[str, Any],
     ) -> ImportedPackage:
         """Record imported package."""
         imported_at = datetime.now()
@@ -170,7 +170,7 @@ class ModelCache(Database):
         sha256: str,
         size_bytes: int,
         package_id: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> CachedModel:
         """Add model to cache (from package import)."""
         imported_at = datetime.now()
@@ -219,7 +219,7 @@ class ModelCache(Database):
             imported_at=imported_at,
         )
 
-    def get_model(self, model_id: str) -> Optional[CachedModel]:
+    def get_model(self, model_id: str) -> CachedModel | None:
         """Get cached model by ID."""
         return self.fetch_one_mapped(
             "SELECT * FROM cached_models WHERE id = ?",
@@ -227,7 +227,7 @@ class ModelCache(Database):
             self._row_to_model,
         )
 
-    def list_models(self) -> List[CachedModel]:
+    def list_models(self) -> list[CachedModel]:
         """List all cached models."""
         return self.fetch_all_mapped(
             "SELECT * FROM cached_models ORDER BY imported_at DESC",
@@ -235,7 +235,7 @@ class ModelCache(Database):
             self._row_to_model,
         )
 
-    def find_model(self, name: str, version: Optional[str] = None) -> Optional[CachedModel]:
+    def find_model(self, name: str, version: str | None = None) -> CachedModel | None:
         """
         Find cached model by name and optional version.
 
@@ -256,7 +256,7 @@ class ModelCache(Database):
                 self._row_to_model,
             )
 
-    def list_packages(self) -> List[ImportedPackage]:
+    def list_packages(self) -> list[ImportedPackage]:
         """List all imported packages."""
         return self.fetch_all_mapped(
             "SELECT * FROM packages ORDER BY imported_at DESC",
@@ -264,7 +264,7 @@ class ModelCache(Database):
             self._row_to_package,
         )
 
-    def get_package(self, package_id: str) -> Optional[ImportedPackage]:
+    def get_package(self, package_id: str) -> ImportedPackage | None:
         """Get imported package metadata by ID."""
         return self.fetch_one_mapped(
             "SELECT * FROM packages WHERE id = ?",

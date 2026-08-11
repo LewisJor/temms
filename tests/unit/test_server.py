@@ -4,13 +4,12 @@ Unit tests for the inference server.
 
 import hashlib
 import json
-import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
-from unittest.mock import AsyncMock
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -20,11 +19,10 @@ from temms.core.package_catalog import package_source_sha256
 from temms.core.signing import sign_package
 from temms.daemon.pending_ops import PendingOperationsStore, verify_pending_operation_signature
 from temms.daemon.service import DaemonConfig
-from temms.hub_lite import HubLiteStore, canonical_json_hash
-from temms.telemetry import TelemetryBuffer
+from temms.hub_lite import HubLiteStore
 from temms.inference import server as inference_server
-from temms.inference.server import create_app
 from temms.inference.runtime import InferenceRuntime
+from temms.inference.server import create_app
 from temms.policy.schema import (
     Condition,
     ConditionGroup,
@@ -34,6 +32,7 @@ from temms.policy.schema import (
     SlotPolicyMetadata,
     SlotPolicySpec,
 )
+from temms.telemetry import TelemetryBuffer
 
 
 def _pending_payload_hash(payload: dict) -> str:

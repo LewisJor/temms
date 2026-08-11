@@ -167,7 +167,7 @@ def _read_json(path: Path) -> tuple[bool, Any, str]:
         return False, None, f"unreadable: {exc}"
 
 
-def verify_state(root: Path) -> list[dict[str, Any]]:
+def verify_state(root: Path) -> list[dict[str, Any]]:  # noqa: C901  (tracked in #54)
     """Check every artifact the killed worker was writing."""
     from temms.daemon.deployment_state import DeploymentState
     from temms.slots.manager import SlotManager

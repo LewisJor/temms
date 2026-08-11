@@ -12,13 +12,10 @@ Tests:
 - History table recording
 """
 
-import pytest
 import json
-import time
 from datetime import datetime
 
-from temms.conditions.store import ConditionStore, ConditionValue
-
+from temms.conditions.store import ConditionValue
 
 # ── Basic set / get ──────────────────────────────────────────────────
 

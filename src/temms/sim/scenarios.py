@@ -13,14 +13,14 @@ Usage:
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional
+from typing import Any
 
 
 @dataclass
 class ScenarioStep:
     """One step in a scenario timeline."""
     name: str
-    conditions: Dict[str, Any]
+    conditions: dict[str, Any]
     duration_s: float = 5.0
     description: str = ""
 
@@ -30,7 +30,7 @@ class Scenario:
     """A named sequence of condition changes."""
     name: str
     description: str
-    steps: List[ScenarioStep] = field(default_factory=list)
+    steps: list[ScenarioStep] = field(default_factory=list)
     loop: bool = False  # Whether to repeat after last step
 
 
@@ -305,7 +305,7 @@ COMBINED_STRESS = Scenario(
 
 
 # Registry of all built-in scenarios
-SCENARIOS: Dict[str, Scenario] = {
+SCENARIOS: dict[str, Scenario] = {
     s.name: s
     for s in [FOG_ROLLOUT, DAY_NIGHT_CYCLE, RAINSTORM, COMBINED_STRESS]
 }

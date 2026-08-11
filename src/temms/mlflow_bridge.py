@@ -10,14 +10,14 @@ This module is entirely optional. The daemon works fine without MLflow.
 All MLflow imports are lazy to avoid hard dependency.
 """
 
-import json
 import hashlib
+import json
 import logging
 import os
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class MLflowBridge:
     """Bridge between TEMMS and MLflow for local development."""
 
-    def __init__(self, tracking_uri: Optional[str] = None):
+    def __init__(self, tracking_uri: str | None = None):
         """
         Initialize MLflow bridge.
 
@@ -127,7 +127,7 @@ class MLflowBridge:
         logger.info(f"Registered {registered_count}/{len(import_result.models)} models in MLflow")
         return registered_count
 
-    def list_models(self) -> List[Dict[str, Any]]:
+    def list_models(self) -> list[dict[str, Any]]:
         """
         List models registered in MLflow.
 
@@ -174,9 +174,9 @@ class MLflowBridge:
     def pull_model(
         self,
         model_name: str,
-        version: Optional[str] = None,
-        dest_dir: Optional[Path] = None,
-    ) -> Optional[Path]:
+        version: str | None = None,
+        dest_dir: Path | None = None,
+    ) -> Path | None:
         """
         Download a model from MLflow and create a TEMMS package.
 
