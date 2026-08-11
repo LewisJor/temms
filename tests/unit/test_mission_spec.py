@@ -88,7 +88,11 @@ def test_keystone_rejects_policy_referencing_absent_model(tmp_path):
 
 def test_keystone_passes_when_all_referenced_models_present(tmp_path):
     path = _write_mission(tmp_path, [_model("daylight"), _model("lowlight"), _model("tiny")])
-    load_mission_spec(path)  # no raise
+
+    spec = load_mission_spec(path)
+
+    # The policy's default, rule targets and fallback chain are all carried.
+    assert set(spec.model_ids()) >= {"daylight", "lowlight", "tiny"}
 
 
 def test_policy_for_wrong_slot_is_rejected(tmp_path):
