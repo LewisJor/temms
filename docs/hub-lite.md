@@ -62,11 +62,11 @@ validate a runtime, or choose another recommendation.
 
 ## API
 
-Hub Lite routes live under `/v1/hub/*`. When `TEMMS_API_TOKEN` is configured, these routes require the same token as `/v1/control/*`. Web UI write actions use that same protection for slot overrides, condition injection, override clearing, and package import; UI package import also inherits the daemon package signature policy.
+Hub Lite routes live under `/v1/hub/*`. When `TEMMS_API_TOKEN` is configured, these routes require the same token as `/v1/control/*`.
 
 Set `TEMMS_RBAC_TOKENS` for role-scoped tokens. Entries use `role=token`
 pairs, such as `operator=op-token;approver=approve-token;edge=edge-token`.
-When configured, API and UI write actions require the matching role while
+When configured, API write actions require the matching role while
 `TEMMS_API_TOKEN` remains an admin token. Approval-gated rollouts require the
 `approver` role for approval, package promotion to `approved` also requires
 the `approver` role, and edge-agent lifecycle updates accept the `edge` role.
@@ -86,7 +86,7 @@ bundles.
 Package catalog registration plus rollout assignment, status, apply, and rollback history records include an `actor` field. Operators can send it as `X-TEMMS-Actor` or in the JSON body; online edge sync uses `edge:<device-id>`. TEMMS never derives actors from the bearer token itself, so evidence bundles can identify the operator or edge agent without storing secrets.
 
 Use `GET /v1/hub/readiness` for the product-level deployment verdict that powers
-Mission Package Workbench. The response uses schema
+the mission package workflow. The response uses schema
 `temms-deployment-readiness/v1`, returns an overall `go`, `attention`, or
 `blocked` status, and includes gates for model package, runtime target,
 performance fit, resource envelope, edge target, rollout gate, DDIL queue, and
@@ -107,11 +107,7 @@ mission replay phase counts, incomplete phases, and the recommended export
 mode. Directly executable actions also include a `command` object with HTTP
 `method`, API `path`, and optional suggested `body`; clients can use that
 metadata for explicit
-operator-confirmed remediation. The
-React cockpit uses those commands as reviewable actions: selecting a readiness
-action focuses the matching workflow section, opens the exact method/path/body
-for inspection, and only executes the command after the operator presses **Run
-command**. Mutating remediation command bodies include
+operator-confirmed remediation. Mutating remediation command bodies include
 `actor: "operator:readiness-remediation"` plus a reason when the endpoint
 supports one, so package promotion, rollout approval, rollout assignment, and
 DDIL quarantine/acknowledgement remain traceable in evidence history. Readiness
@@ -129,7 +125,7 @@ artifact fit, live inventory, performance, resources, runtime validation,
 production admission, and daemon-enriched DDIL repair state. Evidence exports
 carry that mission object inside runtime-fit evidence records and flatten the
 mission status/path into runtime-fit summaries for quick post-mission review.
-Before producing the final proof, React Hub can call
+Before producing the final proof, a client can call
 `POST /v1/hub/mission-package/plan` with the mission goal or YAML, sensor, slot,
 latency/throughput SLO, model-switch policy, fallback model, DDIL behavior, and
 the selected package/model/device/runtime path. When a request supplies
@@ -221,8 +217,7 @@ temms hub edge-runtime-mission \
 ```
 
 `mission-package-plan`, `mission-package-download`, and `mission-package-stage`
-post the same
-`temms-edge-mission-package/v1` request shape as the React workbench. The
+post the `temms-edge-mission-package/v1` request shape. The
 positional argument can be a mission YAML file; operators can also pass
 `--mission-yaml-file`, `--mission-yaml`, or explicit overrides such as `--goal`,
 `--sensor`, `--latency-budget-ms`, `--min-throughput-ips`, `--switch-policy`,
@@ -297,39 +292,18 @@ contains runtime workbench, trace, or manifest components but omits
 `component_digests`, or if a recorded component digest does not match the
 embedded proof component, the proof is invalid even when the payload hash and
 attestation have been recomputed.
-The React Hub mirrors this check for operators by recomputing the three
-component hashes in-browser on generated or downloaded proofs and surfacing
-whether the workbench, trace, and manifest digests are verified for the selected
-model/runtime/edge path.
-The React contract panel uses the same remediation records to show copyable
-operator commands per runtime lane. Benchmark and inventory refresh actions are
-marked edge-run and produce edge-local commands, while validation, packaging,
-compatibility inspection, and strict proof checks remain explicit operator
-commands.
-The React Hub proof panel adopts the `readiness` payload embedded in a
-successful generated or downloaded proof for the selected path, so a strict
-proof also refreshes the visible runtime fit, execution contract, and capability
-lock state without waiting for a manual page reload. The preview summary is
-proof-first: gate status, runtime fit, selected model/runtime/edge, capability
-lock digest, heartbeat freshness, payload hash, and signer fingerprint are
-visible before the operator expands raw JSON.
-The same proof panel also renders a browser-side **Signed runtime trace** check
-from the embedded `runtime_decision_trace` and canonical `runtime_workbench`.
-For a current proof on the selected path, the card shows the
-`temms-runtime-decision-trace/v1` schema, ranked runtime target count,
-remediation command count, and whether the signed trace agrees with the
-workbench. If the payload belongs to another model/runtime/device path, lacks
-the trace, or disagrees with the workbench, the panel warns before an operator
-hands the artifact to the offline verifier.
+The same remediation records also mark the command surface per runtime lane:
+benchmark and inventory refresh actions are marked edge-run and produce
+edge-local commands, while validation, packaging, compatibility inspection, and
+strict proof checks remain explicit operator commands.
 Generated and downloaded proofs also carry
 `edge_execution_manifest.schema_version:
 temms-edge-execution-manifest/v1`. The manifest is included in the signed proof
 payload and summarizes the exact package/model/device/runtime path, selected
 runtime image, runtime lane/provider context, artifact fit, capability-lock
 digest, validation id, benchmark id, best-target status, gate policy, gate
-status, and selected remediation command. The React proof panel surfaces this
-as **Execution manifest** so operators can answer what will execute on the edge
-without expanding the full nested proof.
+status, and selected remediation command, so operators can answer what will
+execute on the edge without expanding the full nested proof.
 Proofs also carry `runtime_capability_lock` inside `runtime_fit`,
 `runtime_decision`, and `edge_execution_contract`. The lock records the compact
 model requirements, selected runtime target constraints, reported edge
@@ -340,32 +314,28 @@ on stale edge inventory. This gives field reviewers a single hash-bound answer
 for what on-device runtime/provider/accelerator surface was proven.
 A valid proof can record a blocked mission; the verifier exits non-zero only
 when the proof is invalid or the gate policy supplied to verification is not
-satisfied. The React Hub surfaces this as a **Runtime proof artifact** lane
-directly under **Edge runtime mission**, with copyable generate, verify, and
-JSON verify commands for the selected model/runtime/device path. The same lane
-can call `GET /v1/hub/edge-runtime-proof` to return a
+satisfied. `GET /v1/hub/edge-runtime-proof` returns a
 `temms-edge-runtime-proof/v1` envelope directly from the evidence-enriched Hub
-readiness path for browser-side inspection, and it can download that envelope as
-the selected proof JSON artifact from `GET
-/v1/hub/edge-runtime-proof/download` for local verifier handoff. Download
-responses include proof filename, gate status, payload hash, attestation state,
-key-fingerprint headers when signed, and component digest headers for the
-runtime workbench, runtime decision trace, and execution manifest:
+readiness path, and `GET /v1/hub/edge-runtime-proof/download` returns that
+envelope as the selected proof JSON artifact for local verifier handoff.
+Download responses include proof filename, gate status, payload hash,
+attestation state, key-fingerprint headers when signed, and component digest
+headers for the runtime workbench, runtime decision trace, and execution
+manifest:
 `X-TEMMS-Edge-Proof-Runtime-Workbench-SHA256`,
 `X-TEMMS-Edge-Proof-Runtime-Decision-Trace-SHA256`, and
-`X-TEMMS-Edge-Proof-Execution-Manifest-SHA256`. The React Hub retains those
-download headers in the Runtime proof artifact lane and compares the header
-digests with the proof body so handoff mismatches are visible before local
-verification.
+`X-TEMMS-Edge-Proof-Execution-Manifest-SHA256`. Clients can compare those
+header digests with the proof body so handoff mismatches are visible before
+local verification.
 
 Benchmark remediation is intentionally different from central remediation. When
 the performance gate needs benchmark proof, its `record_benchmark` command
 includes `requires_edge_execution: true`, an `edge_command`/text form of the
 `temms benchmark ... --hub-url ...` invocation, and a note that the central POST
-body is only the target envelope for the result. The React cockpit shows that
-edge command for inspection and disables central execution, because latency,
-throughput, provider choice, and accelerator availability are only valid when
-measured on the selected device/runtime.
+body is only the target envelope for the result. Clients should treat that edge
+command as an inspection-and-handoff artifact rather than executing it
+centrally, because latency, throughput, provider choice, and accelerator
+availability are only valid when measured on the selected device/runtime.
 
 DDIL preflight uses the same readiness logic before replaying queued deploy
 intents when those intents carry package, device, and runtime target context.
@@ -377,7 +347,7 @@ resource-envelope violations, or selected-edge blockers. The preflight entry
 includes `hub_readiness_status`, `hub_readiness_selection`,
 `hub_blocking_gates`, `hub_attention_gates`,
 `hub_runtime_capability_lock`, `hub_capability_sha256`, and heartbeat
-freshness fields so the Hub cockpit can explain the exact edge capability
+freshness fields so clients can explain the exact edge capability
 failure without exposing raw payloads. A rollout-only attention gate remains
 replayable to preserve direct field deploy workflows.
 When DDIL preflight surfaces runtime optimizer advice, the entry also carries
@@ -393,9 +363,9 @@ Runtime readiness is edge-inventory aware. When a deployment is scoped to a
 runtime target, Hub Lite checks the target's declared runtimes, ONNX providers,
 and accelerators against the selected device's latest reported inventory. A
 runtime image that is compatible on paper but requires an unavailable provider
-or accelerator is reported as blocked before rollout assignment. The React
-cockpit surfaces the same signal first as **Edge runtime mission**, then as
-**On-device runtime fit** in the deployment path. The mission band condenses
+or accelerator is reported as blocked before rollout assignment. The same
+signal appears first as **Edge runtime mission**, then as
+**On-device runtime fit** in the deployment path. The mission summary condenses
 runtime-fit score, runtime lane, artifact fit, live inventory, performance SLO,
 resource envelope, runtime validation, and DDIL runtime repair proof for the
 selected model/device/runtime path. Runtime fit is scored as
@@ -456,14 +426,14 @@ retargeted a runtime without reconstructing the decision from scattered
 readiness fields.
 Readiness and edge proof artifacts also expose
 `runtime_workbench.schema_version: temms-runtime-workbench/v1`. This is the
-canonical backend-ranked workbench contract consumed by the React first screen:
+canonical backend-ranked workbench contract:
 selected and best runtime target IDs, target-selection status, production
 admission summary, selected/best target details, and one compact row per known
 runtime target with eligibility, score, lane, validation, benchmark,
 resource/telemetry proof, capability-lock status, blocker reasons, and next
-remediation action. The UI should prefer this object whenever it is present so
-runtime targeting remains identical across API, CLI, DDIL proof, downloaded
-JSON, and browser demos.
+remediation action. Clients should prefer this object whenever it is present so
+runtime targeting remains identical across API, CLI, DDIL proof, and downloaded
+JSON.
 Edge-runtime proof artifacts additionally expose
 `edge_execution_manifest.schema_version:
 temms-edge-execution-manifest/v1`, derived from the selected workbench target
@@ -471,23 +441,16 @@ and execution contract. The manifest gives auditors a compact signed execution
 intent: runtime image, model/artifact lane, device id, capability digest,
 validation/benchmark evidence, gate policy, and admission result for the
 selected path.
-The Runtime workbench renders those rows as a **Runtime decision trace** below
-the ranked table, so field operators can inspect rank, selected/best state,
-validation, benchmark, resource, telemetry, capability digest, blocker reason,
-and the exact copyable operator or edge-run remediation command for each target
-without opening raw JSON.
-The React cockpit surfaces the same capsule as an active **Edge runtime
-mission** path followed by **Edge execution contract** above the broader
-verdict and proof lanes. The active path panel keeps model ID, selected target
-runtime, edge node, target coverage counts, admission, signed proof status, and
-a compact selected/blocked runtime-lane strip together in the first viewport.
-The contract panel remains the operator's
-deeper fit inspection surface: it shows the selected model -> runtime -> edge
+The same rows feed the `runtime_decision_trace`, so field operators can inspect
+rank, selected/best state, validation, benchmark, resource, telemetry,
+capability digest, blocker reason, and the exact copyable operator or edge-run
+remediation command for each target without opening raw JSON.
+The execution contract is the operator's
+deeper fit inspection surface: it carries the selected model -> runtime -> edge
 path, ranked runtime candidates, runtime lane, artifact path,
-`runtime_capability_lock`, resource evidence, admission state, full
-`target_assessments` coverage for eligible and blocked runtime lanes, and a
-non-mutating **Use best runtime** control when the pinned runtime is not the
-measured best target. Each target assessment carries the lane, fit score,
+`runtime_capability_lock`, resource evidence, admission state, and full
+`target_assessments` coverage for eligible and blocked runtime
+lanes. Each target assessment carries the lane, fit score,
 selected/best flags, compact component states, capability-lock summary, and
 reasons or penalties so an operator can explain why CPU, CUDA, TensorRT, or
 TFLite was selected or rejected for the current edge. Assessments also include
@@ -501,24 +464,21 @@ command payloads in the same contract the API signs and the CLI verifies:
 `temms hub validate-runtime` command with an explicit package-path placeholder,
 `refresh_edge_inventory` produces an edge daemon heartbeat command, and generic
 capability or edge-class blockers produce a compatibility-matrix/proof check
-instead of mutating state. The cockpit renders those contract-provided commands
-directly and only falls back to local synthesis when connected to an older
-daemon. The React readiness remediation panel shows commands marked
-`requires_edge_execution` as copyable **Edge execution command** handoffs and
-keeps the browser run button disabled for them, because heartbeat, benchmark,
-and runtime-validation evidence must be produced on the actual edge/runtime
-surface.
-The same view is also emitted by the API as
+instead of mutating state. Commands marked
+`requires_edge_execution` are edge handoffs rather than centrally executable
+remediation, because heartbeat, benchmark, and runtime-validation evidence must
+be produced on the actual edge/runtime surface.
+The contract is emitted by the API as
 `edge_execution_contract.schema_version:
 temms-edge-execution-contract/v1` and embedded in signed edge-runtime proof
-artifacts. This keeps the browser, CLI verifier, evidence exports, and offline
+artifacts. This keeps the CLI verifier, evidence exports, and offline
 audits tied to one contract instead of recreating the edge path from separate
 readiness fields.
-Readiness also renders this as a **Runtime optimizer** gate. The gate is green
+Readiness also reports this as a **Runtime optimizer** gate. The gate is green
 when the selected target is the best measured fit, attention when a pinned
 target has a higher-scoring eligible alternative, and blocked when no eligible
-target remains. The attention state exposes a non-mutating **Use best runtime**
-action with `kind: select_runtime_target`, so the cockpit can switch the
+target remains. The attention state exposes a non-mutating
+action with `kind: select_runtime_target`, so a client can switch the
 operator's selected model/device/runtime context before creating a rollout. For
 already-buffered DDIL deploy intents, the pending ledger uses the same Runtime
 optimizer refs to call `/v1/control/sync/retarget-runtime`; the daemon rewrites
@@ -533,10 +493,6 @@ target-assessment digest, capability hash, validation id, benchmark id,
 eligibility, and best-target status before applying the repaired queue, so a
 proof minted before runtime image, runtime lane, artifact, evidence, or edge
 inventory drift cannot be replayed silently.
-The React cockpit keeps that audit visible as **DDIL runtime repair proof** and
-**DDIL repair evidence** cards, including the queued runtime, proved runtime,
-best measured runtime, fit score, capability lock, validation id, benchmark id,
-target coverage, and replay source after the queue drains.
 If the operator quarantines a blocked DDIL intent first, the same recovery loop
 can put it back into service after the edge evidence is fixed:
 `/v1/control/sync/requeue-dead-letters` runs current preflight against the
@@ -544,8 +500,7 @@ quarantined signed payload and restores it to the active replay queue only when
 the intent is ready. The dead-letter record is kept with `requeued_at`,
 `requeued_by`, `requeue_reason`, and the original digest. Blocked candidates
 stay quarantined with the current preflight reason; `force: true` is reserved
-for explicit break-glass drills. The Hub ledger exposes this as **Requeue
-intent** beside each quarantined row, so runtime remediation does not require
+for explicit break-glass drills. Runtime remediation therefore does not require
 losing the forensic quarantine record.
 The same field repair path is scriptable from the edge node:
 
@@ -634,76 +589,6 @@ storage, thermal, battery, or power telemetry changed.
 The same viable-fallback search is used for resource drift, so a lighter sibling
 model can be staged immediately when it is proven to fit the degraded node,
 without bypassing rollout approval or runtime-validation proof.
-
-## Product UI
-
-The Hub product UI is served at `/ui/hub`. Hub-enabled daemons redirect `/ui/`
-to that product cockpit. The current UI opens as **Mission Package Workbench** and
-is organized around the operator path **Mission -> Model Plan -> Runtime Fit ->
-Sensor Handling -> Package Handoff -> Edge Deploy -> Field Ops**:
-
-- The default shell opens as a **Mission workflow cockpit**: an operator path
-  rail, one focused current-stage decision panel, package path signals, and a
-  compact **Live context** drawer for inventory, rollout, evidence, and DDIL
-  telemetry. The first screen reads as a packaging workflow instead of a status
-  dump.
-- **Mission** captures the goal or uses **Import YAML** to load a mission spec
-  that hydrates sensor, SLO, switching, fallback, and DDIL fields for the
-  downstream package plan. Matching `model_id`, `package_id`, `device_id`, and
-  `runtime_target_id` hints also preselect the model/runtime/edge path when
-  those ids exist in Hub inventory.
-- **Model Plan** owns signed model inventory, selected model/package release
-  state, declared performance SLO, resource envelope, and benchmark evidence.
-  Package registration, edge enrollment, and bundle import are available under
-  **Advanced intake**.
-- **Runtime Fit** preserves the model chosen in **Model Plan** as locked
-  context, owns edge node and target runtime selection, then ranks runtime
-  targets by fit score, validation, benchmark freshness, live inventory match,
-  and blocker state from
-  `runtime_workbench.schema_version: temms-runtime-workbench/v1`, with a compact
-  on-device capability vector and Runtime decision trace.
-- **Sensor Handling** owns sensor input, slot, latency/throughput SLO,
-  model-switch policy, fallback model, and DDIL behavior.
-- **Package Handoff** owns mission package planning, the mission-to-deploy binding
-  chain, stable package identity, field handoff hashes, and rollout staging.
-  Runtime proof generation, readiness gates, component digests, and the edge
-  execution contract remain available under **Advanced verification** for
-  operator drill-down.
-- The operator path rail and stage focus panel show the current stage,
-  ready condition, risk, previous/next movement, and stage-specific actions.
-  This keeps the default path operational: **Stage rollout** is not enabled
-  until **Plan package** returns the stable mission package identity and
-  deployment intent with a passed proof gate.
-- **Edge Deploy** opens on the planned mission package deploy lane. Direct
-  rollout forms remain available under **Manual controls**, while rollout-plan
-  and fleet panels surface only when a workflow action opens them.
-- **Field Ops** owns DDIL link state, pending/quarantined intent repair, mission
-  replay, evidence export, and air-gap evidence bundle handoff.
-- evidence summary, mission replay, full bundle, and air-gap bundle export
-
-The Operational verdict panel is backed by `/v1/hub/readiness` and falls back to
-client-side derivation only when an older daemon does not expose that endpoint.
-When a selected model needs operator work, the panel shows gate-specific action
-buttons that focus the matching workflow section without opening raw JSON.
-The deployment path also includes an **On-device capability dossier** for the
-selected model/device/runtime target. It condenses runtime fit, resource
-envelope, performance proof, runtime validation, live edge inventory, target
-requirements, runtime-fit component scores, and the current Hub admission gate
-into one operator-readable view so field users can explain why a model is safe,
-blocked, or still needs proof before rollout.
-
-Build the React + TypeScript bundle before testing UI changes:
-
-```bash
-npm --prefix ui install
-npm run typecheck
-npm run build
-npm run smoke:workbench
-```
-
-Those repo-root npm commands delegate to the React + TypeScript project in
-`ui/`. The equivalent Makefile targets are `make ui-install`,
-`make ui-typecheck`, `make ui-build`, and `make ui-smoke`.
 
 For a local seeded rehearsal with signed models, rollout state, runtime
 validation, fresh demo benchmark evidence, and mission proof already present,
@@ -1086,16 +971,6 @@ temms hub approve rollout-1 --actor operator:approver \
   --reason "mission policy approved"
 ```
 
-The web UI exposes the same gate in **Mission Package Workbench** at
-`/ui/hub`. Rollout rows show `pending`, `approved`, or `not required`, and the
-Apply button remains disabled for approval-gated rollouts until the operator
-records approval. Retired `/ui/operate` and `/ui/runtimes` URLs redirect to the
-Hub cockpit so bookmarked demo links land on the supported product UI.
-Hub-enabled deployments also redirect legacy diagnostic GET pages such as
-`/ui/dashboard`, `/ui/models`, `/ui/import`, `/ui/slots`, `/ui/conditions`, and
-`/ui/decisions` to `/ui/hub`. Those diagnostic templates remain available only
-when Hub Lite is not configured.
-
 Update rollout state:
 
 ```bash
@@ -1179,10 +1054,10 @@ temms evidence --input temms-evidence-bundle.json --replay
 The evidence bundle combines Hub Lite fleet state, current deployment status, centrally replayed telemetry, doctor-style diagnostics, slots, runtime state, condition snapshot, imported package/model metadata, package import audit events, rollout history with actors, decision logs with package/provenance metadata and package signature verification context, local telemetry events, local benchmark artifacts, Hub-recorded benchmark evidence, and a merged timeline. Policy-driven decision logs include the matched policy, matched rule, rule priority, action, and per-condition evidence with actual value, source, priority, confidence, and match result. Diagnostics include write-probed path health and model cache health, including missing cached model files, size mismatches, and SHA256 mismatches.
 Runtime target validation records are included as first-class evidence so operators can prove that a package was preflighted against a customer or default runtime image before assignment or deployment.
 Hardware benchmark records are also first-class Hub evidence. Publish them from an edge with `temms benchmark ... --hub-url http://hub-vm:8080 --device-id edge-1 --package-id pkg-vision-1 --runtime-target-id temms-x86_64-cpu`, then inspect central results with `temms hub benchmarks`.
-The Hub UI evidence controls render the same proof as operator-facing summary,
-mission replay, full bundle, or air-gap export actions. These views expose fleet
+The same proof is available as operator-facing summary,
+mission replay, full bundle, or air-gap export actions. These exports expose fleet
 counts, package signature and strict metadata posture, mission replay phases,
-recent "why models switched" cards with matched condition evidence, and a
+recent "why models switched" records with matched condition evidence, and a
 merged mission timeline.
 
 Air-gapped edges should normally bring the full evidence bundle back to Hub Lite

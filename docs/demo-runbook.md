@@ -21,7 +21,6 @@ The daemon seeds a signed, released example package, an online `edge-sim`
 device, and **generates an Ed25519 demo signing keypair** (real asymmetric,
 offline-verifiable provenance) into the data volume.
 
-- Hub UI: <http://localhost:8080/ui/hub>
 - **DDIL dashboard: <http://localhost:3000/d/temms-ddil>** (opens directly, no login)
 - MLflow: <http://localhost:5001>
 
@@ -34,19 +33,22 @@ active() { curl -s http://localhost:8080/v1/slots/vision/status \
 
 ## 1. The Hub (signed inventory)
 
-Open **<http://localhost:8080/ui/hub>** — the Mission Package Workbench. The
-seeded package (`pkg-vision-models-20240115`) is promoted through
+List the signed package inventory:
+
+```bash
+temms hub packages --hub-url http://localhost:8080
+```
+
+The seeded package (`pkg-vision-models-20240115`) is promoted through
 `candidate → validated → approved → released`, and the runtime fit shows
 `edge-sim / 95/100 optimal`.
 
 ## 2. Deploy to the edge (proof-gated)
 
-In the workbench: **Plan package** → open **Edge Deploy** → **Stage rollout**.
-The stage gate passes and the rollout is assigned to `edge-sim` with the full
-proof chain (package identity, edge handoff, mission contract, capability lock,
-runtime plan, deployment intent digests).
-
-CLI mirror:
+Plan, download, and stage the mission package against the API. The stage gate
+passes and the rollout is assigned to `edge-sim` with the full proof chain
+(package identity, edge handoff, mission contract, capability lock, runtime
+plan, deployment intent digests):
 
 ```bash
 python scripts/mission_package_smoke.py --hub-url http://localhost:8080

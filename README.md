@@ -30,7 +30,7 @@ runtime, mission phase, or operator input.
 - Ed25519-signed packages with offline (public-key-only) verification
 - Offline trust store: multi-key verification and key rotation with no CA
 - Decision log and evidence bundle export
-- Hub product UI for model inventory, runtime compatibility, rollout approval,
+- Hub CLI and API for model inventory, runtime compatibility, rollout approval,
   activation, and evidence export
 - Docker simulation with example ONNX models
 
@@ -70,7 +70,7 @@ temms evidence --input temms-canonical-evidence.json --summary
 temms evidence --input temms-canonical-evidence.json --replay
 ```
 
-For a local product UI rehearsal with seeded models, rollout state, and evidence,
+For a local product rehearsal with seeded models, rollout state, and evidence,
 follow [Functional Testing](docs/functional-testing.md).
 
 Start the Docker environment:
@@ -80,9 +80,9 @@ make docker-up
 ```
 
 The local Docker daemon seeds Hub Lite with a signed, released example package,
-an online `edge-sim` target, and a demo signing key. That makes
-`/ui/hub` open directly into a model deployment workflow instead of an empty
-catalog. Docker demo mode also publishes a stable simulated resource envelope
+an online `edge-sim` target, and a demo signing key. That makes a first
+`temms hub` session open directly into a model deployment workflow instead of
+an empty catalog. Docker demo mode also publishes a stable simulated resource envelope
 for `edge-sim` so the first-open mission package path starts green; explicit
 heartbeat/resource-drift tests still exercise the same readiness blockers used
 for real constrained edges.
@@ -90,36 +90,20 @@ for real constrained edges.
 Services:
 
 ```text
-TEMMS Hub   http://localhost:8080/ui/hub
 TEMMS API   http://localhost:8080/v1/health
 API docs    http://localhost:8080/docs
 MLflow UI   http://localhost:5001
 ```
 
-Build or run the React Hub UI from the repo root:
+When the Docker stack is running, verify that the live daemon is serving the
+current mission package contract, including explicit JSON and YAML-only mission
+package planning:
 
 ```bash
-npm --prefix ui install
-npm run typecheck
-npm run build
-npm run smoke:workbench
-
-# Optional: Vite dev server with /v1 proxied to the local daemon
-npm run dev
+uv run python scripts/mission_package_smoke.py --hub-url http://localhost:8080
 ```
 
-The Makefile exposes the same workflow as `make ui-install`, `make ui-build`,
-`make ui-smoke`, `make ui-ci`, and `make ui-dev` for shell sessions that prefer Make.
-
-When the Docker stack is running, verify that the live daemon and UI agree on
-the current Mission Package Workbench contract, including explicit JSON and
-YAML-only mission package planning:
-
-```bash
-make docker-product-smoke
-```
-
-The same package handoff is available without the browser:
+Run the mission package handoff from the CLI:
 
 ```bash
 uv run temms hub mission-package-plan ./mission.yaml --hub-url http://localhost:8080 --json
@@ -129,47 +113,32 @@ uv run temms hub mission-package-stage /tmp/temms-edge-mission-package.json \
   --hub-url http://localhost:8080 --actor operator:cli-demo
 ```
 
-The production Hub app is served by the daemon at `http://localhost:8080/ui/hub`.
-Hub-enabled daemons also redirect `http://localhost:8080/ui/` to the React Hub.
-The Hub opens as **Mission Package Workbench**: a product cockpit for signed model
-inventory, targeted runtime selection, edge rollout status, DDIL readiness, and
-mission evidence. The first viewport now opens as a **Mission workflow cockpit**:
-an operator path rail, a focused current-stage decision panel, package path
-signals, and a compact **Live context** drawer for inventory, rollout, evidence,
-and DDIL telemetry. Its first operator pass now follows
+The `temms hub` CLI and the `/v1/hub/*` API cover signed model inventory,
+targeted runtime selection, edge rollout status, DDIL readiness, and mission
+evidence. The operator path follows
 **Mission -> Model Plan -> Runtime Fit -> Sensor Handling -> Package Handoff ->
 Edge Deploy -> Field Ops**:
 define the mission spec or YAML, choose models, rank the target runtime, set
 sensor/model-switch handling, package the edge handoff, stage deployment, and
-operate through DDIL/evidence proof. Setup-only controls such as package
-registration and edge enrollment are under **Advanced intake**, and direct
-rollout forms are under **Manual controls** so the demo path stays focused on
-the mission package handoff. Package planning now separates the stable package
-identity hash from the exact downloaded payload hash, so repeated plan/download
-actions can be audited as the same mission/runtime package even when artifact
-timestamps differ. The deployment intent also carries mission-contract,
-runtime-capability-lock, and runtime-plan digests, and the package carries a
-verified edge-handoff digest for the operator runbook that staging preserves
-before creating the edge rollout. Staged rollouts retain a compact
-`mission_package_stage` binding so package provenance remains visible in Edge
-Deploy after refresh.
-**Model Plan** owns model selection and package release
-context; **Runtime Fit** preserves that selected model as locked context, lets
-the operator choose the edge node and target runtime, ranks available runtime
-targets by fit, validation, benchmark, and live inventory state, and then
-exposes a runtime proof artifact lane that can generate a
-`temms-edge-runtime-proof/v1` payload through Hub and download the exact
-server-backed JSON proof for offline handoff. The same proof includes the
-canonical `temms-runtime-workbench/v1` contract used by the UI, CLI, API, and
-DDIL retarget checks to agree on selected target, best target, capability lock,
-benchmark, telemetry, and blocked-runtime reasons. When the
+operate through DDIL/evidence proof. Package planning separates the stable
+package identity hash from the exact downloaded payload hash, so repeated
+plan/download actions can be audited as the same mission/runtime package even
+when artifact timestamps differ. The deployment intent also carries
+mission-contract, runtime-capability-lock, and runtime-plan digests, and the
+package carries a verified edge-handoff digest for the operator runbook that
+staging preserves before creating the edge rollout. Staged rollouts retain a
+compact `mission_package_stage` binding so package provenance remains visible
+after staging. Runtime selection preserves the selected model as locked
+context, lets the operator choose the edge node and target runtime, ranks
+available runtime targets by fit, validation, benchmark, and live inventory
+state, and can generate a `temms-edge-runtime-proof/v1` payload through Hub and
+download the exact server-backed JSON proof for offline handoff. The same proof
+includes the canonical `temms-runtime-workbench/v1` contract used by the CLI,
+API, and DDIL retarget checks to agree on selected target, best target,
+capability lock, benchmark, telemetry, and blocked-runtime reasons. When the
 daemon has a package signing key, that proof carries an attestation with the
 payload hash, signer, and key fingerprint, and the local `verify-edge-proof`
-command can fail closed with `--require-proof-signature`. It keeps copyable
-`edge-runtime-mission` plus local verification commands for the selected
-model/runtime/device path. The React Hub is the only UI; the retired
-server-rendered diagnostic pages (`/ui/slots`, `/ui/conditions`, etc.) redirect
-to `/ui/hub`.
+command can fail closed with `--require-proof-signature`.
 
 Run a headless scenario:
 
@@ -421,7 +390,6 @@ src/temms/
 ├── conditions/         # Condition store and collectors
 ├── slots/              # Slot state and decision log
 ├── core/               # Model cache, package import, storage
-├── ui/                 # Local web UI
 ├── sim/                # Simulation helpers
 └── cli/                # Typer CLI
 ```

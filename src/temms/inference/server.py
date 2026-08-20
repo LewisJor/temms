@@ -582,16 +582,6 @@ def create_app(
     application.include_router(hub_router)
     application.include_router(status_router)
 
-    # Register Web UI routes
-    try:
-        from temms.ui.routes import create_ui_router
-
-        ui_router = create_ui_router(get_state, control_auth_dependency=require_control_auth)
-        application.include_router(ui_router)
-        logger.info("Web UI registered at /ui/")
-    except Exception as e:
-        logger.warning(f"Could not load Web UI: {e}")
-
     return application
 
 

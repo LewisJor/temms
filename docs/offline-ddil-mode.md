@@ -29,7 +29,7 @@ preflights with HTTP `409` and leaves the queue intact.
 Deploy intents that carry Hub context are also checked against Hub Lite
 deployment readiness before replay. When a queued deploy names or implies
 `package_id`, `device_id`, and `runtime_target_id`, preflight calls the same
-readiness gates used by Mission Package Workbench. Runtime target mismatch,
+readiness gates used by mission package planning. Runtime target mismatch,
 active runtime drift, stale or failing performance proof, resource-envelope
 violations, and selected-edge blockers stop replay until the operator fixes the
 edge state, chooses a compatible target, or quarantines the intent. A
@@ -116,7 +116,7 @@ does not immediately revert the requested deployment. If the slot or model
 cannot be found, sync refuses to clear the pending queue so the operator can
 recover instead of losing the intent. If Hub readiness blocks the deploy, the
 preflight entry includes `hub_readiness_status`, selected deployment context,
-and compact blocking/attention gate refs so the UI and evidence bundle can show
+and compact blocking/attention gate refs so the evidence bundle can show
 why the edge should not run that model/runtime.
 If replay fails after earlier entries were already consumed, TEMMS atomically
 rewrites the active queue to keep the failing entry and anything after it while
@@ -126,10 +126,11 @@ offline buffer. A compact `pending_operations.partial_replay_failed` telemetry
 event records failed index, consumed count, remaining count, replayed count, and
 skipped count when telemetry is configured.
 
-The Hub product cockpit exposes the same flow in `/ui/hub`: **Link loss**
-switches the daemon into offline mode, **Queue intent** buffers a local deploy
-intent for the currently selected model, **Restore link** returns connectivity,
-and **Sync pending** replays the buffered operations. The DDIL readiness band shows connectivity mode,
+The `temms control` CLI drives the same flow: `temms control offline`
+switches the daemon into offline mode, `temms control deploy` buffers a local
+deploy intent for the selected model, `temms control online` returns
+connectivity,
+and `temms control sync` replays the buffered operations. DDIL readiness reports connectivity mode,
 deployment state, pending operation count, active slot/model, latest proof
 events, and a compact pending-operation ledger from the evidence summary. Each
 ledger row includes operator-facing identifiers, verification status, and a
@@ -139,18 +140,21 @@ unreplayable queues show the blocking reason before sync is attempted. Stacked
 valid deploys to the same slot show the earlier row as a `superseded intent`
 and point to the later model that wins after replay; sync skips that superseded
 activation instead of loading the older model first. When a
-blocked intent has a measured runtime alternative, the row exposes **Use best
-runtime** to retarget the queued deploy and refresh the signed DDIL proof in
-place. If the intent is still unrecoverable, the Hub exposes **Quarantine
-blocked** so the active queue can recover without losing the bad intent's
+blocked intent has a measured runtime alternative,
+`temms control retarget-runtime` retargets the queued deploy and refreshes the
+signed DDIL proof in
+place. If the intent is still unrecoverable, `/v1/control/sync/quarantine-blocked`
+lets the active queue recover without losing the bad intent's
 forensic record. Quarantined entries remain visible in a compact Hub
 dead-letter ledger with target, signature, digest, and replay-block reason
-until the operator either clicks **Requeue intent** after fixing runtime or
-inventory proof, or **Acknowledge quarantine** after deciding the intent should
+until the operator either calls `/v1/control/sync/requeue-dead-letters` after
+fixing runtime or
+inventory proof, or `/v1/control/sync/acknowledge-dead-letters` after deciding
+the intent should
 not be replayed. Requeue is safe-by-default: if the refreshed preflight still
 blocks, the row remains quarantined and the response names the current blocking
-reason. Requeued and acknowledged records are removed from the active readiness
-panel but remain in evidence exports with recovery metadata.
+reason. Requeued and acknowledged records are removed from the active
+quarantine ledger but remain in evidence exports with recovery metadata.
 Mission replay treats retained, requeued, or acknowledged DDIL quarantine as completed
 offline-operation proof because the system preserved the intent, recovered the
 active queue, and recorded operator review.

@@ -29,7 +29,7 @@ Use the installer from a packaged checkout or release bundle:
 sudo TEMMS_EXTRAS=inference deploy/install.sh
 ```
 
-This creates the `temms` system user, `/opt/temms` virtualenv, `/etc/temms` config, a `temms`-writable `/etc/temms/policies` active policy directory, `/var/lib/temms` state directories, `/var/log/temms`, and the `temms.service` systemd unit. On first install it also appends a generated `TEMMS_API_TOKEN` to `/etc/temms/temms.env`, so `/v1/control/*`, `/v1/hub/*`, and Web UI write endpoints are protected when the service starts.
+This creates the `temms` system user, `/opt/temms` virtualenv, `/etc/temms` config, a `temms`-writable `/etc/temms/policies` active policy directory, `/var/lib/temms` state directories, `/var/log/temms`, and the `temms.service` systemd unit. On first install it also appends a generated `TEMMS_API_TOKEN` to `/etc/temms/temms.env`, so `/v1/control/*` and `/v1/hub/*` write endpoints are protected when the service starts.
 
 For local non-root rehearsals without the installer, the daemon keeps the
 systemd defaults but falls back to `$XDG_STATE_HOME/temms` or
@@ -214,10 +214,10 @@ curl -H "X-TEMMS-Token: $TEMMS_API_TOKEN" \
   http://127.0.0.1:8080/v1/control/conditions
 ```
 
-When `TEMMS_API_TOKEN` is set, Hub Lite routes and Web UI write actions use
-the same token check. Read-only UI pages still load, but slot overrides,
-condition injection, override clearing, and UI package import require
-`X-TEMMS-Token` or a bearer token. UI package import also inherits the daemon's
+When `TEMMS_API_TOKEN` is set, Hub Lite routes use
+the same token check: slot overrides,
+condition injection, override clearing, and package import require
+`X-TEMMS-Token` or a bearer token. Package import also inherits the daemon's
 signed-package policy.
 
 For role-scoped access, set `TEMMS_RBAC_TOKENS` in addition to or instead of
@@ -229,7 +229,7 @@ lists. TEMMS never prints these tokens in doctor output.
 export TEMMS_RBAC_TOKENS="operator=op-token;approver=approve-token;edge=edge-token;auditor=audit-token"
 ```
 
-When RBAC tokens are configured, Hub/API/UI writes require the matching role:
+When RBAC tokens are configured, Hub/API writes require the matching role:
 `operator` can package, assign, override, roll back, and export air-gap bundles;
 `approver` can approve gated rollouts; `edge` can heartbeat, publish runtime
 evidence, update rollout state, and apply local rollouts; `auditor` can export
