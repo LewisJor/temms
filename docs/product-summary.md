@@ -34,7 +34,7 @@ mission spec / YAML
 ```
 
 The canonical demo follows this loop end to end: deploy signed vision models,
-coordinate a staged rollout plan, start with a daylight model, simulate fog,
+assign and approve a per-device rollout, start with a daylight model, simulate fog,
 switch to a low-light model, serve an inference request while offline, simulate
 low battery, switch to a smaller model, trigger a model-load failure, execute
 fallback, apply operator override, and export evidence, then ingest that evidence
@@ -63,7 +63,7 @@ TEMMS has two main layers:
 - TEMMS Hub prepares missions before they reach the device: mission spec/YAML,
   model selection, runtime planning, sensor bindings, model switch/fallback
   policy, package assembly, signing, compatibility matrices, runtime/device
-  validation, rollout approval, staged rollout plans, and evidence aggregation.
+  validation, rollout approval, and evidence aggregation.
   The guided mission package flow follows the operator path:
   **Mission -> Model Plan -> Runtime Fit -> Sensor Handling -> Package Handoff
   -> Edge Deploy -> Field Ops**.
@@ -119,13 +119,13 @@ TEMMS has two main layers:
   as locked context, so Runtime Fit only changes the edge node and runtime
   target rather than reopening model selection. That ranking is backed by the canonical
   `temms-runtime-workbench/v1` contract in Hub readiness and edge proof
-  artifacts, so the CLI, downloaded JSON, DDIL retarget proof, and API all
+  artifacts, so the CLI, downloaded JSON, DDIL replay preflight, and API all
   explain the same selected target, best target, capability lock, benchmark,
   telemetry, and blocked-runtime reasons. The package stage shows runtime-fit
   score, runtime lane,
   selected/blocked runtime alternatives, artifact fit, live edge inventory,
-  declared SLO proof, resource envelope, runtime validation, and DDIL runtime
-  repair proof before the operator reaches lower-level workflow controls. Hub
+  declared SLO proof, resource envelope, runtime validation, and DDIL queue
+  state before the operator reaches lower-level workflow controls. Hub
   then produces the
   edge-runtime proof artifact for that exact path, lets the operator
   download the server-backed JSON artifact for handoff with
@@ -156,15 +156,13 @@ TEMMS has two main layers:
   package/device/runtime context are rechecked against Hub readiness before
   replay, so a disconnected edge will not activate a model when its current
   runtime inventory, accelerator state, performance proof, or resource envelope
-  no longer supports that workload. When a queued deploy selected the wrong
-  on-device runtime but TEMMS has measured a compatible target, operators can
-  retarget and re-sign that DDIL intent in place before replay. The retained
-  audit proof records the previous target, proved target, best target, workbench
-  counts, validation, benchmark, and capability hash so the repair remains
-  explainable after the queue is drained. Hub keeps that proof
+  no longer supports that workload. A blocked deploy intent stays in the pending
+  queue as-is: `temms control sync-preview` reports the blocked intent and the
+  blocking readiness reason, and the operator fixes the edge state (or clears
+  the queue) before syncing again. Hub keeps that readiness verdict
   visible in DDIL readiness and evidence exports so field operators can verify
   the
-  queued runtime, proved runtime, best measured runtime, capability lock, and
+  queued runtime, best measured runtime, capability lock, and
   validation/benchmark evidence without opening raw JSON.
 
 This Hub/Daemon boundary matches the repository architecture and keeps the edge
@@ -224,5 +222,5 @@ infrastructure experience.
 
 The commercial path is open-source daemon adoption plus a paid Hub for signed
 packages, package promotion and release gates, compatibility matrices, rollout
-plans, evidence aggregation, mission replay, policy approval, RBAC,
+assignment, evidence aggregation, mission replay, policy approval, RBAC,
 air-gapped workflows, and enterprise support.

@@ -32,7 +32,7 @@ deployment readiness before replay. When a queued deploy names or implies
 readiness gates used by mission package planning. Runtime target mismatch,
 active runtime drift, stale or failing performance proof, resource-envelope
 violations, and selected-edge blockers stop replay until the operator fixes the
-edge state, chooses a compatible target, or quarantines the intent. A
+edge state or clears the queue. A
 rollout-gate warning by itself does not block replay; direct field deploys can
 still sync when the model/package/runtime/device evidence is otherwise valid.
 Runtime optimizer attention is carried through as an advisory instead of a hard
@@ -43,46 +43,16 @@ the Runtime optimizer gate refs so the DDIL ledger can show the better target
 before sync. The same preflight entry carries the selected runtime capability
 lock, capability digest, and edge heartbeat freshness; stale or missing
 telemetry makes the lock `blocked` and prevents DDIL replay until the edge
-reports fresh on-device inventory. If the pinned target is not eligible or trails
-a measured compatible target, operators can repair the buffered intent through
-`POST /v1/control/sync/retarget-runtime`. Retargeting is intentionally strict:
-the requested target must appear in Hub target assessments as the best eligible
-runtime, carry non-dry-run validation evidence, carry benchmark evidence, and
-have a locked runtime capability hash for fresh edge inventory. The daemon
-rewrites only the selected deploy payload, records a signed
-`_temms_runtime_retarget` audit entry with the previous target, new target,
-actor, reason, prior payload digest, and runtime target proof, and re-signs the
-pending operation when DDIL signatures are configured. That proof also carries
-the canonical runtime workbench fields: previous selected target, proved selected
-target, best target, target-selection status, eligible/blocked target counts,
-selected-is-best, and `target_assessment_sha256`, a compact digest over the
-proved target metadata, runtime lane, artifact lane, capability digest,
-validation id, and benchmark id. When the repaired intent is later synced,
-replay recomputes Hub readiness and blocks the intent if the
-signed retarget proof no longer matches the live target-assessment digest,
-capability hash, validation id, benchmark id, best-target status, or
-eligibility. Successful activation decisions preserve the same
-retarget record under `ddil_runtime_retarget`, so evidence exports and mission
-replay can prove the on-device runtime was repaired even after the active queue
-is empty. Evidence summary timelines render those replayed activations as
-`DDIL replay retargeted <old-runtime> -> <new-runtime>`, and mission replay
-classifies them under the offline-operation phase.
-The same repair can be run from the edge CLI without hand-written HTTP:
+reports fresh on-device inventory. A queued deploy is replayed as-is: if the
+pinned target is no longer eligible, the intent stays blocked until the
+operator fixes the edge evidence or clears the queue, then syncs again.
+The same inspection can be run from the edge CLI without hand-written HTTP:
 
 ```bash
 uv run temms control sync-preview --control-url http://127.0.0.1:8080 --json
-uv run temms control retarget-runtime \
-  --control-url http://127.0.0.1:8080 \
-  --payload-sha256 <pending-payload-sha256> \
-  --actor operator:edge-runtime-drill \
-  --reason "selected measured compatible on-device runtime"
-uv run temms control sync-preview --control-url http://127.0.0.1:8080
 uv run temms control sync --control-url http://127.0.0.1:8080
 ```
 
-Omit `--runtime-target-id` to let the daemon use the Runtime optimizer's
-measured candidate, or include it when the operator is deliberately pinning a
-specific runtime target.
 Deploy context is normalized from either top-level payload fields or a nested
 `request` object before preview, replay, operator override, slot activation,
 telemetry, and audit metadata are written.
@@ -92,23 +62,11 @@ reports `slot_outcomes` so operators can see the model that will ultimately be
 active after replay. Sync uses that preflight plan to skip superseded
 activations, emits a compact `pending_operations.superseded_skipped` telemetry
 event for audit, and only loads the winning model for each slot.
-Operators can move blocked entries out of the active queue with
-`/v1/control/sync/quarantine-blocked`. Quarantine writes the full original
-entry plus preflight reason to the local
-`pending_operations_dead_letter.json` ledger, removes only the blocked entries
-from `pending_operations.json`, and leaves replay-ready entries available for
-sync. When the edge issue is remediated, operators can move one or more
-quarantined records back into the active DDIL queue with
-`/v1/control/sync/requeue-dead-letters`; by default the daemon first runs the
-original signed intent through current DDIL preflight and restores it only when
-the model, slot, runtime target, Hub readiness, and edge capability checks are
-ready. Restored records are marked with `requeued_at`, `requeued_by`, and
-`requeue_reason`, and duplicate active entries for the same payload digest are
-refused. Operators can pass `force: true` for break-glass drills, but normal
-field recovery should leave still-blocked candidates in quarantine. Truly
-unrecoverable records can be acknowledged with
-`/v1/control/sync/acknowledge-dead-letters`; acknowledgement marks the
-dead-letter record as handled without deleting the forensic payload or digest.
+Blocked entries stay in the pending queue until the cause is fixed:
+`/v1/control/sync/preview` shows each blocked intent with its blocking reason,
+sync keeps refusing replay while the blocker remains, and the next sync replays
+the intent once the operator remediates the model, slot, runtime, or edge
+evidence.
 Condition updates are re-applied to the condition store. Deploy intents that
 include both `slot` and `model_id` load that model, record an operator override
 with `source=deploy_sync`, and activate the slot during sync so the policy loop
@@ -139,25 +97,10 @@ signed queues show `verified intent` and `ready to replay`; tampered or
 unreplayable queues show the blocking reason before sync is attempted. Stacked
 valid deploys to the same slot show the earlier row as a `superseded intent`
 and point to the later model that wins after replay; sync skips that superseded
-activation instead of loading the older model first. When a
-blocked intent has a measured runtime alternative,
-`temms control retarget-runtime` retargets the queued deploy and refreshes the
-signed DDIL proof in
-place. If the intent is still unrecoverable, `/v1/control/sync/quarantine-blocked`
-lets the active queue recover without losing the bad intent's
-forensic record. Quarantined entries remain visible in a compact Hub
-dead-letter ledger with target, signature, digest, and replay-block reason
-until the operator either calls `/v1/control/sync/requeue-dead-letters` after
-fixing runtime or
-inventory proof, or `/v1/control/sync/acknowledge-dead-letters` after deciding
-the intent should
-not be replayed. Requeue is safe-by-default: if the refreshed preflight still
-blocks, the row remains quarantined and the response names the current blocking
-reason. Requeued and acknowledged records are removed from the active
-quarantine ledger but remain in evidence exports with recovery metadata.
-Mission replay treats retained, requeued, or acknowledged DDIL quarantine as completed
-offline-operation proof because the system preserved the intent, recovered the
-active queue, and recorded operator review.
+activation instead of loading the older model first. A blocked intent stays in
+the pending ledger with its target, signature state, digest, and replay-block
+reason until the operator fixes the cause and syncs again, or clears the queue
+when the intent should not be replayed.
 
 Recommended remaining hardening areas include authenticated local control,
 tamper-evident decision logs, and expanded evidence export. Fleet rollout

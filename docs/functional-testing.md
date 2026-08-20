@@ -184,36 +184,15 @@ Expected state with the Docker Hub seed:
   image, runtime lane/provider context, artifact fit, capability lock digest,
   validation id, benchmark id, gate policy, gate status, and selected
   remediation command for the chosen runtime target.
-- DDIL runtime repair should reject unproved targets. When a queued deploy is
-  retargeted, the pending row and evidence export should show a
-  `runtime_target_proof`/retarget proof with status `proved`, a runtime-fit
-  score, validation id, benchmark id, locked capability hash, and fresh heartbeat
-  telemetry. The same proof should expose
-  `runtime_workbench_schema_version: temms-runtime-workbench/v1`,
-  `runtime_workbench_previous_selected_runtime_target_id`,
-  `runtime_workbench_selected_runtime_target_id`,
-  `runtime_workbench_best_runtime_target_id`, target counts, and
-  `runtime_workbench_selected_is_best`, plus
-  `target_assessment_sha256`, so the reviewer can distinguish the originally
-  queued runtime from the runtime that was actually proved and bind the proof to
-  the selected runtime target metadata, lane, artifact, capability, validation,
-  and benchmark facts. A blocked or advisory pending replay should also preserve the
+- A blocked or advisory pending replay should preserve the
   target-assessment remediation command in the evidence summary as
   `runtime_remediation_contract_command_text`, with
   `runtime_remediation_contract_kind` identifying operator versus edge-local
   execution and `runtime_remediation_contract_requires_edge_execution` making
   edge-only actions explicit. Evidence exports should retain the queued
-  runtime, proved runtime, best measured runtime, runtime-fit score, capability
+  runtime, best measured runtime, runtime-fit score, capability
   lock, validation id, benchmark id, target coverage, and replay source after
   sync.
-- DDIL replay should reject stale retarget proof. If runtime target metadata,
-  validation evidence, benchmark evidence, eligibility, or best-target status
-  changes after the retarget audit is signed, `sync/preview` should block the
-  repaired intent and show the stale proof reason instead of replaying silently.
-  The blocked entry should include
-  `runtime_retarget_replay_signed_target_assessment_sha256` and
-  `runtime_retarget_replay_current_target_assessment_sha256` when the compact
-  target-assessment digest changed.
 - Selecting a different model changes the deployment context. If you select
   `yolov8-lowlight`, compatibility preview, rollout creation, rollout apply,
   and DDIL queueing should all carry `model-yolov8-lowlight-001`, not just the
@@ -225,17 +204,17 @@ Expected state with the Docker Hub seed:
   short state and the next operator action when it is not ready.
 - With the seeded data, `yolov8-lowlight` should show a green `go` verdict with
   no remediation actions. `mobilenet-tiny` should show `attention` because it
-  has no selected-model rollout yet; the rollout gate should expose
-  create-rollout and create-staged-plan actions. The mobilenet readiness API
+  has no selected-model rollout yet; the rollout gate should expose a
+  create-rollout action. The mobilenet readiness API
   response should include action `refs` for package, model, device, runtime
   target, slot, and approval defaults.
 - Executable readiness actions should include a `command` object with HTTP
   method, API path, and any suggested body. For example, mobilenet's
   create-rollout action should point to `POST /v1/hub/rollouts` with
   the selected model/device/runtime body
-  and `actor: "operator:readiness-remediation"` for audit history. Rollout and
-  staged-plan remediation bodies should include deterministic `rollout_id` or
-  `plan_id` values so retrying the same command does not create duplicate
+  and `actor: "operator:readiness-remediation"` for audit history. Rollout
+  remediation bodies should include deterministic `rollout_id`
+  values so retrying the same command does not create duplicate
   records, plus a `reason` explaining the readiness gate remediation.
 - Benchmark remediation should not be centrally executable.
   A missing or stale SLO benchmark action should expose
@@ -335,9 +314,7 @@ Expected state with the Docker Hub seed:
   compact mirror of the selected path:
   `model -> runtime -> edge`, runtime fit,
   runtime lane, artifact fit, live inventory, performance SLO, resource
-  envelope, validation, and DDIL repair status without requiring raw JSON.
-  After a retargeted DDIL replay, that summary should show **retarget proved**
-  even though the pending queue is empty.
+  envelope, validation, and DDIL queue status without requiring raw JSON.
   After a rollout is `imported` or `activated`, a benchmark that misses the
   declared SLO should surface as `performance drift`, include benchmark and
   rollout refs, and offer a reviewed rollback command for the active rollout.
@@ -403,14 +380,14 @@ Expected state with the Docker Hub seed:
 - DDIL readiness shows connectivity mode, deployment state, active slot/model,
   evidence chain strength, and the latest proof events without opening raw JSON.
 - DDIL/evidence readiness actions should include bounded refs such as pending
-  counts, blocked/quarantined counts, payload hashes, proof events, and replay
+  counts, blocked counts, payload hashes, proof events, and replay
   phase state.
 - DDIL deploy replay is Hub-readiness gated when the queued intent includes
   package, device, and runtime target context. Sync/preview should refuse replay
   if the latest edge inventory, runtime target, runtime capability lock,
   heartbeat freshness, performance proof, resource envelope, or selected edge
   gate is blocked. A rollout-only warning remains replayable so direct field
-  deploy intents are not forced through staged rollout creation.
+  deploy intents are not forced through Hub rollout assignment.
 - If a queued deploy is safe but pinned to a lower-scoring runtime target,
   sync/preview should remain ready while marking that entry
   `ready_with_runtime_advisory`, incrementing `optimization_advisories`, and
@@ -418,7 +395,6 @@ Expected state with the Docker Hub seed:
   runtime advisory, best runtime target, runtime fit score, selected runtime
   lane, artifact fit, runtime capability lock, capability hash, heartbeat
   freshness, and production-apply admission before the operator syncs.
-- Rollout coordination supports staged-plan creation plus advance/pause/resume.
 - Rollouts support approval, apply, and rollback where applicable.
 - Evidence export offers summary, replay, full bundle, and air-gap bundle
   modes.
@@ -449,44 +425,24 @@ DDIL drill from the CLI and API:
    should show `tampered intent` in the pending ledger, reject sync with HTTP
    `409`, and leave the pending queue intact.
 6. For blocked-replay testing, queue or craft an intent that names a missing
-   model or slot. Sync preview should show a blocked intent, `sync`
-   should not be the recovery action, and
-   `POST /v1/control/sync/quarantine-blocked` should move the
-   bad intent into the dead-letter ledger while preserving any replay-ready
-   intents in the active queue. After quarantine, sync preview should
-   show the quarantined intent with the model/slot
-   target, digest, signature state, and replay-block reason. After fixing the
-   missing model, slot, runtime validation, or edge inventory evidence, call
-   `POST /v1/control/sync/requeue-dead-letters`
-   to run current DDIL preflight and restore that signed
-   payload to the active queue only if it is ready. If the issue is not truly
-   remediated, the response should report a blocked requeue candidate and the
-   row should remain quarantined. Once ready, the row should leave the active
-   quarantine ledger while evidence exports retain `requeued_at`,
-   `requeued_by`, and `requeue_reason`. Use
-   `POST /v1/control/sync/acknowledge-dead-letters`
-   only for intents that should not be replayed; the
-   row should leave the active quarantine ledger while remaining in evidence
-   exports as acknowledged audit history.
+   model or slot. Sync preview should show the blocked intent with the
+   model/slot target, digest, signature state, and replay-block reason, and
+   `sync` should refuse replay while leaving the pending queue intact. After
+   fixing the missing model, slot, runtime validation, or edge inventory
+   evidence, sync preview should show the intent as ready and the next `sync`
+   should replay it.
 7. For edge-runtime replay testing, queue or craft a deploy intent that names
    `package_id`, `device_id`, and `runtime_target_id`, then make the selected
    edge inventory incompatible with that runtime target before sync. Preview
    should return `blocked`, the row should include
    `hub_readiness_status: blocked`, and the blocking gate should name the failed
    runtime/provider/accelerator fit. When a measured compatible target exists,
-   the runtime optimizer gate should carry `select_runtime_target` refs and the
-   pending row should show a compact runtime-fix line with previous target,
-   corrected target, and score delta. Artifact-lane mismatches, such as ONNX on
+   the runtime optimizer gate should carry `select_runtime_target` refs so the
+   operator can see the better target. Artifact-lane mismatches, such as ONNX on
    `temms-rpi5-tflite`, should show `artifact mismatch` and `production apply
-   blocked`. Call
-   `/v1/control/sync/retarget-runtime` for the pending intent; the row should
-   refresh with the new
-   runtime target, `verified intent`, and a retarget audit line that names the
-   previous and selected targets. After sync, evidence summary and
-   mission replay should preserve the retarget under the replayed activation
-   decision, even though the pending queue is empty. Sync should
-   leave the queue intact until the operator retargets the intent, fixes
-   inventory, or quarantines the bad intent.
+   blocked`. Sync should
+   leave the queue intact until the operator fixes
+   inventory or clears the queue.
 8. For stacked-intent testing, queue two valid deploy or operator override
    intents for the same slot before sync. The first row should remain replayable
    but show `superseded intent`, identify the later model that will win, and
@@ -501,12 +457,11 @@ DDIL drill from the CLI and API:
    fixing the runtime load issue, a second sync should replay only the remaining
    deploy and clear the queue.
 
-Runtime-retarget proof drill from the API:
+Edge-runtime proof drill from the API:
 
 This is the quickest industry demo of why edge-runtime optimization matters.
-It intentionally queues a deploy for the wrong on-device lane, retargets the
-signed DDIL intent to the measured compatible runtime, replays it, and exports
-proof.
+It queues a signed deploy for the measured compatible on-device runtime while
+offline, replays it, and exports proof.
 
 CLI-first drill:
 
@@ -520,23 +475,10 @@ uv run temms control deploy \
   --package-id pkg-vision-models-20240115 \
   --model-id model-yolov8-lowlight-001 \
   --device-id edge-sim \
-  --runtime-target-id temms-rpi5-tflite \
+  --runtime-target-id temms-x86_64-cpu \
   --slot vision
 
 uv run temms control online --control-url http://127.0.0.1:18080
-uv run temms control sync-preview --control-url http://127.0.0.1:18080
-
-PAYLOAD_SHA=$(
-  uv run temms control sync-preview --control-url http://127.0.0.1:18080 --json \
-    | python -c 'import json,sys; print(json.load(sys.stdin)["entries"][0]["payload_sha256"])'
-)
-
-uv run temms control retarget-runtime \
-  --control-url http://127.0.0.1:18080 \
-  --payload-sha256 "$PAYLOAD_SHA" \
-  --actor operator:edge-runtime-drill \
-  --reason "selected measured compatible on-device runtime"
-
 uv run temms control sync-preview --control-url http://127.0.0.1:18080
 uv run temms control sync --control-url http://127.0.0.1:18080
 
@@ -576,16 +518,6 @@ Inspect the generated JSON and confirm `edge_execution_contract` contains
 and artifact-lane fit. This is the field-review proof that the selected model
 is not merely assigned to an edge, but bound to a concrete on-device capability
 surface.
-Inspect the `retarget-runtime` response and later evidence export for the DDIL
-repair proof as well: `runtime_workbench_previous_selected_runtime_target_id`
-should show the intentionally wrong queued lane,
-`runtime_workbench_selected_runtime_target_id` should show the proved runtime,
-`runtime_workbench_best_runtime_target_id` should match that proved runtime, and
-`runtime_workbench_selected_is_best` should be `true`.
-
-`retarget-runtime` can auto-select the measured candidate from readiness refs
-when `--runtime-target-id` is omitted. Pass `--runtime-target-id` only when the
-operator deliberately wants to override the recommended target.
 The proof file uses `schema_version: temms-edge-runtime-proof/v1`, records the
 gate policy and pass/fail result, embeds the compact edge runtime mission and
 full readiness payload, exposes top-level `runtime_workbench.schema_version:
@@ -731,24 +663,10 @@ curl -X POST http://127.0.0.1:18080/v1/control/offline | python -m json.tool
 
 curl -X POST http://127.0.0.1:18080/v1/control/deploy \
   -H "Content-Type: application/json" \
-  -d '{"actor":"operator:edge-runtime-drill","source":"industry-runtime-demo","package_id":"pkg-vision-models-20240115","model_id":"model-yolov8-lowlight-001","device_id":"edge-sim","runtime_target_id":"temms-rpi5-tflite","slot":"vision"}' \
+  -d '{"actor":"operator:edge-runtime-drill","source":"industry-runtime-demo","package_id":"pkg-vision-models-20240115","model_id":"model-yolov8-lowlight-001","device_id":"edge-sim","runtime_target_id":"temms-x86_64-cpu","slot":"vision"}' \
   | python -m json.tool
 
 curl -X POST http://127.0.0.1:18080/v1/control/online | python -m json.tool
-
-curl http://127.0.0.1:18080/v1/control/sync/preview | python -m json.tool
-
-PAYLOAD_SHA=$(
-  curl -s -X POST http://127.0.0.1:18080/v1/hub/evidence/export \
-    -H "Content-Type: application/json" \
-    -d '{"summary":true,"summary_limit":20}' \
-    | python -c 'import json,sys; data=json.load(sys.stdin); print(data["runtime"]["pending_operations"][0]["payload_sha256"])'
-)
-
-curl -X POST http://127.0.0.1:18080/v1/control/sync/retarget-runtime \
-  -H "Content-Type: application/json" \
-  -d "{\"payload_sha256\":\"$PAYLOAD_SHA\",\"runtime_target_id\":\"temms-x86_64-cpu\",\"actor\":\"operator:edge-runtime-drill\",\"reason\":\"selected measured compatible on-device runtime\"}" \
-  | python -m json.tool
 
 curl http://127.0.0.1:18080/v1/control/sync/preview | python -m json.tool
 
@@ -762,37 +680,26 @@ curl -X POST http://127.0.0.1:18080/v1/hub/evidence/export \
 
 Expected proof:
 
-- The first sync preview is blocked or carries the runtime optimizer repair
-  refs for `temms-rpi5-tflite -> temms-x86_64-cpu`.
-- `retarget-runtime` rewrites and re-signs the queued deploy intent.
-- The returned `runtime_target_proof` includes
-  `runtime_workbench_schema_version`, previous selected runtime, proved selected
-  runtime, best runtime, eligible/blocked counts, selected-is-best, validation
-  id, benchmark id, capability hash, and `target_assessment_sha256`.
-- The second sync preview is replay-ready for `temms-x86_64-cpu`.
-- Mission replay includes an `offline_operation` event whose detail reads
-  `retargeted temms-rpi5-tflite -> temms-x86_64-cpu`.
-- The `edge_runtime_mission` summary shows DDIL repair as **retarget proved**,
-  and evidence exports retain the runtime repair proof after the replay queue
-  drains.
+- Sync preview shows a `verified intent` that is `ready to replay` for
+  `temms-x86_64-cpu`.
+- Sync replays the queued deploy, clears the pending queue, and activates
+  `model-yolov8-lowlight-001` on the `vision` slot.
+- Mission replay includes the replayed deploy under the offline-operation
+  phase, and evidence exports retain the queued runtime, capability lock, and
+  validation/benchmark evidence after the replay queue drains.
 
-Staged rollout and rollback drill from the API:
+Rollout and rollback drill from the API:
 
-1. Create a staged plan for `yolov8-lowlight` with `POST /v1/hub/rollout-plans`
-   (see the spot checks below).
-   The plan list should show a ready plan with one target and batch size `1`.
-2. Advance the plan with `POST /v1/hub/rollout-plans/{plan_id}/advance`. The
-   plan should assign the next batch and a rollout should
-   appear in rollout history. If there are no remaining pending targets,
-   the plan state should move to `advancing` while the target waits for a
-   terminal rollout outcome.
-3. Approve and apply the assigned rollout with `temms hub approve` and
+1. Assign a rollout for `yolov8-lowlight` with `POST /v1/hub/rollouts`
+   (see the spot checks below). The rollout should appear in rollout history
+   in the `assigned` state. Multi-device rollouts are sequenced by issuing one
+   such per-device assignment for each target device.
+2. Approve and apply the assigned rollout with `temms hub approve` and
    `temms hub apply`. The active slot should show
-   `model-yolov8-lowlight-001`, and the plan should show the target as
-   reconciled.
-4. In the mission replay export, confirm the phase checklist. Before the
+   `model-yolov8-lowlight-001`.
+3. In the mission replay export, confirm the phase checklist. Before the
    rollback drill, `Fallback or rollback` may be the remaining incomplete phase.
-5. Roll back the activated rollout with
+4. Roll back the activated rollout with
    `POST /v1/hub/rollouts/{rollout_id}/rollback`. The rollout state should move
    to
    `rolled_back`, the active slot should return to the previous model from the
@@ -878,29 +785,13 @@ curl -X POST http://127.0.0.1:18080/v1/hub/compatibility/matrix \
   -d '{"device_ids":["edge-sim"],"package_ids":["pkg-vision-models-20240115"],"model_ids":["model-yolov8-lowlight-001"],"runtime_target_ids":["temms-x86_64-cpu"],"include_device_inventory":true}' \
   | python -m json.tool
 curl http://127.0.0.1:18080/v1/control/sync/preview | python -m json.tool
-curl -X POST http://127.0.0.1:18080/v1/hub/rollout-plans \
+curl -X POST http://127.0.0.1:18080/v1/hub/rollouts \
   -H "Content-Type: application/json" \
-  -d '{"package_id":"pkg-vision-models-20240115","model_id":"model-yolov8-lowlight-001","device_ids":["edge-sim"],"slot":"vision","runtime_target_id":"temms-x86_64-cpu","batch_size":1,"require_approval":true,"actor":"operator:mission-package-workbench"}' \
-  | python -m json.tool
-curl -X POST http://127.0.0.1:18080/v1/hub/rollout-plans/plan-id-from-response/advance \
-  -H "Content-Type: application/json" \
-  -d '{"actor":"operator:mission-package-workbench"}' \
+  -d '{"package_id":"pkg-vision-models-20240115","model_id":"model-yolov8-lowlight-001","device_id":"edge-sim","slot":"vision","runtime_target_id":"temms-x86_64-cpu","require_approval":true,"actor":"operator:mission-package-workbench"}' \
   | python -m json.tool
 curl -X POST http://127.0.0.1:18080/v1/hub/rollouts/rollout-id-from-response/rollback \
   -H "Content-Type: application/json" \
   -d '{"actor":"operator:mission-package-workbench","reason":"functional rollback drill"}' \
-  | python -m json.tool
-curl -X POST http://127.0.0.1:18080/v1/control/sync/quarantine-blocked \
-  -H "Content-Type: application/json" \
-  -d '{"actor":"operator:mission-package-workbench","reason":"functional test quarantine"}' \
-  | python -m json.tool
-curl -X POST http://127.0.0.1:18080/v1/control/sync/requeue-dead-letters \
-  -H "Content-Type: application/json" \
-  -d '{"actor":"operator:mission-package-workbench","reason":"functional test runtime proof remediated","require_ready":true}' \
-  | python -m json.tool
-curl -X POST http://127.0.0.1:18080/v1/control/sync/acknowledge-dead-letters \
-  -H "Content-Type: application/json" \
-  -d '{"actor":"operator:mission-package-workbench","reason":"functional test reviewed"}' \
   | python -m json.tool
 ```
 
