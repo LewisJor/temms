@@ -2,7 +2,6 @@
 Main TEMMS CLI application using Typer.
 """
 
-import importlib.util
 import os
 import shlex
 import socket
@@ -1205,16 +1204,6 @@ def _doctor_ports(config: Any | None, api_port: int) -> list[dict[str, Any]]:
                     configured_host=config.inference.host,
                 )
             )
-        ports.append(
-            _port_report(
-                name="grpc",
-                host="127.0.0.1",
-                port=int(config.inference.grpc_port),
-                configured_host=config.inference.host,
-            )
-        )
-    else:
-        ports.append(_port_report(name="grpc", host="127.0.0.1", port=50051))
     return ports
 
 
@@ -1372,18 +1361,6 @@ def _probe_path_writable(path: Path) -> dict[str, Any]:
         }
 
 
-def module_status(module_name: str) -> str:
-    """Return a compact availability status for an optional runtime."""
-    if importlib.util.find_spec(module_name) is None:
-        return "missing"
-    if module_name == "onnxruntime":
-        try:
-            import onnxruntime as ort
-
-            return "found: " + ",".join(ort.get_available_providers())
-        except Exception:
-            return "found"
-    return "found"
 
 
 @app.command()
@@ -2125,26 +2102,6 @@ def _find_runtime_target(
     raise RuntimeError(f"Runtime target not found: {runtime_target_id}.{suffix}")
 
 
-def _hub_readiness_query_params(
-    *,
-    package_id: str | None,
-    model_id: str | None,
-    device_id: str | None,
-    runtime_target_id: str | None,
-    slot: str | None,
-) -> dict[str, str]:
-    """Return non-empty query params for Hub readiness selection."""
-    return {
-        key: value
-        for key, value in {
-            "package_id": package_id,
-            "model_id": model_id,
-            "device_id": device_id,
-            "runtime_target_id": runtime_target_id,
-            "slot": slot,
-        }.items()
-        if value
-    }
 
 
 def _hub_mission_package_request_body(

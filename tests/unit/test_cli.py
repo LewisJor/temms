@@ -405,7 +405,7 @@ class TestDoctorCommand:
         assert all(path["write_probe"]["attempted"] is True for path in payload["paths"])
         assert payload["port"]["status"] in {"free", "in use"}
         assert payload["port"]["name"] == "api"
-        assert {port["name"] for port in payload["ports"]} == {"api", "grpc"}
+        assert {port["name"] for port in payload["ports"]} == {"api"}
         assert {port["status"] for port in payload["ports"]} <= {"free", "in use"}
         assert payload["ports"][0] == payload["port"]
         assert payload["security"]["rollout_require_signature"] is True
@@ -474,7 +474,7 @@ class TestDoctorCommand:
             "package_dir",
             "policy_dir",
         }
-        assert {port["name"] for port in payload["ports"]} == {"api", "grpc"}
+        assert {port["name"] for port in payload["ports"]} == {"api"}
 
     def test_doctor_json_reports_non_root_fallback_paths_without_config(
         self,
@@ -594,7 +594,7 @@ class TestDoctorCommand:
         assert "RBAC roles" in result.output
         assert "Rollout signature enforcement" in result.output
         assert "Ports" in result.output
-        assert "grpc" in result.output
+        assert "api" in result.output
 
 
 class TestBenchmarkCommand:

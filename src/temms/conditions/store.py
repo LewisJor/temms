@@ -61,21 +61,6 @@ class ConditionStore(Database):
             )
         """)
 
-        # Condition history for replay/analysis
-        self.execute("""
-            CREATE TABLE IF NOT EXISTS condition_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                path TEXT,
-                value TEXT,
-                source TEXT,
-                priority INTEGER,
-                confidence REAL,
-                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        self.conn.commit()
-
     @staticmethod
     def _row_to_condition(row: sqlite3.Row) -> ConditionValue | None:
         """Map a database row to a ConditionValue, handling corrupt data."""
@@ -139,16 +124,6 @@ class ConditionStore(Database):
             VALUES (?, ?, ?, ?, ?, ?)
             """,
             (path, value_json, source, priority, confidence, updated_at),
-        )
-
-        # Archive to history
-        self.execute(
-            """
-            INSERT INTO condition_history
-            (path, value, source, priority, confidence)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (path, value_json, source, priority, confidence),
         )
 
         self.conn.commit()
@@ -219,13 +194,6 @@ class ConditionStore(Database):
 
         return snapshot
 
-    def exists(self, path: str) -> bool:
-        """Check if a condition path exists in the store."""
-        row = self.fetchone(
-            "SELECT 1 FROM conditions WHERE path = ?", (path,)
-        )
-        return row is not None
-
     def clear_operator_overrides(self) -> int:
         """
         Clear all operator overrides (priority >= 1000).
@@ -237,25 +205,3 @@ class ConditionStore(Database):
             "DELETE FROM conditions WHERE priority >= 1000"
         )
         return cursor.rowcount
-
-    def get_stale_conditions(self, max_age_seconds: int = 300) -> list[str]:
-        """
-        Find conditions that haven't been updated recently.
-
-        Uses SQLite datetime functions for reliable timestamp comparison.
-
-        Args:
-            max_age_seconds: Maximum age in seconds
-
-        Returns:
-            List of stale condition paths
-        """
-        rows = self.fetchall(
-            """
-            SELECT path FROM conditions
-            WHERE datetime(updated_at) < datetime('now', ? || ' seconds')
-            """,
-            (str(-max_age_seconds),),
-        )
-
-        return [row["path"] for row in rows]

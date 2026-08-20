@@ -80,126 +80,10 @@ class ONNXRuntime:
         logger.info("Unloaded ONNX model")
 
 
-class TFLiteRuntime:
-    """TensorFlow Lite runtime wrapper."""
-
-    def __init__(self, num_threads: int | None = None):
-        self.interpreter: Any | None = None
-        self.num_threads = num_threads
-
-    def load(self, model_path: Path) -> Any:
-        """Load TFLite model."""
-        try:
-            try:
-                from tflite_runtime.interpreter import Interpreter
-            except ImportError:
-                import tensorflow as tf
-
-                Interpreter = tf.lite.Interpreter
-            kwargs = {"model_path": str(model_path)}
-            if self.num_threads:
-                kwargs["num_threads"] = self.num_threads
-            self.interpreter = Interpreter(**kwargs)
-            self.interpreter.allocate_tensors()
-            logger.info(
-                "Loaded TFLite model from %s num_threads=%s",
-                model_path,
-                self.num_threads,
-            )
-            return self.interpreter
-        except ImportError:
-            raise RuntimeError(
-                "TFLite runtime not installed. Install tensorflow or tflite_runtime."
-            )
-
-    def infer(self, input_data: Any) -> Any:
-        """Run TFLite inference."""
-        if self.interpreter is None:
-            raise RuntimeError("Model not loaded")
-
-        input_details = self.interpreter.get_input_details()
-        output_details = self.interpreter.get_output_details()
-
-        self.interpreter.set_tensor(input_details[0]["index"], input_data)
-        self.interpreter.invoke()
-
-        output_data = self.interpreter.get_tensor(output_details[0]["index"])
-        return output_data
-
-    def unload(self) -> None:
-        """Unload TFLite model."""
-        self.interpreter = None
-        logger.info("Unloaded TFLite model")
 
 
-class TorchScriptRuntime:
-    """PyTorch TorchScript runtime wrapper."""
-
-    def __init__(self):
-        self.model: Any | None = None
-
-    def load(self, model_path: Path) -> Any:
-        """Load TorchScript model."""
-        try:
-            import torch
-            self.model = torch.jit.load(str(model_path))
-            self.model.eval()
-            logger.info(f"Loaded TorchScript model from {model_path}")
-            return self.model
-        except ImportError:
-            raise RuntimeError("torch not installed. Install with: pip install torch")
-
-    def infer(self, input_data: Any) -> Any:
-        """Run TorchScript inference."""
-        if self.model is None:
-            raise RuntimeError("Model not loaded")
-
-        import torch
-        with torch.no_grad():
-            output = self.model(input_data)
-        return output
-
-    def unload(self) -> None:
-        """Unload TorchScript model."""
-        self.model = None
-        logger.info("Unloaded TorchScript model")
 
 
-class TensorRTRuntime:
-    """TensorRT serialized engine runtime wrapper."""
-
-    def __init__(self):
-        self.engine: Any | None = None
-        self.context: Any | None = None
-
-    def load(self, model_path: Path) -> Any:
-        """Load a serialized TensorRT engine."""
-        try:
-            import tensorrt as trt
-
-            logger_obj = trt.Logger(trt.Logger.WARNING)
-            with trt.Runtime(logger_obj) as runtime:
-                self.engine = runtime.deserialize_cuda_engine(model_path.read_bytes())
-            if self.engine is None:
-                raise RuntimeError(f"Could not deserialize TensorRT engine: {model_path}")
-            self.context = self.engine.create_execution_context()
-            logger.info("Loaded TensorRT engine from %s", model_path)
-            return self.context
-        except ImportError:
-            raise RuntimeError("tensorrt not installed. Install NVIDIA TensorRT bindings.")
-
-    def infer(self, input_data: Any) -> Any:
-        """Run TensorRT inference."""
-        raise RuntimeError(
-            "Generic TensorRT inference requires deployment-specific I/O bindings. "
-            "Load the engine through a TEMMS runtime plugin for this device profile."
-        )
-
-    def unload(self) -> None:
-        """Unload TensorRT engine."""
-        self.context = None
-        self.engine = None
-        logger.info("Unloaded TensorRT engine")
 
 
 class ModelLoader:
@@ -232,11 +116,10 @@ class ModelLoader:
             self.unload_current()
 
         # Create runtime instance
+        # ONNX Runtime is the only supported engine (direction: integrate ORT,
+        # do not build a runtime zoo). Other RuntimeType values fail explicitly.
         runtime_map = {
             RuntimeType.ONNX: ONNXRuntime,
-            RuntimeType.TFLITE: TFLiteRuntime,
-            RuntimeType.TORCHSCRIPT: TorchScriptRuntime,
-            RuntimeType.TENSORRT: TensorRTRuntime,
         }
 
         runtime_class = runtime_map.get(runtime_type)

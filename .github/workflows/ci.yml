@@ -202,10 +202,6 @@ jobs:
           TEMMS_SMOKE_MLFLOW_URL: "http://127.0.0.1:5001"
         run: uv run pytest tests/integration/test_compose_stack_smoke.py -q
 
-      - name: Publish compose smoke summary
-        if: always()
-        run: uv run python scripts/compose_smoke_report.py || true
-
       - name: Clean up compose stack
         if: always()
         run: docker compose down -v

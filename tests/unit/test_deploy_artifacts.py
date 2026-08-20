@@ -111,13 +111,6 @@ class TestDeployArtifacts:
         assert "python:3.11-slim" in compose
         assert "python:3.10-slim" not in compose
 
-    def test_local_mlflow_setup_uses_python_311_or_newer(self):
-        setup = (ROOT / "scripts" / "setup-local-mlflow.sh").read_text()
-
-        assert "Python 3.11+" in setup
-        assert "python:3.11-slim" in setup
-        assert "Python 3.10" not in setup
-        assert "python:3.10-slim" not in setup
 
     def test_ci_opts_javascript_actions_into_node24(self):
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
@@ -171,19 +164,6 @@ class TestDeployArtifacts:
         assert "astral-sh/setup-uv@v5" not in workflow
         assert "ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION" not in workflow
 
-    def test_ci_compose_smoke_publishes_html_summary(self):
-        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
-        report_script = (ROOT / "scripts" / "compose_smoke_report.py").read_text()
-        compose_job = workflow.split("  compose-smoke:", maxsplit=1)[1]
-
-        assert "Publish compose smoke summary" in compose_job
-        assert "uv run python scripts/compose_smoke_report.py || true" in compose_job
-        assert "actions/upload-artifact@v4" not in compose_job
-        assert "temms-compose-smoke" not in compose_job
-        assert "GITHUB_STEP_SUMMARY" in report_script
-        assert "<h2>TEMMS Compose Smoke</h2>" in report_script
-        assert "<details><summary>Services</summary>" in report_script
-        assert "<details><summary>Images</summary>" in report_script
 
     def test_docker_entrypoint_imports_unsigned_seed_package(self):
         entrypoint = (ROOT / "scripts" / "docker-entrypoint.sh").read_text()

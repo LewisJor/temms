@@ -192,40 +192,7 @@ MLFLOW_HOST_PORT=5050 make docker-up
 
 ## Step 4: See model switching in action
 
-### Option A: Visual simulation (recommended)
-
-This opens a live window showing weather effects + model switching in real time.
-
-```bash
-# Install with GUI support (has opencv with display)
-pip install -e ".[dev,sim-visual]"
-
-# Run the fog scenario
-make sim-visual
-```
-
-What you'll see:
-1. **Left panel**: Original synthetic driving scene
-2. **Right panel**: Same scene with weather effects applied
-3. **Status bar**: Active model, latency, current conditions
-
-Watch as fog rolls in → TEMMS switches from `yolov8-daylight` to `yolov8-lowlight`.
-
-**Keyboard controls:**
-- `q` — quit
-- `s` — skip to next scenario step
-- `p` — pause/resume
-
-Other scenarios:
-```bash
-make sim-visual-night    # Day → night → dawn
-make sim-visual-rain     # Clear → downpour → clearing
-make sim-visual-stress   # Multi-factor stress test
-```
-
-### Option B: Headless simulation
-
-If you don't have a display (or you're SSH'd into a server):
+The headless scenario runner steps a DDIL scenario against the daemon and prints each model-selection decision:
 
 ```bash
 make sim-headless
