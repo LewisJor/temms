@@ -21,7 +21,6 @@ _ASSESSMENT_DIGEST_VOLATILE_KEYS = {
     "last_seen_at",
     "recorded_at",
     "reported_at",
-    "retargeted_at",
     "updated_at",
 }
 
@@ -322,22 +321,6 @@ def _hub_deploy_replayability(
             "hub_blocking_gates": blocking_gates,
             **runtime_summary,
         }
-    retarget_proof_failure = _hub_runtime_retarget_proof_failure(
-        payload,
-        runtime_summary,
-        runtime_target_id=str(runtime_target_id),
-    )
-    if retarget_proof_failure:
-        return {
-            "ready": False,
-            "replay_status": "blocked",
-            "reason": str(retarget_proof_failure.get("reason")),
-            "hub_readiness_status": readiness.get("status"),
-            "hub_readiness_selection": readiness.get("selection"),
-            "hub_blocking_gates": blocking_gates,
-            **runtime_summary,
-            **retarget_proof_failure,
-        }
     if blocking_gates:
         return {
             "ready": False,
@@ -631,226 +614,10 @@ def _hub_target_assessment_ref(assessment: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _hub_runtime_retarget_proof_failure(  # noqa: C901  (tracked in #54)
-    payload: dict[str, Any],
-    runtime_summary: dict[str, Any],
-    *,
-    runtime_target_id: str,
-) -> dict[str, Any] | None:
-    proof = _latest_runtime_retarget_proof(payload)
-    if not proof:
-        return None
-
-    proof_target_id = str(proof.get("runtime_target_id") or "").strip()
-    if proof_target_id != runtime_target_id:
-        return _retarget_proof_failure(
-            "runtime retarget proof target does not match queued deploy target",
-            status="target_mismatch",
-            proof=proof,
-            runtime_summary=runtime_summary,
-            runtime_target_id=runtime_target_id,
-        )
-
-    current_assessment = _target_assessment(
-        runtime_summary.get("hub_target_assessments"),
-        runtime_target_id,
-    )
-    if not current_assessment:
-        return _retarget_proof_failure(
-            "runtime retarget proof cannot be verified against current target assessments",
-            status="missing_current_assessment",
-            proof=proof,
-            runtime_summary=runtime_summary,
-            runtime_target_id=runtime_target_id,
-        )
-    if str(proof.get("status") or "").lower() != "proved":
-        return _retarget_proof_failure(
-            "runtime retarget proof is not proved",
-            status="unproved",
-            proof=proof,
-            runtime_summary=runtime_summary,
-            runtime_target_id=runtime_target_id,
-            current_assessment=current_assessment,
-        )
-    if proof.get("best") is True and current_assessment.get("best") is not True:
-        return _retarget_proof_failure(
-            "runtime retarget proof is stale: current target is no longer best measured runtime",
-            status="stale_best_runtime",
-            proof=proof,
-            runtime_summary=runtime_summary,
-            runtime_target_id=runtime_target_id,
-            current_assessment=current_assessment,
-        )
-    if proof.get("eligible") is True and current_assessment.get("eligible") is not True:
-        return _retarget_proof_failure(
-            "runtime retarget proof is stale: current target is no longer eligible",
-            status="stale_eligibility",
-            proof=proof,
-            runtime_summary=runtime_summary,
-            runtime_target_id=runtime_target_id,
-            current_assessment=current_assessment,
-        )
-
-    proof_capability = _proof_capability_sha256(proof)
-    current_capability = str(runtime_summary.get("hub_capability_sha256") or "").strip()
-    if not proof_capability or not current_capability:
-        return _retarget_proof_failure(
-            "runtime retarget proof is missing capability hash comparison",
-            status="missing_capability_hash",
-            proof=proof,
-            runtime_summary=runtime_summary,
-            runtime_target_id=runtime_target_id,
-            current_assessment=current_assessment,
-        )
-    if proof_capability != current_capability:
-        return _retarget_proof_failure(
-            "runtime retarget proof is stale: capability hash changed",
-            status="stale_capability_hash",
-            proof=proof,
-            runtime_summary=runtime_summary,
-            runtime_target_id=runtime_target_id,
-            current_assessment=current_assessment,
-        )
-
-    proof_validation = str(proof.get("runtime_validation_id") or "").strip()
-    current_validation = _assessment_runtime_validation_id(current_assessment)
-    if proof_validation and current_validation and proof_validation != current_validation:
-        return _retarget_proof_failure(
-            "runtime retarget proof is stale: runtime validation evidence changed",
-            status="stale_runtime_validation",
-            proof=proof,
-            runtime_summary=runtime_summary,
-            runtime_target_id=runtime_target_id,
-            current_assessment=current_assessment,
-        )
-
-    proof_benchmark = str(proof.get("benchmark_id") or "").strip()
-    current_benchmark = str(current_assessment.get("benchmark_id") or "").strip()
-    if proof_benchmark and current_benchmark and proof_benchmark != current_benchmark:
-        return _retarget_proof_failure(
-            "runtime retarget proof is stale: benchmark evidence changed",
-            status="stale_benchmark",
-            proof=proof,
-            runtime_summary=runtime_summary,
-            runtime_target_id=runtime_target_id,
-            current_assessment=current_assessment,
-        )
-
-    proof_assessment = str(proof.get("target_assessment_sha256") or "").strip()
-    current_assessment_sha256 = runtime_target_assessment_sha256(current_assessment)
-    if not proof_assessment or not current_assessment_sha256:
-        return _retarget_proof_failure(
-            "runtime retarget proof is missing target assessment hash comparison",
-            status="missing_target_assessment_hash",
-            proof=proof,
-            runtime_summary=runtime_summary,
-            runtime_target_id=runtime_target_id,
-            current_assessment=current_assessment,
-        )
-    if proof_assessment != current_assessment_sha256:
-        return _retarget_proof_failure(
-            "runtime retarget proof is stale: target assessment changed",
-            status="stale_target_assessment",
-            proof=proof,
-            runtime_summary=runtime_summary,
-            runtime_target_id=runtime_target_id,
-            current_assessment=current_assessment,
-        )
-    return None
 
 
-def runtime_target_assessment_sha256(assessment: dict[str, Any]) -> str:
-    """Return the stable hash binding a DDIL retarget proof to target evidence."""
-    basis = runtime_target_assessment_digest_basis(assessment)
-    if not basis.get("runtime_target_id"):
-        return ""
-    return _canonical_hash(basis)
 
 
-def runtime_target_assessment_digest_basis(
-    assessment: dict[str, Any],
-) -> dict[str, Any]:
-    """Return stable target facts that should make stale retarget proof fail."""
-    if not isinstance(assessment, dict):
-        return {}
-    lock = (
-        assessment.get("runtime_capability_lock")
-        if isinstance(assessment.get("runtime_capability_lock"), dict)
-        else {}
-    )
-    component_states = (
-        assessment.get("component_states")
-        if isinstance(assessment.get("component_states"), dict)
-        else {}
-    )
-    runtime_validation = (
-        component_states.get("runtime_validation")
-        if isinstance(component_states.get("runtime_validation"), dict)
-        else {}
-    )
-    runtime_target = (
-        assessment.get("runtime_target")
-        if isinstance(assessment.get("runtime_target"), dict)
-        else lock.get("runtime_target")
-        if isinstance(lock.get("runtime_target"), dict)
-        else {}
-    )
-    artifact_lane = (
-        assessment.get("artifact_lane")
-        if isinstance(assessment.get("artifact_lane"), dict)
-        else lock.get("artifact_lane")
-        if isinstance(lock.get("artifact_lane"), dict)
-        else {}
-    )
-    basis = {
-        "schema_version": RUNTIME_TARGET_ASSESSMENT_DIGEST_SCHEMA_VERSION,
-        "runtime_target_id": assessment.get("runtime_target_id"),
-        "rank": assessment.get("rank"),
-        "best": assessment.get("best"),
-        "status": assessment.get("status"),
-        "eligible": assessment.get("eligible"),
-        "blocked": assessment.get("blocked"),
-        "score": assessment.get("score"),
-        "tier": assessment.get("tier"),
-        "detail": assessment.get("detail"),
-        "runtime_target": _stable_assessment_digest_value(runtime_target),
-        "runtime_lane": _stable_assessment_digest_value(
-            assessment.get("runtime_lane")
-            if isinstance(assessment.get("runtime_lane"), dict)
-            else {}
-        ),
-        "artifact_lane": _stable_assessment_digest_value(artifact_lane),
-        "runtime_capability_lock": _stable_assessment_digest_value(
-            {
-                "schema_version": lock.get("schema_version"),
-                "status": lock.get("status"),
-                "capability_sha256": lock.get("capability_sha256"),
-                "runtime_target_id": lock.get("runtime_target_id"),
-                "runtime_mode": lock.get("runtime_mode"),
-                "runtime_target": lock.get("runtime_target")
-                if isinstance(lock.get("runtime_target"), dict)
-                else None,
-                "artifact_lane": lock.get("artifact_lane")
-                if isinstance(lock.get("artifact_lane"), dict)
-                else None,
-                "failures": lock.get("failures")
-                if isinstance(lock.get("failures"), list)
-                else None,
-            }
-        ),
-        "evidence": _stable_assessment_digest_value(
-            {
-                "runtime_validation_id": runtime_validation.get("validation_id"),
-                "benchmark_id": assessment.get("benchmark_id"),
-                "latency_ms_p95": assessment.get("latency_ms_p95"),
-                "throughput_ips": assessment.get("throughput_ips"),
-            }
-        ),
-        "component_states": _stable_assessment_digest_value(component_states),
-        "reasons": _stable_assessment_digest_value(assessment.get("reasons")),
-        "penalties": _stable_assessment_digest_value(assessment.get("penalties")),
-    }
-    return _stable_assessment_digest_value(basis)
 
 
 def _stable_assessment_digest_value(value: Any) -> Any:
@@ -874,15 +641,6 @@ def _stable_assessment_digest_value(value: Any) -> Any:
     return value
 
 
-def _latest_runtime_retarget_proof(payload: dict[str, Any]) -> dict[str, Any]:
-    records = payload.get("_temms_runtime_retarget")
-    if not isinstance(records, list) or not records:
-        return {}
-    latest = records[-1]
-    if not isinstance(latest, dict):
-        return {}
-    proof = latest.get("runtime_target_proof")
-    return proof if isinstance(proof, dict) else {}
 
 
 def _target_assessment(assessments: Any, runtime_target_id: str) -> dict[str, Any]:
@@ -920,50 +678,6 @@ def _assessment_runtime_validation_id(assessment: dict[str, Any]) -> str:
     return str(runtime_validation.get("validation_id") or proof.get("validation_id") or "").strip()
 
 
-def _retarget_proof_failure(
-    reason: str,
-    *,
-    status: str,
-    proof: dict[str, Any],
-    runtime_summary: dict[str, Any],
-    runtime_target_id: str,
-    current_assessment: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    current_assessment = current_assessment or {}
-    return _readiness_refs(
-        {
-            "reason": reason,
-            "hub_runtime_retarget_proof_status": status,
-            "hub_runtime_retarget_proof_runtime_target_id": runtime_target_id,
-            "hub_runtime_retarget_proof_signed_capability_sha256": _proof_capability_sha256(
-                proof
-            ),
-            "hub_runtime_retarget_proof_current_capability_sha256": runtime_summary.get(
-                "hub_capability_sha256"
-            ),
-            "hub_runtime_retarget_proof_signed_validation_id": proof.get(
-                "runtime_validation_id"
-            ),
-            "hub_runtime_retarget_proof_current_validation_id": (
-                _assessment_runtime_validation_id(current_assessment)
-            ),
-            "hub_runtime_retarget_proof_signed_benchmark_id": proof.get(
-                "benchmark_id"
-            ),
-            "hub_runtime_retarget_proof_current_benchmark_id": current_assessment.get(
-                "benchmark_id"
-            ),
-            "hub_runtime_retarget_proof_signed_target_assessment_sha256": proof.get(
-                "target_assessment_sha256"
-            ),
-            "hub_runtime_retarget_proof_current_target_assessment_sha256": (
-                runtime_target_assessment_sha256(current_assessment)
-            ),
-            "hub_runtime_retarget_proof_target_selection_status": runtime_summary.get(
-                "hub_target_selection_status"
-            ),
-        }
-    )
 
 
 def _hub_runtime_capability_lock(readiness: dict[str, Any]) -> dict[str, Any]:

@@ -30,7 +30,6 @@ from temms.cli.hub.options import (
     Accelerators,
     Actor,
     Archive,
-    BatchSize,
     DeviceId,
     DeviceProfile,
     HubUrl,
@@ -150,7 +149,6 @@ for _name, _command, _help in [
     ("packages", cmd.ListPackages, "List registered packages."),
     ("runtime-targets", cmd.ListRuntimeTargets, "List registered runtime targets."),
     ("rollouts", cmd.ListRollouts, "List rollouts."),
-    ("rollout-plans", cmd.ListRolloutPlans, "List rollout plans."),
     ("telemetry", cmd.ListTelemetry, "List telemetry records."),
     ("evidence", cmd.ListEvidence, "List evidence records."),
     ("status", cmd.DeploymentStatus, "Show deployment status across devices."),
@@ -595,115 +593,12 @@ def apply_rollout(
 # ---------------------------------------------------------------------------
 
 
-@hub_app.command("create-rollout-plan")
-def create_rollout_plan(
-    hub_url: HubUrl = DEFAULT_HUB_URL,
-    token: Token = None,
-    package_id: PackageId = None,
-    device_id: DeviceId = None,
-    target_device_ids: Annotated[
-        list[str] | None,
-        typer.Option("--target-device-id", help="Device to include (repeatable)"),
-    ] = None,
-    plan_id: Annotated[str | None, typer.Option("--plan-id", help="Explicit plan ID")] = None,
-    slot: Slot = None,
-    runtime_target_id: RuntimeTargetId = None,
-    batch_size: BatchSize = 1,
-    require_runtime_validation: RequireRuntimeValidation = False,
-    require_approval: RequireApproval = False,
-    actor: Actor = None,
-    model_id: ModelId = None,
-    json_output: JsonOutput = False,
-) -> None:
-    """Create a staged rollout plan across several devices."""
-    if package_id is None:
-        console.print("[red]--package-id is required[/red]")
-        raise typer.Exit(1)
-    devices = list(target_device_ids or [])
-    if device_id and device_id not in devices:
-        devices.append(device_id)
-    if not devices:
-        console.print("[red]At least one --target-device-id or --device-id is required[/red]")
-        raise typer.Exit(1)
-    _run(
-        lambda t: cmd.CreateRolloutPlan(
-            t,
-            package_id=package_id,
-            device_ids=devices,
-            plan_id=plan_id,
-            slot=slot,
-            runtime_target_id=runtime_target_id,
-            batch_size=batch_size,
-            require_runtime_validation=require_runtime_validation,
-            require_approval=require_approval,
-            actor=actor,
-            model_id=model_id,
-        ).execute(),
-        action="create-rollout-plan",
-        hub_url=hub_url,
-        token=token,
-        json_output=json_output,
-    )
 
 
-def _plan_verb(name: str, command: type, help_text: str) -> None:
-    """Register pause / resume, which take the same arguments."""
-
-    def run(
-        plan: Annotated[str | None, typer.Argument(help="Rollout plan ID")] = None,
-        hub_url: HubUrl = DEFAULT_HUB_URL,
-        token: Token = None,
-        plan_id: Annotated[
-            str | None, typer.Option("--plan-id", help="Rollout plan ID")
-        ] = None,
-        reason: Reason = None,
-        actor: Actor = None,
-        json_output: JsonOutput = False,
-    ) -> None:
-        target = plan or plan_id
-        if target is None:
-            console.print("[red]Rollout plan ID required[/red]")
-            raise typer.Exit(1)
-        _run(
-            lambda t: command(t, plan_id=target, reason=reason, actor=actor).execute(),
-            action=name,
-            hub_url=hub_url,
-            token=token,
-            json_output=json_output,
-        )
-
-    run.__doc__ = help_text
-    hub_app.command(name)(run)
 
 
-_plan_verb("pause-rollout-plan", cmd.PauseRolloutPlan, "Pause a rollout plan.")
-_plan_verb("resume-rollout-plan", cmd.ResumeRolloutPlan, "Resume a paused rollout plan.")
 
 
-@hub_app.command("advance-rollout-plan")
-def advance_rollout_plan(
-    plan: Annotated[str | None, typer.Argument(help="Rollout plan ID")] = None,
-    hub_url: HubUrl = DEFAULT_HUB_URL,
-    token: Token = None,
-    plan_id: Annotated[str | None, typer.Option("--plan-id", help="Rollout plan ID")] = None,
-    batch_size: BatchSize = 1,
-    actor: Actor = None,
-    json_output: JsonOutput = False,
-) -> None:
-    """Advance a rollout plan by one batch."""
-    target = plan or plan_id
-    if target is None:
-        console.print("[red]Rollout plan ID required[/red]")
-        raise typer.Exit(1)
-    _run(
-        lambda t: cmd.AdvanceRolloutPlan(
-            t, resource_id=target, batch_size=batch_size, actor=actor
-        ).execute(),
-        action="advance-rollout-plan",
-        hub_url=hub_url,
-        token=token,
-        json_output=json_output,
-    )
 
 
 # ---------------------------------------------------------------------------

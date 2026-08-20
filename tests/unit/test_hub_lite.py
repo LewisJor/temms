@@ -1163,42 +1163,6 @@ def test_model_specific_rollout_filters_package_runtime_constraints(temp_dir):
     assert rollout["model_id"] == "model-x86"
 
 
-def test_deployment_draft_persists_active_mission_and_airgap_import(temp_dir):
-    store = HubLiteStore(temp_dir / "hub.json")
-    store.enroll_device("edge-1", profile="x86_64-cpu")
-    store.upsert_package(
-        {
-            "package_id": "pkg-vision",
-            "name": "vision",
-            "version": "1.0.0",
-            "device_profiles": ["x86_64-cpu"],
-        }
-    )
-
-    draft = store.upsert_deployment_draft(
-        package_id="pkg-vision",
-        runtime_target_id="temms-x86_64-cpu",
-        device_id="edge-1",
-        slot="vision",
-        actor="operator:test",
-    )
-
-    assert draft["schema_version"] == "temms-deployment-draft/v1"
-    assert draft["draft_id"] == "active"
-    assert draft["package_id"] == "pkg-vision"
-    assert draft["device_id"] == "edge-1"
-    assert draft["runtime_target_id"] == "temms-x86_64-cpu"
-    assert draft["runtime_target"]["image"] == "temms/agent:inference-amd64"
-    assert draft["actor"] == "operator:test"
-    assert store.get_deployment_draft()["slot"] == "vision"
-
-    imported = HubLiteStore(temp_dir / "imported-hub.json")
-    counts = imported.import_bundle(store.export_bundle())
-
-    assert counts["deployment_drafts"] == 1
-    imported_draft = imported.get_deployment_draft()
-    assert imported_draft["package_id"] == "pkg-vision"
-    assert imported_draft["runtime_target_id"] == "temms-x86_64-cpu"
 
 
 def test_rollout_compatibility_preview_is_side_effect_free(temp_dir):
@@ -1993,143 +1957,6 @@ def test_runtime_fit_scores_and_selects_best_measured_runtime_target(temp_dir):
     assert blocked_admission_optimizer["actions"] == blocked_optimizer["actions"]
 
 
-def test_rollout_plan_coordinates_batches_with_existing_assignment_gates(temp_dir):
-    store = HubLiteStore(temp_dir / "hub.json")
-    for device_id in ["edge-a", "edge-b"]:
-        store.enroll_device(
-            device_id,
-            profile="x86_64-cpu",
-            inventory={
-                "runtimes": {
-                    "onnxruntime": {
-                        "available": True,
-                        "providers": ["CPUExecutionProvider"],
-                    }
-                }
-            },
-        )
-    store.upsert_package(
-        {
-            "package_id": "pkg-vision",
-            "name": "vision",
-            "version": "1.0.0",
-            "device_profiles": ["x86_64-cpu"],
-            "sha256": "b" * 64,
-            "metadata": {
-                "models": [
-                    {
-                        "id": "model-vision",
-                        "runtime_constraints": {
-                            "runtimes": ["onnxruntime"],
-                            "providers": ["CPUExecutionProvider"],
-                        },
-                    }
-                ]
-            },
-        }
-    )
-    _release_package(store, "pkg-vision")
-    store.record_runtime_validation(
-        "temms-x86_64-cpu",
-        {
-            "runtime_target_id": "temms-x86_64-cpu",
-            "image": "temms/agent:inference-amd64",
-            "dry_run": False,
-            "ok": True,
-        },
-        package_id="pkg-vision",
-        actor="operator:test",
-    )
-
-    plan = store.create_rollout_plan(
-        plan_id="plan-vision",
-        package_id="pkg-vision",
-        device_ids=["edge-a", "edge-b", "edge-a"],
-        slot="vision",
-        runtime_target_id="temms-x86_64-cpu",
-        batch_size=1,
-        require_runtime_validation=True,
-        require_approval=True,
-        actor="operator:planner",
-    )
-
-    assert plan["schema_version"] == "temms-rollout-plan/v1"
-    assert plan["state"] == "ready"
-    assert plan["counts"] == {
-        "targets": 2,
-        "pending": 2,
-        "assigned": 0,
-        "blocked": 0,
-        "downloading": 0,
-        "imported": 0,
-        "activated": 0,
-        "rolled_back": 0,
-        "failed": 0,
-    }
-    assert [target["device_id"] for target in plan["targets"]] == ["edge-a", "edge-b"]
-
-    first_batch = store.advance_rollout_plan("plan-vision", actor="operator:planner")
-
-    assert first_batch["state"] == "ready"
-    assert first_batch["counts"]["pending"] == 1
-    assert first_batch["counts"]["assigned"] == 1
-    first_rollout = store.get_rollout("plan-vision-b1-1")
-    assert first_rollout["rollout_plan_id"] == "plan-vision"
-    assert first_rollout["rollout_plan_batch"] == 1
-    assert first_rollout["approval_required"] is True
-
-    paused = store.pause_rollout_plan(
-        "plan-vision",
-        actor="operator:planner",
-        reason="hold for canary health",
-    )
-    assert paused["state"] == "paused"
-    with pytest.raises(ValueError, match="paused"):
-        store.advance_rollout_plan("plan-vision", actor="operator:planner")
-
-    resumed = store.resume_rollout_plan("plan-vision", actor="operator:planner")
-    assert resumed["state"] == "ready"
-    advancing = store.advance_rollout_plan("plan-vision", actor="operator:planner")
-    assert advancing["state"] == "advancing"
-    assert advancing["counts"]["pending"] == 0
-    assert advancing["counts"]["assigned"] == 2
-    assert store.get_rollout("plan-vision-b2-1")["device_id"] == "edge-b"
-    assert [event["state"] for event in advancing["history"]] == [
-        "created",
-        "advanced",
-        "paused",
-        "ready",
-        "advanced",
-    ]
-
-    activated = store.update_rollout_status(
-        "plan-vision-b1-1",
-        "activated",
-        detail="edge-a activated",
-        actor="edge:edge-a",
-    )
-    assert activated["state"] == "activated"
-    plan_after_activation = store.get_rollout_plan("plan-vision")
-    assert plan_after_activation["state"] == "advancing"
-    assert plan_after_activation["counts"]["activated"] == 1
-    assert plan_after_activation["counts"]["assigned"] == 1
-    assert plan_after_activation["targets"][0]["state"] == "activated"
-    assert plan_after_activation["targets"][0]["last_actor"] == "edge:edge-a"
-
-    store.update_rollout_status(
-        "plan-vision-b2-1",
-        "rolled_back",
-        detail="edge-b rollback complete",
-        actor="edge:edge-b",
-    )
-    completed = store.get_rollout_plan("plan-vision")
-    assert completed["state"] == "completed"
-    assert completed["counts"]["activated"] == 1
-    assert completed["counts"]["rolled_back"] == 1
-    assert completed["counts"]["assigned"] == 0
-    assert completed["targets"][1]["state"] == "rolled_back"
-    assert completed["history"][-1]["state"] == "reconciled"
-    assert completed["history"][-1]["counts"]["rolled_back"] == 1
 
 
 def test_runtime_validation_records_redact_signing_key_and_export(temp_dir):
@@ -3003,11 +2830,9 @@ def test_deployment_readiness_requires_exact_model_rollout(temp_dir):
     }
     assert [action["label"] for action in gates_b["rollout_gate"]["actions"]] == [
         "Create rollout",
-        "Create staged plan",
     ]
     assert [action["action_id"] for action in readiness_b["actions"]] == [
         "create_rollout",
-        "create_rollout_plan",
     ]
     assert readiness_b["actions"][0]["refs"] == {
         "package_id": "pkg-vision",
@@ -3037,36 +2862,7 @@ def test_deployment_readiness_requires_exact_model_rollout(temp_dir):
             "reason": "readiness gate rollout assignment",
         },
     }
-    assert readiness_b["actions"][1]["refs"] == {
-        "package_id": "pkg-vision",
-        "model_id": "model-b",
-        "device_ids": ["edge-1"],
-        "runtime_target_id": "temms-x86_64-cpu",
-        "slot": "vision",
-        "batch_size": 1,
-        "require_approval": True,
-    }
-    expected_plan_id = hub_lite_module._readiness_command_id(
-        "plan",
-        readiness_b["actions"][1]["refs"],
-        ["package_id", "model_id", "device_ids", "runtime_target_id", "slot"],
-    )
-    assert readiness_b["actions"][1]["command"] == {
-        "method": "POST",
-        "path": "/v1/hub/rollout-plans",
-        "body": {
-            "plan_id": expected_plan_id,
-            "package_id": "pkg-vision",
-            "model_id": "model-b",
-            "device_ids": ["edge-1"],
-            "runtime_target_id": "temms-x86_64-cpu",
-            "slot": "vision",
-            "batch_size": 1,
-            "require_approval": True,
-            "actor": "operator:readiness-remediation",
-            "reason": "readiness gate staged rollout plan",
-        },
-    }
+
 
 
 def test_explicit_rollout_ids_are_retry_safe(temp_dir):
@@ -3119,57 +2915,6 @@ def test_explicit_rollout_ids_are_retry_safe(temp_dir):
         )
 
 
-def test_explicit_rollout_plan_ids_are_retry_safe(temp_dir):
-    store = HubLiteStore(temp_dir / "hub.json")
-    store.enroll_device("edge-1", profile="x86_64-cpu")
-    store.upsert_package(
-        {
-            "package_id": "pkg-vision",
-            "name": "vision",
-            "version": "1.0.0",
-            "device_profiles": ["x86_64-cpu"],
-        }
-    )
-    _release_package(store, "pkg-vision")
-
-    first = store.create_rollout_plan(
-        plan_id="plan-deterministic",
-        package_id="pkg-vision",
-        device_ids=["edge-1", "edge-1"],
-        slot="vision",
-        runtime_target_id="temms-x86_64-cpu",
-        batch_size=1,
-        require_approval=True,
-        actor="operator:first",
-        reason="readiness gate staged rollout plan",
-    )
-    retried = store.create_rollout_plan(
-        plan_id="plan-deterministic",
-        package_id="pkg-vision",
-        device_ids=["edge-1"],
-        slot="vision",
-        runtime_target_id="temms-x86_64-cpu",
-        batch_size=1,
-        require_approval=True,
-        actor="operator:retry",
-        reason="readiness gate staged rollout plan",
-    )
-
-    assert retried == first
-    assert retried["history"] == first["history"]
-    assert retried["reason"] == "readiness gate staged rollout plan"
-    assert retried["history"][0]["detail"] == "readiness gate staged rollout plan"
-
-    with pytest.raises(ValueError, match="already exists with different batch_size"):
-        store.create_rollout_plan(
-            plan_id="plan-deterministic",
-            package_id="pkg-vision",
-            device_ids=["edge-1"],
-            slot="vision",
-            runtime_target_id="temms-x86_64-cpu",
-            batch_size=2,
-            require_approval=True,
-        )
 
 
 def test_readiness_remediation_commands_include_audit_actor():

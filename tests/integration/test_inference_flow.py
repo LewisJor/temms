@@ -939,98 +939,10 @@ class TestOfflineLocalControl:
         assert detail["message"] == "Pending operation preflight failed"
         assert detail["preflight"]["blocked"] == 1
         assert len(pending.read_all()) == 1
-        quarantine_response = client.post(
-            "/v1/control/sync/quarantine-blocked",
-            json={
-                "actor": "operator:test",
-                "reason": "test quarantine",
-            },
-        )
-
-        assert quarantine_response.status_code == 200
-        quarantine = quarantine_response.json()
-        assert quarantine["quarantined"] == 1
-        assert quarantine["remaining"] == 0
-        assert pending.read_all() == []
-        dead_letters = pending.read_dead_letter()
-        assert len(dead_letters) == 1
-        assert dead_letters[0]["actor"] == "operator:test"
-        assert dead_letters[0]["reason"] == "test quarantine"
-        assert dead_letters[0]["preflight"]["reason"] == "model not found: missing-model"
-
-        requeue_response = client.post(
-            "/v1/control/sync/requeue-dead-letters",
-            json={
-                "actor": "operator:test",
-                "reason": "edge evidence remediated",
-                "payload_sha256s": [dead_letters[0]["payload_sha256"]],
-            },
-        )
-
-        assert requeue_response.status_code == 200
-        requeued = requeue_response.json()
-        assert requeued["require_ready"] is True
-        assert requeued["requeued"] == 0
-        assert requeued["blocked"] == 1
-        assert requeued["pending"] == 0
-        assert "model not found: missing-model" in requeued["blocked_entries"][0]["reason"]
-        assert pending.read_all() == []
-        dead_letters = pending.read_dead_letter()
-        assert len(dead_letters) == 1
-        assert "requeued" not in dead_letters[0]
-
-        force_requeue_response = client.post(
-            "/v1/control/sync/requeue-dead-letters",
-            json={
-                "actor": "operator:test",
-                "reason": "edge evidence remediated",
-                "payload_sha256s": [dead_letters[0]["payload_sha256"]],
-                "force": True,
-            },
-        )
-
-        assert force_requeue_response.status_code == 200
-        requeued = force_requeue_response.json()
-        assert requeued["require_ready"] is False
-        assert requeued["requeued"] == 1
-        assert requeued["pending"] == 1
+        # With the quarantine workflow removed, a blocked intent simply stays
+        # queued: the operator resolves it by fixing the cause or clearing the
+        # queue, and nothing is silently discarded.
         assert len(pending.read_all()) == 1
-        dead_letters = pending.read_dead_letter()
-        assert len(dead_letters) == 1
-        assert dead_letters[0]["requeued"] is True
-        assert dead_letters[0]["requeued_by"] == "operator:test"
-        assert dead_letters[0]["requeue_reason"] == "edge evidence remediated"
-
-        second_quarantine_response = client.post(
-            "/v1/control/sync/quarantine-blocked",
-            json={
-                "actor": "operator:test",
-                "reason": "still blocked after requeue",
-            },
-        )
-        assert second_quarantine_response.status_code == 200
-        assert second_quarantine_response.json()["quarantined"] == 1
-        assert pending.read_all() == []
-
-        acknowledge_response = client.post(
-            "/v1/control/sync/acknowledge-dead-letters",
-            json={
-                "actor": "operator:test",
-                "reason": "reviewed blocked DDIL intent",
-            },
-        )
-
-        assert acknowledge_response.status_code == 200
-        acknowledged = acknowledge_response.json()
-        assert acknowledged["acknowledged"] == 1
-        assert acknowledged["dead_letters"] == 2
-        dead_letters = pending.read_dead_letter()
-        assert len(dead_letters) == 2
-        assert dead_letters[0]["requeued"] is True
-        assert "acknowledged" not in dead_letters[0]
-        assert dead_letters[1]["acknowledged"] is True
-        assert dead_letters[1]["acknowledged_by"] == "operator:test"
-        assert dead_letters[1]["acknowledgement_reason"] == "reviewed blocked DDIL intent"
 
     def test_sync_preflight_marks_superseded_deploy_intents(
         self,
