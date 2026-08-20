@@ -5,18 +5,19 @@ Unit tests for the TEMMS daemon service.
 import asyncio
 import hashlib
 import json
-import pytest
-import httpx
-from unittest.mock import AsyncMock
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import httpx
+import pytest
 
 from temms.core.cache import ModelFormat
 from temms.daemon.pending_preflight import (
     pending_sync_preflight,
     runtime_target_assessment_sha256,
 )
-from temms.daemon.service import TEMMSDaemon, DaemonConfig, _hub_base_url, _hub_headers
+from temms.daemon.service import DaemonConfig, TEMMSDaemon, _hub_base_url, _hub_headers
 from temms.policy.schema import (
     Condition,
     ConditionGroup,
@@ -982,8 +983,11 @@ class TestTEMMSDaemonAsync:
             collectors=[],
         )
 
-        # Should not raise
+        # An empty slot table must be a no-op, not an error: a device with no
+        # slots configured still runs the reconciliation loop every tick.
         await daemon._evaluate_all_slots()
+
+        assert slot_manager.list_slots() == []
 
     async def test_push_local_rollout_states_replays_missing_history(
         self,

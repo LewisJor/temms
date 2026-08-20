@@ -8,16 +8,17 @@ temms-package/
 └── policies/         # Policy files to load
 """
 
-import json
 import hashlib
+import json
 import logging
 import os
 import shutil
 import tempfile
-from pathlib import Path
-from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -33,15 +34,15 @@ class ModelArtifact(BaseModel):
     filename: str
     sha256: str
     size_bytes: int
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    input_schema: Dict[str, Any] = Field(default_factory=dict)
-    output_schema: Dict[str, Any] = Field(default_factory=dict)
-    runtime_constraints: Dict[str, Any] = Field(default_factory=dict)
-    runtime_options: Dict[str, Any] = Field(default_factory=dict)
-    benchmark: Dict[str, Any] = Field(default_factory=dict)
-    performance_slo: Dict[str, Any] = Field(default_factory=dict)
-    resource_requirements: Dict[str, Any] = Field(default_factory=dict)
-    provenance: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+    output_schema: dict[str, Any] = Field(default_factory=dict)
+    runtime_constraints: dict[str, Any] = Field(default_factory=dict)
+    runtime_options: dict[str, Any] = Field(default_factory=dict)
+    benchmark: dict[str, Any] = Field(default_factory=dict)
+    performance_slo: dict[str, Any] = Field(default_factory=dict)
+    resource_requirements: dict[str, Any] = Field(default_factory=dict)
+    provenance: dict[str, Any] = Field(default_factory=dict)
 
 
 class PolicyArtifact(BaseModel):
@@ -49,7 +50,7 @@ class PolicyArtifact(BaseModel):
 
     name: str
     filename: str
-    slot: Optional[str] = None  # Which slot this policy controls
+    slot: str | None = None  # Which slot this policy controls
 
 
 class PackageManifest(BaseModel):
@@ -59,20 +60,20 @@ class PackageManifest(BaseModel):
     package_id: str
     name: str
     version: str
-    description: Optional[str] = None
+    description: str | None = None
     created_at: str
-    created_by: Optional[str] = None  # MLflow user, package pipeline identifier, etc.
+    created_by: str | None = None  # MLflow user, package pipeline identifier, etc.
 
-    models: List[ModelArtifact] = Field(default_factory=list)
-    policies: List[PolicyArtifact] = Field(default_factory=list)
+    models: list[ModelArtifact] = Field(default_factory=list)
+    policies: list[PolicyArtifact] = Field(default_factory=list)
 
     # Optional metadata
-    source_registry: Optional[str] = None  # MLflow tracking URI
-    mlflow_run_id: Optional[str] = None
-    provenance: Dict[str, Any] = Field(default_factory=dict)
-    compatibility: Dict[str, Any] = Field(default_factory=dict)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    tags: Dict[str, str] = Field(default_factory=dict)
+    source_registry: str | None = None  # MLflow tracking URI
+    mlflow_run_id: str | None = None
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    compatibility: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    tags: dict[str, str] = Field(default_factory=dict)
 
     @classmethod
     def from_file(cls, path: Path) -> "PackageManifest":
@@ -92,8 +93,8 @@ class ImportedPackageResult:
     """Result of package import operation."""
 
     package: Any  # ImportedPackage
-    models: List[Any]  # List[CachedModel]
-    policies: List[PolicyArtifact]
+    models: list[Any]  # List[CachedModel]
+    policies: list[PolicyArtifact]
     manifest: PackageManifest
 
 
@@ -105,12 +106,12 @@ class PackageImporter:
         cache_dir: Path,
         model_cache,
         storage,
-        active_policy_dir: Optional[Path] = None,
+        active_policy_dir: Path | None = None,
         require_signature: bool = True,
-        signing_key: Optional[str] = None,
-        device_profile: Optional[str] = None,
+        signing_key: str | None = None,
+        device_profile: str | None = None,
         check_runtime_constraints: bool = True,
-        strict_metadata: Optional[bool] = None,
+        strict_metadata: bool | None = None,
     ):
         """
         Initialize importer.
@@ -198,11 +199,11 @@ class PackageImporter:
                 verify=verify,
             )
 
-    def _import_package_dir(
+    def _import_package_dir(  # noqa: C901  (tracked in #54)
         self,
         package_path: Path,
         source: str,
-        import_audit: Dict[str, Any],
+        import_audit: dict[str, Any],
         verify: bool = True,
     ) -> ImportedPackageResult:
         """Import an already validated directory package."""
@@ -297,7 +298,7 @@ class PackageImporter:
         incoming_policy_filenames = set(validated_policy_paths)
 
         staged_policy_dir = Path(tempfile.mkdtemp(prefix=f".{package_component}-", dir=policy_root))
-        staged_active_paths: Dict[Path, Path] = {}
+        staged_active_paths: dict[Path, Path] = {}
         try:
             if policies_dir.exists():
                 for policy_artifact in manifest.policies:
@@ -438,7 +439,7 @@ def _safe_manifest_component(value: str, label: str) -> str:
     return value
 
 
-def _restore_policy_dir(policy_dest_dir: Path, backup_policy_dir: Optional[Path]) -> None:
+def _restore_policy_dir(policy_dest_dir: Path, backup_policy_dir: Path | None) -> None:
     """Restore the previous cached policy directory after a promotion failure."""
     if policy_dest_dir.exists():
         shutil.rmtree(policy_dest_dir, ignore_errors=True)

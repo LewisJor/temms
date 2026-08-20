@@ -2,15 +2,15 @@
 Condition management CLI commands.
 """
 
-import typer
+import json
 from pathlib import Path
-from typing import Optional
+
+import typer
 from rich.console import Console
 from rich.table import Table
-import json
 
-from temms.core.config import Config
 from temms.conditions.store import ConditionStore
+from temms.core.config import Config
 
 app = typer.Typer()
 console = Console()
@@ -40,7 +40,7 @@ def set(
         # If not JSON, use as string
         parsed_value = value
 
-    cond = store.set(
+    store.set(
         path=path,
         value=parsed_value,
         source=source,
@@ -80,7 +80,7 @@ def get(
 
 @app.command("list")
 def list_conditions(
-    prefix: Optional[str] = typer.Option(None, "--prefix", "-p", help="Filter by prefix"),
+    prefix: str | None = typer.Option(None, "--prefix", "-p", help="Filter by prefix"),
     config_path: Path = typer.Option(
         Path("/etc/temms/temms.yaml"),
         "--config",

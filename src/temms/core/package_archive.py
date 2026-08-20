@@ -8,9 +8,9 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 PACKAGE_ARCHIVE_SUFFIX = ".temms.tar.zst"
 

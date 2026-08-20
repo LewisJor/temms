@@ -7,7 +7,6 @@ from typing import Any
 from temms.core.signing import read_signing_key
 from temms.daemon.pending_ops import pending_operation_signature_status
 
-
 RUNTIME_TARGET_ASSESSMENT_DIGEST_SCHEMA_VERSION = (
     "temms-runtime-target-assessment-digest/v1"
 )
@@ -110,7 +109,7 @@ def _operation_preflight(
     return {**result, **operation_result}
 
 
-def _operation_replayability(
+def _operation_replayability(  # noqa: C901  (tracked in #54)
     state: Any,
     operation: str,
     payload: dict[str, Any],
@@ -632,7 +631,7 @@ def _hub_target_assessment_ref(assessment: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _hub_runtime_retarget_proof_failure(
+def _hub_runtime_retarget_proof_failure(  # noqa: C901  (tracked in #54)
     payload: dict[str, Any],
     runtime_summary: dict[str, Any],
     *,

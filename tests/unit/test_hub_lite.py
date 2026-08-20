@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from temms.core.signing import sign_package
 from temms import hub_lite as hub_lite_module
+from temms.core.signing import sign_package
 from temms.hub_lite import HubLiteStore
 
 

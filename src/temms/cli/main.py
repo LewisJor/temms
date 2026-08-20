@@ -8,26 +8,29 @@ import shlex
 import socket
 import tempfile
 from contextlib import closing
+from datetime import UTC
 from pathlib import Path
-from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from temms.core.proof_gates import (
-    optional_float,
-    proof_gate_failures,
-    runtime_capability_lock,
-    runtime_capability_lock_failures,
-    runtime_fit_score,
-    runtime_target_best_failures,
-    runtime_target_selection,
-)
 from temms import __version__
 from temms.cli import condition, slot
+
+# Hub payload rendering lives in the hub package (see cli/hub/render.py).
+# Re-exported here because the CLI is the composition root: callers and
+# tests that reach for these through cli.main keep working.
+from temms.cli.hub.app import hub_app
+from temms.cli.hub.render import (  # noqa: F401  (re-export)
+    HUB_PRINTERS,
+    _print_edge_runtime_mission,
+    _print_hub_payload,
+    _print_hub_readiness,
+    _print_mission_package_plan,
+)
+from temms.core import proof_gates
 
 app = typer.Typer(
     name="temms",
@@ -49,6 +52,11 @@ app.add_typer(trust_app, name="trust")
 
 mission_app = typer.Typer(help="Build and validate mission packages from mission.yaml")
 app.add_typer(mission_app, name="mission")
+
+# `temms hub` is a sub-app of its own (see cli/hub/app.py), replacing the single
+# 397-line hub() that took 58 options for 36 actions. The invocation surface is
+# unchanged; each action now declares only the options it accepts.
+app.add_typer(hub_app, name="hub")
 
 DEFAULT_TRUST_STORE = Path("/var/lib/temms/trust-store.json")
 
@@ -117,10 +125,10 @@ def mission_validate(
 def mission_build(
     mission_file: Path = typer.Argument(..., help="Path to a mission.yaml"),
     output_dir: Path = typer.Option(Path("dist"), "--out", help="Output directory"),
-    key_file: Optional[Path] = typer.Option(
+    key_file: Path | None = typer.Option(
         None, "--sign", help="Ed25519 private key to sign the package"
     ),
-    tracking_uri: Optional[str] = typer.Option(
+    tracking_uri: str | None = typer.Option(
         None, "--mlflow-uri", help="MLflow tracking URI for mlflow:// sources"
     ),
     overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing package"),
@@ -259,7 +267,7 @@ def init(
     """Initialize TEMMS configuration and directories."""
     from temms.core.config import Config
 
-    console.print(f"[bold green]Initializing TEMMS...[/bold green]")
+    console.print("[bold green]Initializing TEMMS...[/bold green]")
 
     # Create directories
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -272,7 +280,7 @@ def init(
     (config_path.parent / "slots").mkdir(exist_ok=True)
 
     # Create config with actual data directory paths
-    from temms.core.config import DatabaseConfig, StorageConfig, PolicyConfig
+    from temms.core.config import DatabaseConfig, PolicyConfig, StorageConfig
 
     config = Config(
         database=DatabaseConfig(path=data_dir / "temms.db"),
@@ -286,7 +294,7 @@ def init(
 
     console.print(f"✓ Created configuration: {config_path}")
     console.print(f"✓ Created data directory: {data_dir}")
-    console.print(f"\n[bold]Next steps:[/bold]")
+    console.print("\n[bold]Next steps:[/bold]")
     console.print(
         "  1. Import a signed package: temms import <package_dir> --signing-key-file <key>"
     )
@@ -304,17 +312,17 @@ def import_package(
         "--require-signature/--allow-unsigned-package",
         help="Require and verify signature.json before import",
     ),
-    signing_key: Optional[str] = typer.Option(
+    signing_key: str | None = typer.Option(
         None,
         "--signing-key",
         help="Inline package signing key for signature verification",
     ),
-    signing_key_file: Optional[Path] = typer.Option(
+    signing_key_file: Path | None = typer.Option(
         None,
         "--signing-key-file",
         help="File containing package signing key",
     ),
-    device_profile: Optional[str] = typer.Option(
+    device_profile: str | None = typer.Option(
         None,
         "--device-profile",
         help="Validate package compatibility for this device profile",
@@ -332,11 +340,11 @@ def import_package(
     ),
 ):
     """Import a TEMMS package (models + policies)."""
-    from temms.core.config import Config
     from temms.core.cache import ModelCache
-    from temms.core.storage import ModelStorage
+    from temms.core.config import Config
     from temms.core.package import PackageImporter
     from temms.core.signing import read_signing_key
+    from temms.core.storage import ModelStorage
 
     if not package_path.exists():
         console.print(f"[red]Error: Package not found: {package_path}[/red]")
@@ -362,7 +370,7 @@ def import_package(
         with console.status("[bold green]Importing package..."):
             result = importer.import_package(package_path, verify=verify)
 
-        console.print(f"[green]✓ Package imported successfully[/green]")
+        console.print("[green]✓ Package imported successfully[/green]")
         console.print(f"\nPackage: {result.manifest.name} v{result.manifest.version}")
         console.print(f"Models imported: {len(result.models)}")
         for model in result.models:
@@ -388,9 +396,9 @@ def import_alias(
         "--require-signature/--allow-unsigned-package",
         help="Require and verify signature.json before import",
     ),
-    signing_key: Optional[str] = typer.Option(None, "--signing-key"),
-    signing_key_file: Optional[Path] = typer.Option(None, "--signing-key-file"),
-    device_profile: Optional[str] = typer.Option(None, "--device-profile"),
+    signing_key: str | None = typer.Option(None, "--signing-key"),
+    signing_key_file: Path | None = typer.Option(None, "--signing-key-file"),
+    device_profile: str | None = typer.Option(None, "--device-profile"),
     strict_metadata: bool = typer.Option(
         True,
         "--strict-metadata/--allow-lab-metadata",
@@ -426,8 +434,8 @@ def status(
     ),
 ):
     """Show TEMMS system status."""
-    from temms.core.config import Config
     from temms.core.cache import ModelCache
+    from temms.core.config import Config
     from temms.slots.manager import SlotManager
 
     if not config_path.exists():
@@ -451,14 +459,14 @@ def status(
     # Slots
     slots = slot_manager.list_slots()
     console.print(f"\nSlots: {len(slots)}")
-    for slot in slots:
-        status_icon = "✓" if slot.state.value == "running" else "○"
-        console.print(f"  {status_icon} {slot.name}: {slot.state.value}")
+    for slot_row in slots:
+        status_icon = "✓" if slot_row.state.value == "running" else "○"
+        console.print(f"  {status_icon} {slot_row.name}: {slot_row.state.value}")
 
 
 @app.command()
-def evidence(
-    slot: Optional[str] = typer.Option(
+def evidence(  # noqa: C901  (tracked in #54)
+    slot: str | None = typer.Option(
         None,
         "--slot",
         "-s",
@@ -470,13 +478,13 @@ def evidence(
         "-n",
         help="Maximum number of recent decisions to include",
     ),
-    output: Optional[Path] = typer.Option(
+    output: Path | None = typer.Option(
         None,
         "--output",
         "-o",
         help="Write evidence bundle JSON to this path",
     ),
-    input_bundle: Optional[Path] = typer.Option(
+    input_bundle: Path | None = typer.Option(
         None,
         "--input",
         help="Read an existing evidence bundle JSON file",
@@ -496,12 +504,12 @@ def evidence(
         "--verify-chain",
         help="Verify the tamper-evident decision chain and exit",
     ),
-    public_key: Optional[Path] = typer.Option(
+    public_key: Path | None = typer.Option(
         None,
         "--public-key",
         help="Ed25519 public key file to verify the signed chain head",
     ),
-    trust_store_path: Optional[Path] = typer.Option(
+    trust_store_path: Path | None = typer.Option(
         None,
         "--trust-store",
         help="Verify the chain head against a trust store instead of a single key",
@@ -661,17 +669,17 @@ def version():
 
 
 @app.command()
-def daemon(
+def daemon(  # noqa: C901  (tracked in #54)
     action: str = typer.Argument(..., help="Action: start, stop, status"),
     foreground: bool = typer.Option(
         False, "--foreground", "-f", help="Run in foreground (don't daemonize)"
     ),
-    host: Optional[str] = typer.Option(
+    host: str | None = typer.Option(
         None,
         "--host",
         help="Inference server host (defaults to TEMMS_HOST or 0.0.0.0)",
     ),
-    port: Optional[int] = typer.Option(
+    port: int | None = typer.Option(
         None,
         "--port",
         "-p",
@@ -690,8 +698,8 @@ def daemon(
     import signal
 
     if action == "start":
-        from temms.daemon.service import TEMMSDaemon, DaemonConfig
         from temms.core.config import Config
+        from temms.daemon.service import DaemonConfig, TEMMSDaemon
 
         daemon_overrides: dict[str, Any] = {}
         if host is not None:
@@ -712,7 +720,7 @@ def daemon(
             daemon_config = DaemonConfig(**daemon_overrides)
 
         if foreground:
-            console.print(f"[bold green]Starting TEMMS daemon in foreground...[/bold green]")
+            console.print("[bold green]Starting TEMMS daemon in foreground...[/bold green]")
             console.print(f"  Host: {daemon_config.inference_host}")
             console.print(f"  Port: {daemon_config.inference_port}")
             console.print(f"  Config: {config_path}")
@@ -725,7 +733,7 @@ def daemon(
                 console.print("\n[yellow]Daemon stopped by user[/yellow]")
         else:
             # Fork to background
-            console.print(f"[bold green]Starting TEMMS daemon...[/bold green]")
+            console.print("[bold green]Starting TEMMS daemon...[/bold green]")
             pid_file = Path("/var/run/temms.pid")
 
             # Check if already running
@@ -756,7 +764,7 @@ def daemon(
                 pid = os.fork()
                 if pid > 0:
                     os._exit(0)
-            except OSError as e:
+            except OSError:
                 os._exit(1)
 
             # Write PID file
@@ -818,7 +826,7 @@ def daemon(
             with httpx.Client() as client:
                 response = client.get(f"http://{host}:{port}/v1/health", timeout=2)
                 if response.status_code == 200:
-                    console.print(f"[green]API healthy[/green]")
+                    console.print("[green]API healthy[/green]")
 
                 # Get system status
                 status_response = client.get(f"http://{host}:{port}/v1/status", timeout=2)
@@ -839,9 +847,9 @@ def daemon(
 
 
 @app.command()
-def policy(
+def policy(  # noqa: C901  (tracked in #54)
     action: str = typer.Argument(..., help="Action: load, list, status"),
-    policy_file: Optional[Path] = typer.Argument(None, help="Policy file path"),
+    policy_file: Path | None = typer.Argument(None, help="Policy file path"),
     config_path: Path = typer.Option(
         Path("/etc/temms/temms.yaml"),
         "--config",
@@ -850,8 +858,8 @@ def policy(
     ),
 ):
     """Manage policies."""
-    from temms.core.config import Config
     from temms.conditions.store import ConditionStore
+    from temms.core.config import Config
     from temms.policy.engine import PolicyEngine
 
     if not config_path.exists():
@@ -918,7 +926,7 @@ def policy(
                     str(len(loaded.spec.rules)),
                     pf.name,
                 )
-            except Exception as e:
+            except Exception:
                 table.add_row(pf.stem, "[red]Error[/red]", "-", pf.name)
 
         console.print(table)
@@ -948,7 +956,7 @@ def policy(
 
 
 @app.command()
-def doctor(
+def doctor(  # noqa: C901  (tracked in #54)
     config_path: Path = typer.Option(
         Path("/etc/temms/temms.yaml"),
         "--config",
@@ -1314,7 +1322,7 @@ def _doctor_security_report() -> dict[str, Any]:
     }
 
 
-def _env_bool_default_true(value: Optional[str]) -> bool:
+def _env_bool_default_true(value: str | None) -> bool:
     """Parse an environment boolean whose unset default is true."""
     if value is None:
         return True
@@ -1384,28 +1392,28 @@ def benchmark(
     slot_name: str = typer.Option("benchmark", "--slot", help="Temporary benchmark slot"),
     samples: int = typer.Option(5, "--samples", "-n", min=1, help="Measured inference runs"),
     warmup: int = typer.Option(1, "--warmup", min=0, help="Warmup inference runs"),
-    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Write JSON result"),
-    hub_url: Optional[str] = typer.Option(
+    output: Path | None = typer.Option(None, "--output", "-o", help="Write JSON result"),
+    hub_url: str | None = typer.Option(
         None,
         "--hub-url",
         help="Publish benchmark evidence to this Hub Lite API base URL",
     ),
-    token: Optional[str] = typer.Option(
+    token: str | None = typer.Option(
         None,
         "--token",
         help="Hub API token; defaults to TEMMS_HUB_TOKEN or TEMMS_API_TOKEN",
     ),
-    device_id: Optional[str] = typer.Option(
+    device_id: str | None = typer.Option(
         None,
         "--device-id",
         help="Device ID to attach when publishing benchmark evidence",
     ),
-    package_id: Optional[str] = typer.Option(
+    package_id: str | None = typer.Option(
         None,
         "--package-id",
         help="Package ID to attach when publishing benchmark evidence",
     ),
-    runtime_target_id: Optional[str] = typer.Option(
+    runtime_target_id: str | None = typer.Option(
         None,
         "--runtime-target-id",
         help="Runtime target ID to attach when publishing benchmark evidence",
@@ -1481,17 +1489,17 @@ def benchmark(
 
 
 @app.command()
-def package(
+def package(  # noqa: C901  (tracked in #54)
     action: str = typer.Argument(
         ...,
         help="Action: from-mlflow, validate, sign, archive, inspect",
     ),
-    source: Optional[str] = typer.Argument(None, help="Model URI or package path"),
-    slot_name: Optional[str] = typer.Option(None, "--slot", help="Target TEMMS slot"),
-    policy_path: Optional[Path] = typer.Option(None, "--policy", help="Policy YAML to include"),
+    source: str | None = typer.Argument(None, help="Model URI or package path"),
+    slot_name: str | None = typer.Option(None, "--slot", help="Target TEMMS slot"),
+    policy_path: Path | None = typer.Option(None, "--policy", help="Policy YAML to include"),
     output_dir: Path = typer.Option(Path("."), "--output", "-o", help="Output directory"),
-    tracking_uri: Optional[str] = typer.Option(None, "--tracking-uri", help="MLflow tracking URI"),
-    model_format: Optional[str] = typer.Option(None, "--format", help="Model format override"),
+    tracking_uri: str | None = typer.Option(None, "--tracking-uri", help="MLflow tracking URI"),
+    model_format: str | None = typer.Option(None, "--format", help="Model format override"),
     require_schema: bool = typer.Option(
         True,
         "--require-schema/--allow-missing-schema",
@@ -1502,28 +1510,28 @@ def package(
         "--require-runtime-constraints/--allow-missing-runtime-constraints",
         help="Require runtime constraints when building MLflow packages",
     ),
-    device_profile: Optional[str] = typer.Option(
+    device_profile: str | None = typer.Option(
         None,
         "--device-profile",
         help="Target/check device profile such as x86_64-cpu or orin-tensorrt",
     ),
-    runtime_constraints: Optional[list[str]] = typer.Option(
+    runtime_constraints: list[str] | None = typer.Option(
         None,
         "--runtime-constraint",
         help="Runtime constraint override as key=JSON; repeatable for from-mlflow",
     ),
-    runtime_options: Optional[list[str]] = typer.Option(
+    runtime_options: list[str] | None = typer.Option(
         None,
         "--runtime-option",
         help="Runtime loader option override as key=JSON; repeatable for from-mlflow",
     ),
-    model_artifact: Optional[str] = typer.Option(
+    model_artifact: str | None = typer.Option(
         None,
         "--model-artifact",
         help="Relative MLflow artifact path to package when a run contains multiple model files",
     ),
-    signing_key: Optional[str] = typer.Option(None, "--signing-key", help="Inline signing key"),
-    signing_key_file: Optional[Path] = typer.Option(
+    signing_key: str | None = typer.Option(None, "--signing-key", help="Inline signing key"),
+    signing_key_file: Path | None = typer.Option(
         None,
         "--signing-key-file",
         help="File containing signing key",
@@ -1791,7 +1799,7 @@ def _package_validation_summary(manifest: dict[str, Any] | None) -> dict[str, An
 
 
 @app.command()
-def control(
+def control(  # noqa: C901  (tracked in #54)
     action: str = typer.Argument(
         ...,
         help=(
@@ -1804,20 +1812,20 @@ def control(
         "--control-url",
         help="TEMMS edge control API base URL",
     ),
-    token: Optional[str] = typer.Option(
+    token: str | None = typer.Option(
         None,
         "--token",
         help="Control API token; defaults to TEMMS_HUB_TOKEN or TEMMS_API_TOKEN",
     ),
-    payload_sha256: Optional[str] = typer.Option(
+    payload_sha256: str | None = typer.Option(
         None,
         "--payload-sha256",
         help="Pending DDIL intent payload SHA256 for retarget-runtime",
     ),
-    package_id: Optional[str] = typer.Option(None, "--package-id", help="Package ID"),
-    model_id: Optional[str] = typer.Option(None, "--model-id", help="Model ID"),
-    device_id: Optional[str] = typer.Option(None, "--device-id", help="Target edge device ID"),
-    runtime_target_id: Optional[str] = typer.Option(
+    package_id: str | None = typer.Option(None, "--package-id", help="Package ID"),
+    model_id: str | None = typer.Option(None, "--model-id", help="Model ID"),
+    device_id: str | None = typer.Option(None, "--device-id", help="Target edge device ID"),
+    runtime_target_id: str | None = typer.Option(
         None,
         "--runtime-target-id",
         help=(
@@ -1825,7 +1833,7 @@ def control(
             "auto-select the measured candidate when omitted"
         ),
     ),
-    slot_name: Optional[str] = typer.Option(None, "--slot", help="Target slot"),
+    slot_name: str | None = typer.Option(None, "--slot", help="Target slot"),
     actor: str = typer.Option(
         "operator:temms-cli",
         "--actor",
@@ -1836,7 +1844,7 @@ def control(
         "--source",
         help="Source label recorded on deploy intents",
     ),
-    reason: Optional[str] = typer.Option(
+    reason: str | None = typer.Option(
         None,
         "--reason",
         help="Reason recorded for retarget/quarantine/acknowledgement actions",
@@ -1953,12 +1961,12 @@ def _control_deploy_body(
     *,
     actor: str,
     source: str,
-    package_id: Optional[str],
+    package_id: str | None,
     model_id: str,
-    device_id: Optional[str],
-    runtime_target_id: Optional[str],
+    device_id: str | None,
+    runtime_target_id: str | None,
     slot: str,
-    reason: Optional[str],
+    reason: str | None,
 ) -> dict[str, Any]:
     return {
         key: value
@@ -1980,1091 +1988,77 @@ def _control_mutation_body(**values: Any) -> dict[str, Any]:
     return {key: value for key, value in values.items() if value}
 
 
-@dataclass(frozen=True)
-class HubActionContext:
-    """The CLI options (and derived signing key) for one `temms hub` call.
-
-    A parameter object: hub() accepts the union of every action's options, so
-    passing them individually to each handler would just move the 55-argument
-    problem. Each handler reads only the few fields it needs.
-    """
-
-    action: Any
-    source: Any
-    device_id: Any
-    package_id: Any
-    model_id: Any
-    slot_name: Any
-    rollout_id: Any
-    rollout_plan_id: Any
-    target_device_ids: Any
-    batch_size: Any
-    runtime_target_id: Any
-    mission_yaml: Any
-    mission_yaml_file: Any
-    mission_goal: Any
-    sensor: Any
-    latency_budget_ms: Any
-    min_throughput_ips: Any
-    switch_policy: Any
-    confidence_threshold: Any
-    fallback_model_id: Any
-    ddil_mode: Any
-    require_runtime_validation: Any
-    require_approval: Any
-    promotion_state: Any
-    image: Any
-    os_name: Any
-    arch: Any
-    runtimes: Any
-    providers: Any
-    accelerators: Any
-    tracking_uri: Any
-    model_artifact: Any
-    require_schema: Any
-    archive: Any
-    overwrite: Any
-    output: Any
-    include_packages: Any
-    include_device_inventory: Any
-    pull_image: Any
-    dry_run: Any
-    local_runtime: Any
-    timeout_s: Any
-    strict_metadata: Any
-    require_signature: Any
-    signing_key_file: Any
-    device_profile: Any
-    labels: Any
-    inventory: Any
-    actor: Any
-    reason: Any
-    require_go: Any
-    min_runtime_fit: Any
-    require_best_runtime: Any
-    require_capability_lock: Any
-    require_proof_signature: Any
-    key: Any
-
-
-@dataclass
-class HubActionResult:
-    """What an action produced: its payload, plus an optional readiness proof."""
-
-    payload: dict[str, Any]
-    readiness_proof: dict[str, Any] | None = None
-    # The action already produced its own output (e.g. wrote a bundle to disk)
-    # and the shared post-processing must be skipped. In the pre-refactor
-    # if/elif chain this was a bare `return` out of hub() itself.
-    handled: bool = False
-
-def _action_enroll(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub enroll`."""
-    if ctx.device_id is None:
-        console.print("[red]--device-id is required[/red]")
-        raise typer.Exit(1)
-    payload = _checked_json(
-        client.post(
-            "/devices/enroll",
-            json={
-                "device_id": ctx.device_id,
-                "profile": ctx.device_profile,
-                "labels": _parse_key_value_options(ctx.labels),
-                "inventory": _parse_key_value_options(ctx.inventory),
-            },
-        )
-    )
-    return HubActionResult(payload)
-
-
-def _action_devices(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub devices`."""
-    payload = _checked_json(client.get("/devices"))
-    return HubActionResult(payload)
-
-
-def _action_packages(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub packages`."""
-    payload = _checked_json(client.get("/packages"))
-    return HubActionResult(payload)
-
-
-def _action_runtime_targets(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub runtime-targets`."""
-    payload = _checked_json(client.get("/runtime-targets"))
-    return HubActionResult(payload)
-
-
-def _action_runtime_validations(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub runtime-validations`."""
-    params = {}
-    if ctx.package_id:
-        params["package_id"] = ctx.package_id
-    if ctx.runtime_target_id:
-        params["runtime_target_id"] = ctx.runtime_target_id
-    payload = _checked_json(
-        client.get("/runtime-targets/validations", params=params or None)
-    )
-    return HubActionResult(payload)
-
-
-def _action_benchmarks(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub benchmarks`."""
-    params = {}
-    if ctx.device_id:
-        params["device_id"] = ctx.device_id
-    if ctx.package_id:
-        params["package_id"] = ctx.package_id
-    if ctx.runtime_target_id:
-        params["runtime_target_id"] = ctx.runtime_target_id
-    payload = _checked_json(client.get("/benchmarks", params=params or None))
-    return HubActionResult(payload)
-
-
-def _action_rollouts(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub rollouts`."""
-    payload = _checked_json(client.get("/rollouts"))
-    return HubActionResult(payload)
-
-
-def _action_rollout_plans(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub rollout-plans`."""
-    payload = _checked_json(client.get("/rollout-plans"))
-    return HubActionResult(payload)
-
-
-def _action_status(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub status`."""
-    payload = _checked_json(client.get("/deployment-status"))
-    return HubActionResult(payload)
-
-
-def _action_readiness(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub` readiness / edge-runtime-mission."""
-    readiness_proof_payload = None
-    params = _hub_readiness_query_params(
-        package_id=ctx.package_id,
-        model_id=ctx.model_id,
-        device_id=ctx.device_id,
-        runtime_target_id=ctx.runtime_target_id,
-        slot=ctx.slot_name,
-    )
-    readiness_payload = _checked_json(
-        client.get("/readiness", params=params or None)
-    )
-    readiness_proof_payload = readiness_payload
-    if ctx.action == "edge-runtime-mission":
-        mission = readiness_payload.get("edge_runtime_mission")
-        payload = mission if isinstance(mission, dict) else {}
-    else:
-        payload = readiness_payload
-    return HubActionResult(payload, readiness_proof_payload)
-
-
-def _action_mission_package_plan(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub` mission-package-plan / mission-package-download."""
-    request = _hub_mission_package_request_body(
-        source=ctx.source,
-        package_id=ctx.package_id,
-        model_id=ctx.model_id,
-        device_id=ctx.device_id,
-        runtime_target_id=ctx.runtime_target_id,
-        slot=ctx.slot_name,
-        goal=ctx.mission_goal,
-        mission_yaml=ctx.mission_yaml,
-        mission_yaml_file=ctx.mission_yaml_file,
-        sensor=ctx.sensor,
-        latency_budget_ms=ctx.latency_budget_ms,
-        min_throughput_ips=ctx.min_throughput_ips,
-        switch_policy=ctx.switch_policy,
-        confidence_threshold=ctx.confidence_threshold,
-        fallback_model_id=ctx.fallback_model_id,
-        ddil_mode=ctx.ddil_mode,
-        require_go=ctx.require_go,
-        min_runtime_fit=ctx.min_runtime_fit,
-        require_best_runtime=ctx.require_best_runtime,
-        require_capability_lock=ctx.require_capability_lock,
-        require_proof_signature=ctx.require_proof_signature,
-    )
-    endpoint = (
-        "/mission-package/download"
-        if ctx.action == "mission-package-download"
-        else "/mission-package/plan"
-    )
-    payload = _checked_json(client.post(endpoint, json=request))
-    return HubActionResult(payload)
-
-
-def _action_mission_package_stage(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub mission-package-stage`."""
-    request = _hub_mission_package_stage_request(
-        source=ctx.source,
-        rollout_id=ctx.rollout_id,
-        actor=ctx.actor,
-        reason=ctx.reason,
-    )
-    payload = _checked_json(client.post("/mission-package/stage", json=request))
-    return HubActionResult(payload)
-
-
-def _action_telemetry(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub telemetry`."""
-    payload = _checked_json(client.get("/telemetry"))
-    return HubActionResult(payload)
-
-
-def _action_evidence(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub evidence`."""
-    payload = _checked_json(client.get("/evidence"))
-    return HubActionResult(payload)
-
-
-def _action_package_from_mlflow(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub package-from-mlflow`."""
-    if ctx.source is None:
-        console.print("[red]MLflow model URI required, e.g. models:/name/version[/red]")
-        raise typer.Exit(1)
-    if ctx.slot_name is None:
-        console.print("[red]--slot is required[/red]")
-        raise typer.Exit(1)
-    runtime_constraints: dict[str, Any] = {}
-    if ctx.device_profile:
-        runtime_constraints["device_profiles"] = [ctx.device_profile]
-    if ctx.runtimes:
-        runtime_constraints["runtimes"] = ctx.runtimes
-    if ctx.providers:
-        runtime_constraints["preferred_providers"] = ctx.providers
-    if ctx.accelerators:
-        runtime_constraints["accelerators"] = ctx.accelerators
-    runtime_options: dict[str, Any] = {}
-    if ctx.providers:
-        runtime_options["providers"] = ctx.providers
-    payload = _checked_json(
-        client.post(
-            "/packages/from-mlflow",
-            json={
-                "model_uri": ctx.source,
-                "slot": ctx.slot_name,
-                "tracking_uri": ctx.tracking_uri,
-                "device_profile": ctx.device_profile,
-                "runtime_constraints": runtime_constraints,
-                "runtime_options": runtime_options,
-                "model_artifact_path": ctx.model_artifact,
-                "require_schema": ctx.require_schema,
-                "require_signature": ctx.require_signature,
-                "signing_key": ctx.key,
-                "archive": ctx.archive,
-                "overwrite": ctx.overwrite,
-                "strict_metadata": ctx.strict_metadata,
-                "actor": ctx.actor,
-            },
-        )
-    )
-    return HubActionResult(payload)
-
-
-def _action_register_package(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub register-package`."""
-    if ctx.source is None:
-        console.print("[red]Package path required[/red]")
-        raise typer.Exit(1)
-    payload = _checked_json(
-        client.post(
-            "/packages/register",
-            json={
-                "package_path": str(Path(ctx.source).expanduser()),
-                "require_signature": ctx.require_signature,
-                "signing_key": ctx.key,
-                "device_profiles": [ctx.device_profile] if ctx.device_profile else None,
-                "strict_metadata": ctx.strict_metadata,
-                "actor": ctx.actor,
-            },
-        )
-    )
-    return HubActionResult(payload)
-
-
-def _action_register_runtime(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub register-runtime`."""
-    if ctx.runtime_target_id is None or ctx.image is None:
-        console.print("[red]--runtime-target-id and --image are required[/red]")
-        raise typer.Exit(1)
-    runtime_inventory = {runtime: {"available": True} for runtime in (ctx.runtimes or [])}
-    if ctx.providers:
-        runtime_inventory.setdefault("onnxruntime", {"available": True})[
-            "providers"
-        ] = ctx.providers
-    accelerator_inventory = {
-        accelerator: {"available": True} for accelerator in (ctx.accelerators or [])
-    }
-    constraints: dict[str, Any] = {}
-    if ctx.device_profile:
-        constraints["device_profiles"] = [ctx.device_profile]
-    if ctx.runtimes:
-        constraints["runtimes"] = ctx.runtimes
-    if ctx.providers:
-        constraints["preferred_providers"] = ctx.providers
-    if ctx.accelerators:
-        constraints["accelerators"] = ctx.accelerators
-    payload = _checked_json(
-        client.post(
-            "/runtime-targets",
-            json={
-                "runtime_target_id": ctx.runtime_target_id,
-                "name": ctx.runtime_target_id,
-                "image": ctx.image,
-                "os": ctx.os_name,
-                "arch": ctx.arch,
-                "device_profiles": [ctx.device_profile] if ctx.device_profile else [],
-                "runtimes": runtime_inventory,
-                "accelerators": accelerator_inventory,
-                "runtime_constraints": constraints,
-                "labels": _parse_key_value_options(ctx.labels),
-                "actor": ctx.actor,
-            },
-        )
-    )
-    return HubActionResult(payload)
-
-
-def _action_validate_runtime(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub validate-runtime`."""
-    from temms.core.runtime_target_runner import validate_runtime_target_package
-    if ctx.source is None or ctx.runtime_target_id is None:
-        console.print("[red]Package path and --runtime-target-id are required[/red]")
-        raise typer.Exit(1)
-    targets_payload = _checked_json(client.get("/runtime-targets"))
-    runtime_target = _find_runtime_target(
-        targets_payload.get("runtime_targets", []),
-        ctx.runtime_target_id,
-    )
-    result = validate_runtime_target_package(
-        runtime_target,
-        Path(ctx.source),
-        require_signature=ctx.require_signature,
-        strict_metadata=ctx.strict_metadata,
-        signing_key=ctx.key,
-        signing_key_file=ctx.signing_key_file,
-        pull_image=ctx.pull_image,
-        dry_run=ctx.dry_run,
-        local=ctx.local_runtime,
-        timeout_s=ctx.timeout_s,
-    )
-    payload = {
-        "schema_version": "temms-runtime-target-validation/v1",
-        **result.to_dict(),
-    }
-    result_payload = dict(payload)
-    validation_record = _checked_json(
-        client.post(
-            "/runtime-targets/validations",
-            json={
-                "runtime_target_id": ctx.runtime_target_id,
-                "package_id": ctx.package_id,
-                "package_path": str(Path(ctx.source).expanduser()),
-                "result": result_payload,
-                "actor": ctx.actor,
-            },
-        )
-    )
-    payload["validation_record"] = validation_record
-    return HubActionResult(payload)
-
-
-def _action_preview_compatibility(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub preview-compatibility`."""
-    if ctx.device_id is None or ctx.package_id is None:
-        console.print("[red]--device-id and --package-id are required[/red]")
-        raise typer.Exit(1)
-    request = {
-        "device_id": ctx.device_id,
-        "package_id": ctx.package_id,
-        "runtime_target_id": ctx.runtime_target_id,
-    }
-    if ctx.model_id:
-        request["model_id"] = ctx.model_id
-    payload = _checked_json(
-        client.post(
-            "/compatibility/preview",
-            json=request,
-        )
-    )
-    return HubActionResult(payload)
-
-
-def _action_compatibility_matrix(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub compatibility-matrix`."""
-    request = {
-        "package_ids": [ctx.package_id] if ctx.package_id else None,
-        "device_ids": [ctx.device_id] if ctx.device_id else None,
-        "runtime_target_ids": [ctx.runtime_target_id] if ctx.runtime_target_id else None,
-        "include_device_inventory": ctx.include_device_inventory,
-    }
-    if ctx.model_id:
-        request["model_ids"] = [ctx.model_id]
-    payload = _checked_json(client.post("/compatibility/matrix", json=request))
-    return HubActionResult(payload)
-
-
-def _action_promote_package(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub promote-package`."""
-    target_package = ctx.source or ctx.package_id
-    if target_package is None or ctx.promotion_state is None:
-        console.print("[red]Package ID and --promotion-state are required[/red]")
-        raise typer.Exit(1)
-    payload = _checked_json(
-        client.post(
-            f"/packages/{target_package}/promote",
-            json={
-                "state": ctx.promotion_state,
-                "reason": ctx.reason,
-                "actor": ctx.actor,
-            },
-        )
-    )
-    return HubActionResult(payload)
-
-
-def _action_create_rollout_plan(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub create-rollout-plan`."""
-    devices = list(ctx.target_device_ids or [])
-    if ctx.device_id:
-        devices.append(ctx.device_id)
-    if ctx.package_id is None or not devices:
-        console.print(
-            "[red]--package-id and at least one target device are required[/red]"
-        )
-        raise typer.Exit(1)
-    request = {
-        "plan_id": ctx.rollout_plan_id,
-        "package_id": ctx.package_id,
-        "device_ids": devices,
-        "slot": ctx.slot_name,
-        "runtime_target_id": ctx.runtime_target_id,
-        "batch_size": ctx.batch_size,
-        "require_runtime_validation": ctx.require_runtime_validation,
-        "require_approval": ctx.require_approval,
-        "actor": ctx.actor,
-    }
-    if ctx.model_id:
-        request["model_id"] = ctx.model_id
-    payload = _checked_json(client.post("/rollout-plans", json=request))
-    return HubActionResult(payload)
-
-
-def _action_advance_rollout_plan(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub advance-rollout-plan`."""
-    target_plan = ctx.source or ctx.rollout_plan_id
-    if target_plan is None:
-        console.print("[red]Rollout plan ID required[/red]")
-        raise typer.Exit(1)
-    payload = _checked_json(
-        client.post(
-            f"/rollout-plans/{target_plan}/advance",
-            json={"limit": ctx.batch_size, "actor": ctx.actor},
-        )
-    )
-    return HubActionResult(payload)
-
-
-def _action_pause_rollout_plan(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub pause-rollout-plan`."""
-    target_plan = ctx.source or ctx.rollout_plan_id
-    if target_plan is None:
-        console.print("[red]Rollout plan ID required[/red]")
-        raise typer.Exit(1)
-    payload = _checked_json(
-        client.post(
-            f"/rollout-plans/{target_plan}/pause",
-            json={"reason": ctx.reason, "actor": ctx.actor},
-        )
-    )
-    return HubActionResult(payload)
-
-
-def _action_resume_rollout_plan(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub resume-rollout-plan`."""
-    target_plan = ctx.source or ctx.rollout_plan_id
-    if target_plan is None:
-        console.print("[red]Rollout plan ID required[/red]")
-        raise typer.Exit(1)
-    payload = _checked_json(
-        client.post(
-            f"/rollout-plans/{target_plan}/resume",
-            json={"reason": ctx.reason, "actor": ctx.actor},
-        )
-    )
-    return HubActionResult(payload)
-
-
-def _action_assign(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub assign`."""
-    if ctx.device_id is None or ctx.package_id is None:
-        console.print("[red]--device-id and --package-id are required[/red]")
-        raise typer.Exit(1)
-    request = {
-        "device_id": ctx.device_id,
-        "package_id": ctx.package_id,
-        "slot": ctx.slot_name,
-        "rollout_id": ctx.rollout_id,
-        "runtime_target_id": ctx.runtime_target_id,
-        "require_runtime_validation": ctx.require_runtime_validation,
-        "require_approval": ctx.require_approval,
-        "actor": ctx.actor,
-    }
-    if ctx.model_id:
-        request["model_id"] = ctx.model_id
-    payload = _checked_json(client.post("/rollouts", json=request))
-    return HubActionResult(payload)
-
-
-def _action_approve(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub approve`."""
-    target_rollout = ctx.source or ctx.rollout_id
-    if target_rollout is None:
-        console.print("[red]Rollout ID required[/red]")
-        raise typer.Exit(1)
-    payload = _checked_json(
-        client.post(
-            f"/rollouts/{target_rollout}/approve",
-            json={"reason": ctx.reason, "actor": ctx.actor},
-        )
-    )
-    return HubActionResult(payload)
-
-
-def _action_apply(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub apply`."""
-    target_rollout = ctx.source or ctx.rollout_id
-    if target_rollout is None:
-        console.print("[red]Rollout ID required[/red]")
-        raise typer.Exit(1)
-    payload = _checked_json(
-        client.post(
-            f"/rollouts/{target_rollout}/apply",
-            json={
-                "require_signature": ctx.require_signature,
-                "signing_key": ctx.key,
-                "actor": ctx.actor,
-            },
-        )
-    )
-    return HubActionResult(payload)
-
-
-def _action_rollback(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub rollback`."""
-    target_rollout = ctx.source or ctx.rollout_id
-    if target_rollout is None:
-        console.print("[red]Rollout ID required[/red]")
-        raise typer.Exit(1)
-    payload = _checked_json(
-        client.post(
-            f"/rollouts/{target_rollout}/rollback",
-            json={"reason": ctx.reason, "actor": ctx.actor},
-        )
-    )
-    return HubActionResult(payload)
-
-
-def _action_export(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub export`."""
-    import json
-    payload = _checked_json(
-        client.post(
-            "/airgap/export",
-            json={"include_packages": ctx.include_packages},
-        )
-    )
-    if ctx.output is not None:
-        ctx.output.write_text(
-            json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
-        )
-        console.print(f"[green]Hub bundle written:[/green] {ctx.output}")
-        return HubActionResult(payload, handled=True)
-    return HubActionResult(payload)
-
-
-def _action_import(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub import`."""
-    import json
-    if ctx.source is None:
-        console.print("[red]Bundle path required[/red]")
-        raise typer.Exit(1)
-    bundle = json.loads(Path(ctx.source).read_text(encoding="utf-8"))
-    payload = _checked_json(client.post("/airgap/import", json=bundle))
-    return HubActionResult(payload)
-
-
-def _action_replay_telemetry(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub replay-telemetry`."""
-    import json
-    if ctx.source is None:
-        console.print("[red]Telemetry bundle path required[/red]")
-        raise typer.Exit(1)
-    bundle = json.loads(Path(ctx.source).read_text(encoding="utf-8"))
-    payload = _checked_json(
-        client.post(
-            "/telemetry/replay",
-            json={"bundle": bundle, "device_id": ctx.device_id, "actor": ctx.actor},
-        )
-    )
-    return HubActionResult(payload)
-
-
-def _action_ingest_evidence(ctx: HubActionContext, client: Any) -> HubActionResult:
-    """`temms hub ingest-evidence`."""
-    import json
-    if ctx.source is None:
-        console.print("[red]Evidence bundle path required[/red]")
-        raise typer.Exit(1)
-    bundle = json.loads(Path(ctx.source).read_text(encoding="utf-8"))
-    payload = _checked_json(
-        client.post(
-            "/evidence/ingest",
-            json={"bundle": bundle, "device_id": ctx.device_id, "actor": ctx.actor},
-        )
-    )
-    return HubActionResult(payload)
-
-
-HUB_ACTIONS: dict[str, Callable[[HubActionContext, Any], HubActionResult]] = {
-    "enroll": _action_enroll,
-    "devices": _action_devices,
-    "packages": _action_packages,
-    "runtime-targets": _action_runtime_targets,
-    "runtime-validations": _action_runtime_validations,
-    "benchmarks": _action_benchmarks,
-    "rollouts": _action_rollouts,
-    "rollout-plans": _action_rollout_plans,
-    "status": _action_status,
-    "readiness": _action_readiness,
-    "edge-runtime-mission": _action_readiness,
-    "mission-package-plan": _action_mission_package_plan,
-    "mission-package-download": _action_mission_package_plan,
-    "mission-package-stage": _action_mission_package_stage,
-    "telemetry": _action_telemetry,
-    "evidence": _action_evidence,
-    "package-from-mlflow": _action_package_from_mlflow,
-    "register-package": _action_register_package,
-    "register-runtime": _action_register_runtime,
-    "validate-runtime": _action_validate_runtime,
-    "preview-compatibility": _action_preview_compatibility,
-    "compatibility-matrix": _action_compatibility_matrix,
-    "promote-package": _action_promote_package,
-    "create-rollout-plan": _action_create_rollout_plan,
-    "advance-rollout-plan": _action_advance_rollout_plan,
-    "pause-rollout-plan": _action_pause_rollout_plan,
-    "resume-rollout-plan": _action_resume_rollout_plan,
-    "assign": _action_assign,
-    "approve": _action_approve,
-    "apply": _action_apply,
-    "rollback": _action_rollback,
-    "export": _action_export,
-    "import": _action_import,
-    "replay-telemetry": _action_replay_telemetry,
-    "ingest-evidence": _action_ingest_evidence,
-}
-
-
-@app.command()
-def hub(
-    action: str = typer.Argument(
-        ...,
-        help=(
-            "Action: enroll, devices, packages, runtime-targets, rollouts, status, "
-            "readiness, edge-runtime-mission, verify-edge-proof, package-from-mlflow, "
-            "mission-package-plan, mission-package-download, mission-package-stage, "
-            "register-package, register-runtime, validate-runtime, runtime-validations, "
-            "benchmarks, preview-compatibility, compatibility-matrix, promote-package, "
-            "rollout-plans, create-rollout-plan, advance-rollout-plan, pause-rollout-plan, "
-            "resume-rollout-plan, assign, approve, apply, rollback, export, import, "
-            "ingest-evidence, evidence, replay-telemetry, telemetry"
-        ),
-    ),
-    source: Optional[str] = typer.Argument(
-        None,
-        help=(
-            "MLflow model URI, package path, rollout ID, air-gap bundle path, "
-            "telemetry bundle path, evidence bundle path, mission YAML path, "
-            "mission package artifact path, or edge-runtime proof path"
-        ),
-    ),
-    hub_url: str = typer.Option(
-        "http://127.0.0.1:8080",
-        "--hub-url",
-        help="TEMMS Hub Lite API base URL",
-    ),
-    token: Optional[str] = typer.Option(
-        None,
-        "--token",
-        help="Hub API token; defaults to TEMMS_HUB_TOKEN or TEMMS_API_TOKEN",
-    ),
-    device_id: Optional[str] = typer.Option(None, "--device-id", help="Target device ID"),
-    package_id: Optional[str] = typer.Option(None, "--package-id", help="Package ID"),
-    model_id: Optional[str] = typer.Option(
-        None,
-        "--model-id",
-        help="Model ID inside a multi-model package",
-    ),
-    slot_name: Optional[str] = typer.Option(None, "--slot", help="Target rollout slot"),
-    rollout_id: Optional[str] = typer.Option(None, "--rollout-id", help="Rollout ID"),
-    rollout_plan_id: Optional[str] = typer.Option(
-        None,
-        "--plan-id",
-        help="Rollout plan ID for coordinated rollout actions",
-    ),
-    target_device_ids: Optional[list[str]] = typer.Option(
-        None,
-        "--target-device-id",
-        help="Device ID included in a rollout plan; repeatable",
-    ),
-    batch_size: int = typer.Option(
-        1,
-        "--batch-size",
-        min=1,
-        help="Number of devices assigned per rollout-plan batch",
-    ),
-    runtime_target_id: Optional[str] = typer.Option(
-        None,
-        "--runtime-target-id",
-        help="Container runtime target for rollout assignment or runtime registration",
-    ),
-    mission_yaml: Optional[str] = typer.Option(
-        None,
-        "--mission-yaml",
-        help="Inline mission YAML used for mission package planning",
-    ),
-    mission_yaml_file: Optional[Path] = typer.Option(
-        None,
-        "--mission-yaml-file",
-        help="Mission YAML file used for mission package planning",
-    ),
-    mission_goal: Optional[str] = typer.Option(
-        None,
-        "--goal",
-        help="Mission goal for mission package planning",
-    ),
-    sensor: Optional[str] = typer.Option(
-        None,
-        "--sensor",
-        help="Sensor input bound into the mission package",
-    ),
-    latency_budget_ms: Optional[float] = typer.Option(
-        None,
-        "--latency-budget-ms",
-        help="p95 latency budget in milliseconds for the mission package SLO",
-    ),
-    min_throughput_ips: Optional[float] = typer.Option(
-        None,
-        "--min-throughput-ips",
-        help="Minimum inference throughput for the mission package SLO",
-    ),
-    switch_policy: Optional[str] = typer.Option(
-        None,
-        "--switch-policy",
-        help="Model switching policy bound into the mission package",
-    ),
-    confidence_threshold: Optional[float] = typer.Option(
-        None,
-        "--confidence-threshold",
-        min=0.0,
-        max=1.0,
-        help="Confidence threshold for model switching",
-    ),
-    fallback_model_id: Optional[str] = typer.Option(
-        None,
-        "--fallback-model-id",
-        help="Fallback model ID for mission package handling policy",
-    ),
-    ddil_mode: Optional[str] = typer.Option(
-        None,
-        "--ddil-mode",
-        help="DDIL behavior mode bound into the mission package",
-    ),
-    require_runtime_validation: bool = typer.Option(
-        False,
-        "--require-runtime-validation",
-        help="Require a passing runtime-target validation before rollout assignment",
-    ),
-    require_approval: bool = typer.Option(
-        False,
-        "--require-approval",
-        help="Require rollout approval before edge apply",
-    ),
-    promotion_state: Optional[str] = typer.Option(
-        None,
-        "--promotion-state",
-        help="Package promotion target: validated, approved, released, or retired",
-    ),
-    image: Optional[str] = typer.Option(
-        None,
-        "--image",
-        help="Container image for register-runtime",
-    ),
-    os_name: str = typer.Option(
-        "linux",
-        "--os",
-        help="Runtime target OS for register-runtime",
-    ),
-    arch: Optional[str] = typer.Option(
-        None,
-        "--arch",
-        help="Runtime target architecture such as amd64 or arm64",
-    ),
-    runtimes: Optional[list[str]] = typer.Option(
-        None,
-        "--runtime",
-        help="Runtime available in the target image; repeatable",
-    ),
-    providers: Optional[list[str]] = typer.Option(
-        None,
-        "--provider",
-        help="ONNX provider available in the target image; repeatable",
-    ),
-    accelerators: Optional[list[str]] = typer.Option(
-        None,
-        "--accelerator",
-        help="Accelerator available to the target image; repeatable",
-    ),
-    tracking_uri: Optional[str] = typer.Option(
-        None,
-        "--tracking-uri",
-        help="MLflow tracking URI for package-from-mlflow",
-    ),
-    model_artifact: Optional[str] = typer.Option(
-        None,
-        "--model-artifact",
-        help="Relative MLflow artifact path for package-from-mlflow",
-    ),
-    require_schema: bool = typer.Option(
-        True,
-        "--require-schema/--allow-missing-schema",
-        help="Require input/output schema metadata for package-from-mlflow",
-    ),
-    archive: bool = typer.Option(
-        True,
-        "--archive/--directory-package",
-        help="Build an archive or directory package for package-from-mlflow",
-    ),
-    overwrite: bool = typer.Option(
-        False,
-        "--overwrite",
-        help="Replace an existing Hub package-from-mlflow output",
-    ),
-    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file"),
-    include_packages: bool = typer.Option(
-        False,
-        "--include-packages",
-        help="Embed package artifacts when exporting an air-gap bundle",
-    ),
-    include_device_inventory: bool = typer.Option(
-        False,
-        "--include-device-inventory",
-        help="Include device heartbeat inventory rows in compatibility matrices",
-    ),
-    pull_image: bool = typer.Option(
-        False,
-        "--pull-image",
-        help="Pull the runtime target image before container validation",
-    ),
-    dry_run: bool = typer.Option(
-        False,
-        "--dry-run",
-        help="Print the runtime validation command without running it",
-    ),
-    local_runtime: bool = typer.Option(
-        False,
-        "--local-runtime",
-        help="Validate in-process against the runtime target inventory instead of using Docker",
-    ),
-    timeout_s: int = typer.Option(
-        300,
-        "--timeout-s",
-        help="Runtime target validation timeout in seconds",
-    ),
-    strict_metadata: bool = typer.Option(
-        True,
-        "--strict-metadata/--no-strict-metadata",
-        help="Require production package metadata during package registration and validation",
-    ),
-    require_signature: bool = typer.Option(
-        True,
-        "--require-signature/--allow-unsigned-package",
-        help="Require signature for package registration or rollout apply",
-    ),
-    signing_key: Optional[str] = typer.Option(None, "--signing-key", help="Inline signing key"),
-    signing_key_file: Optional[Path] = typer.Option(
-        None,
-        "--signing-key-file",
-        help="File containing signing key",
-    ),
-    device_profile: Optional[str] = typer.Option(
-        None,
-        "--device-profile",
-        help="Device profile for enrollment or package registration",
-    ),
-    labels: Optional[list[str]] = typer.Option(
-        None,
-        "--label",
-        help="Device enrollment label in key=value form; repeatable",
-    ),
-    inventory: Optional[list[str]] = typer.Option(
-        None,
-        "--inventory",
-        help="Device enrollment inventory in key=value form; repeatable",
-    ),
-    actor: Optional[str] = typer.Option(
-        None,
-        "--actor",
-        help="Operator or automation actor recorded in rollout audit history",
-    ),
-    reason: str = typer.Option(
-        "cli rollback",
-        "--reason",
-        help="Reason recorded for Hub Lite approval or rollback actions",
-    ),
-    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
-    require_go: bool = typer.Option(
-        False,
-        "--require-go",
-        help="Exit non-zero unless readiness or edge-runtime-mission status is go",
-    ),
-    min_runtime_fit: Optional[float] = typer.Option(
-        None,
-        "--min-runtime-fit",
-        min=0.0,
-        max=100.0,
-        help="Exit non-zero unless the selected runtime fit score meets this threshold",
-    ),
-    require_best_runtime: bool = typer.Option(
-        False,
-        "--require-best-runtime",
-        help="Exit non-zero unless the selected runtime target is the best measured eligible target",
-    ),
-    require_capability_lock: bool = typer.Option(
-        False,
-        "--require-capability-lock",
-        help="Exit non-zero unless the proof carries a locked runtime capability basis",
-    ),
-    require_proof_signature: bool = typer.Option(
-        False,
-        "--require-proof-signature",
-        help="Require and verify an edge-runtime proof attestation with --signing-key",
-    ),
-    max_proof_age_seconds: Optional[float] = typer.Option(
-        None,
-        "--max-proof-age-seconds",
-        min=0.0,
-        help="Exit non-zero unless the proof export timestamp is no older than this many seconds",
-    ),
-):
-    """Operate Hub Lite from the CLI."""
-    import json
-
-    from temms.core.signing import read_signing_key
-
-    key = _hub_package_signing_key(signing_key, signing_key_file, read_signing_key)
-
-    if action == "verify-edge-proof":
-        if source is None:
-            console.print("[red]Edge-runtime proof path required[/red]")
-            raise typer.Exit(1)
-        payload = _verify_edge_runtime_proof(
-            Path(source),
-            require_go=require_go,
-            min_runtime_fit=min_runtime_fit,
-            require_best_runtime=require_best_runtime,
-            require_capability_lock=require_capability_lock,
-            max_proof_age_seconds=max_proof_age_seconds,
-            expected_path={
-                "package_id": package_id,
-                "model_id": model_id,
-                "device_id": device_id,
-                "runtime_target_id": runtime_target_id,
-                "slot": slot_name,
-            },
-            signing_key=key,
-            require_attestation=require_proof_signature,
-        )
-        if json_output:
-            typer.echo(json.dumps(payload, indent=2, sort_keys=True))
-        else:
-            _print_edge_runtime_proof_verification(payload)
-        if not payload.get("valid") or payload.get("requested_gate_failures"):
-            raise typer.Exit(1)
-        return
-
-    import httpx
-
-    base_url = _hub_api_url(hub_url)
-    headers = _hub_auth_headers(token)
-    readiness_proof_payload: dict[str, Any] | None = None
-
-    try:
-        with httpx.Client(base_url=base_url, headers=headers, timeout=30.0) as client:
-            handler = HUB_ACTIONS.get(action)
-            if handler is None:
-                console.print(f"[red]Unknown action: {action}[/red]")
-                console.print("Valid actions: " + ", ".join(sorted(HUB_ACTIONS)))
-                raise typer.Exit(1)
-            result = handler(HubActionContext(action=action, source=source, device_id=device_id, package_id=package_id, model_id=model_id, slot_name=slot_name, rollout_id=rollout_id, rollout_plan_id=rollout_plan_id, target_device_ids=target_device_ids, batch_size=batch_size, runtime_target_id=runtime_target_id, mission_yaml=mission_yaml, mission_yaml_file=mission_yaml_file, mission_goal=mission_goal, sensor=sensor, latency_budget_ms=latency_budget_ms, min_throughput_ips=min_throughput_ips, switch_policy=switch_policy, confidence_threshold=confidence_threshold, fallback_model_id=fallback_model_id, ddil_mode=ddil_mode, require_runtime_validation=require_runtime_validation, require_approval=require_approval, promotion_state=promotion_state, image=image, os_name=os_name, arch=arch, runtimes=runtimes, providers=providers, accelerators=accelerators, tracking_uri=tracking_uri, model_artifact=model_artifact, require_schema=require_schema, archive=archive, overwrite=overwrite, output=output, include_packages=include_packages, include_device_inventory=include_device_inventory, pull_image=pull_image, dry_run=dry_run, local_runtime=local_runtime, timeout_s=timeout_s, strict_metadata=strict_metadata, require_signature=require_signature, signing_key_file=signing_key_file, device_profile=device_profile, labels=labels, inventory=inventory, actor=actor, reason=reason, require_go=require_go, min_runtime_fit=min_runtime_fit, require_best_runtime=require_best_runtime, require_capability_lock=require_capability_lock, require_proof_signature=require_proof_signature, key=key), client)
-            payload = result.payload
-            readiness_proof_payload = result.readiness_proof
-            if result.handled:
-                return
-    except typer.Exit:
-        raise
-    except Exception as e:
-        console.print(f"[red]Hub command failed: {e}[/red]")
-        raise typer.Exit(1)
-
-    gate_failures = _hub_gate_failures(
-        action,
-        payload,
-        require_go=require_go,
-        min_runtime_fit=min_runtime_fit,
-        require_best_runtime=require_best_runtime,
-        require_capability_lock=require_capability_lock,
-        runtime_context=readiness_proof_payload,
-    )
-    if output is not None and action in {"readiness", "edge-runtime-mission"}:
-        proof_payload = _hub_edge_runtime_proof_payload(
-            action=action,
-            payload=payload,
-            readiness=readiness_proof_payload or payload,
-            require_go=require_go,
-            min_runtime_fit=min_runtime_fit,
-            require_best_runtime=require_best_runtime,
-            require_capability_lock=require_capability_lock,
-            gate_failures=gate_failures,
-            signing_key=key,
-        )
-        _write_json_file(output, proof_payload)
-        if not json_output:
-            console.print(f"[green]Edge mission proof written:[/green] {output}")
-    if output is not None and action in {"mission-package-plan", "mission-package-download"}:
-        _write_json_file(output, payload)
-        if not json_output:
-            console.print(f"[green]Mission package written:[/green] {output}")
-    if json_output:
-        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
-        if action == "validate-runtime" and not payload.get("ok", True):
-            raise typer.Exit(1)
-        if action == "preview-compatibility" and not payload.get("compatible", True):
-            raise typer.Exit(1)
-        if gate_failures:
-            raise typer.Exit(1)
-        return
-    _print_hub_payload(action, payload)
-    if action == "validate-runtime" and not payload.get("ok", True):
-        raise typer.Exit(1)
-    if action == "preview-compatibility" and not payload.get("compatible", True):
-        raise typer.Exit(1)
-    if gate_failures:
-        for failure in gate_failures:
-            console.print(f"[red]Gate failed:[/red] {failure}")
-        raise typer.Exit(1)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def _hub_api_url(url: str) -> str:
@@ -3083,7 +2077,7 @@ def _control_api_url(url: str) -> str:
     return f"{base}/v1/control"
 
 
-def _hub_auth_headers(token: Optional[str]) -> dict[str, str]:
+def _hub_auth_headers(token: str | None) -> dict[str, str]:
     """Return Hub Lite auth headers for CLI calls."""
     resolved = token or os.environ.get("TEMMS_HUB_TOKEN") or os.environ.get("TEMMS_API_TOKEN")
     if not resolved:
@@ -3091,7 +2085,7 @@ def _hub_auth_headers(token: Optional[str]) -> dict[str, str]:
     return {"X-TEMMS-Token": resolved}
 
 
-def _package_signing_key(signing_key, signing_key_file, read_key) -> Optional[str]:
+def _package_signing_key(signing_key, signing_key_file, read_key) -> str | None:
     """Resolve package verification key from CLI args or TEMMS package env vars."""
     resolved = read_key(signing_key, signing_key_file)
     if resolved:
@@ -3105,7 +2099,7 @@ def _package_signing_key(signing_key, signing_key_file, read_key) -> Optional[st
     return None
 
 
-def _hub_package_signing_key(signing_key, signing_key_file, read_key) -> Optional[str]:
+def _hub_package_signing_key(signing_key, signing_key_file, read_key) -> str | None:
     """Resolve package verification key for Hub CLI calls."""
     return _package_signing_key(signing_key, signing_key_file, read_key)
 
@@ -3133,11 +2127,11 @@ def _find_runtime_target(
 
 def _hub_readiness_query_params(
     *,
-    package_id: Optional[str],
-    model_id: Optional[str],
-    device_id: Optional[str],
-    runtime_target_id: Optional[str],
-    slot: Optional[str],
+    package_id: str | None,
+    model_id: str | None,
+    device_id: str | None,
+    runtime_target_id: str | None,
+    slot: str | None,
 ) -> dict[str, str]:
     """Return non-empty query params for Hub readiness selection."""
     return {
@@ -3155,24 +2149,24 @@ def _hub_readiness_query_params(
 
 def _hub_mission_package_request_body(
     *,
-    source: Optional[str],
-    package_id: Optional[str],
-    model_id: Optional[str],
-    device_id: Optional[str],
-    runtime_target_id: Optional[str],
-    slot: Optional[str],
-    goal: Optional[str],
-    mission_yaml: Optional[str],
-    mission_yaml_file: Optional[Path],
-    sensor: Optional[str],
-    latency_budget_ms: Optional[float],
-    min_throughput_ips: Optional[float],
-    switch_policy: Optional[str],
-    confidence_threshold: Optional[float],
-    fallback_model_id: Optional[str],
-    ddil_mode: Optional[str],
+    source: str | None,
+    package_id: str | None,
+    model_id: str | None,
+    device_id: str | None,
+    runtime_target_id: str | None,
+    slot: str | None,
+    goal: str | None,
+    mission_yaml: str | None,
+    mission_yaml_file: Path | None,
+    sensor: str | None,
+    latency_budget_ms: float | None,
+    min_throughput_ips: float | None,
+    switch_policy: str | None,
+    confidence_threshold: float | None,
+    fallback_model_id: str | None,
+    ddil_mode: str | None,
     require_go: bool,
-    min_runtime_fit: Optional[float],
+    min_runtime_fit: float | None,
     require_best_runtime: bool,
     require_capability_lock: bool,
     require_proof_signature: bool,
@@ -3223,10 +2217,10 @@ def _hub_mission_package_request_body(
 
 def _hub_mission_package_stage_request(
     *,
-    source: Optional[str],
-    rollout_id: Optional[str],
-    actor: Optional[str],
-    reason: str,
+    source: str | None,
+    rollout_id: str | None,
+    actor: str | None,
+    reason: str | None,
 ) -> dict[str, Any]:
     """Return the Hub path/body for staging a mission package deployment intent."""
     if source is None:
@@ -3266,15 +2260,6 @@ def _normalize_hub_mission_package_command_path(path: str) -> str:
     return normalized
 
 
-# Proof gates live in temms.core.proof_gates — the single source of truth shared
-# with Hub enforcement, so offline `verify-edge-proof` and the Hub cannot disagree.
-_hub_gate_failures = proof_gate_failures
-_hub_runtime_fit_score = runtime_fit_score
-_runtime_target_best_gate_failures = runtime_target_best_failures
-_runtime_target_selection_for_gate = runtime_target_selection
-_runtime_capability_lock_gate_failures = runtime_capability_lock_failures
-_runtime_capability_lock_for_gate = runtime_capability_lock
-_optional_float = optional_float
 
 
 
@@ -3293,7 +2278,7 @@ _optional_float = optional_float
 
 def _parse_proof_timestamp(value: Any) -> Any:
     """Parse an ISO8601 proof timestamp into an aware UTC datetime."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     if not value:
         return None
@@ -3302,23 +2287,23 @@ def _parse_proof_timestamp(value: Any) -> Any:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _edge_runtime_proof_freshness(
     proof: dict[str, Any],
     *,
-    max_age_seconds: Optional[float],
+    max_age_seconds: float | None,
 ) -> dict[str, Any]:
     """Return freshness status for an edge-runtime proof export timestamp."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     exported_at = proof.get("exported_at")
     exported = _parse_proof_timestamp(exported_at)
     result: dict[str, Any] = {
         "schema_version": "temms-edge-runtime-proof-freshness/v1",
-        "checked_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "checked_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "exported_at": exported_at,
         "max_age_seconds": max_age_seconds,
         "age_seconds": None,
@@ -3332,7 +2317,7 @@ def _edge_runtime_proof_freshness(
         result["errors"] = ["proof exported_at timestamp is missing or invalid"]
         return result
 
-    age_seconds = max(0.0, (datetime.now(timezone.utc) - exported).total_seconds())
+    age_seconds = max(0.0, (datetime.now(UTC) - exported).total_seconds())
     result["age_seconds"] = age_seconds
     if age_seconds > max_age_seconds:
         result["status"] = "stale"
@@ -3399,11 +2384,11 @@ def _hub_edge_runtime_proof_payload(
     payload: dict[str, Any],
     readiness: dict[str, Any],
     require_go: bool,
-    min_runtime_fit: Optional[float],
+    min_runtime_fit: float | None,
     require_best_runtime: bool,
     require_capability_lock: bool,
     gate_failures: list[str],
-    signing_key: Optional[str] = None,
+    signing_key: str | None = None,
 ) -> dict[str, Any]:
     """Build a portable proof envelope for selected model/runtime/edge checks."""
     from temms.hub_lite import build_edge_runtime_proof
@@ -3420,16 +2405,16 @@ def _hub_edge_runtime_proof_payload(
     )
 
 
-def _verify_edge_runtime_proof(
+def _verify_edge_runtime_proof(  # noqa: C901  (tracked in #54)
     path: Path,
     *,
     require_go: bool,
-    min_runtime_fit: Optional[float],
+    min_runtime_fit: float | None,
     require_best_runtime: bool,
     require_capability_lock: bool,
-    max_proof_age_seconds: Optional[float],
+    max_proof_age_seconds: float | None,
     expected_path: dict[str, Any],
-    signing_key: Optional[str] = None,
+    signing_key: str | None = None,
     require_attestation: bool = False,
 ) -> dict[str, Any]:
     """Verify a portable edge-runtime proof without contacting Hub Lite."""
@@ -3532,7 +2517,7 @@ def _verify_edge_runtime_proof(
         if isinstance(proof.get("edge_execution_contract"), dict)
         else {}
     )
-    requested_gate_failures = _hub_gate_failures(
+    requested_gate_failures = proof_gates.proof_gate_failures(
         gate_action,
         gate_payload,
         require_go=require_go,
@@ -3589,7 +2574,7 @@ def _verify_edge_runtime_proof(
 
     runtime_fit_score = proof.get("runtime_fit_score")
     if runtime_fit_score is None:
-        runtime_fit_score = _hub_runtime_fit_score(gate_action, gate_payload)
+        runtime_fit_score = proof_gates.runtime_fit_score(gate_action, gate_payload)
     target_runtime_coverage = _edge_target_runtime_coverage(
         edge_execution_contract or runtime_decision
     )
@@ -3857,7 +2842,7 @@ def json_dumps(payload: Any, **kwargs: Any) -> str:
     return json.dumps(payload, **kwargs)
 
 
-def _parse_key_value_options(values: Optional[list[str]]) -> dict[str, str]:
+def _parse_key_value_options(values: list[str] | None) -> dict[str, str]:
     """Parse repeated key=value CLI options."""
     parsed: dict[str, str] = {}
     for value in values or []:
@@ -3870,7 +2855,7 @@ def _parse_key_value_options(values: Optional[list[str]]) -> dict[str, str]:
     return parsed
 
 
-def _parse_json_key_value_options(values: Optional[list[str]]) -> dict[str, Any]:
+def _parse_json_key_value_options(values: list[str] | None) -> dict[str, Any]:
     """Parse repeated key=JSON CLI options."""
     import json
 
@@ -3888,7 +2873,7 @@ def _parse_json_key_value_options(values: Optional[list[str]]) -> dict[str, Any]
     return parsed
 
 
-def _print_control_payload(action: str, payload: dict) -> None:
+def _print_control_payload(action: str, payload: dict) -> None:  # noqa: C901  (tracked in #54)
     """Print local edge control responses in operator-readable form."""
     if action in {"offline", "online"}:
         mode = "offline" if payload.get("offline_mode") else "online"
@@ -4082,578 +3067,63 @@ def _short_digest(value: Any) -> str:
     return text[:12] if text else ""
 
 
-def _print_hub_payload(action: str, payload: dict) -> None:
-    """Print common Hub Lite payloads in compact tables."""
-    if action == "enroll":
-        console.print("[green]Hub device enrolled[/green]")
-        console.print(f"Device: {payload.get('device_id', '')}")
-        console.print(f"Profile: {payload.get('profile', '')}")
-        return
-
-    if action == "devices":
-        table = Table(title="Hub Devices")
-        table.add_column("Device")
-        table.add_column("Profile")
-        table.add_column("Status")
-        table.add_column("Last Seen")
-        for device in payload.get("devices", []):
-            table.add_row(
-                device.get("device_id", ""),
-                device.get("profile", ""),
-                device.get("status", ""),
-                device.get("last_seen_at", ""),
-            )
-        console.print(table)
-        return
-
-    if action == "packages":
-        table = Table(title="Hub Packages")
-        table.add_column("Package")
-        table.add_column("Name")
-        table.add_column("Version")
-        table.add_column("Promotion")
-        table.add_column("Profiles")
-        for package in payload.get("packages", []):
-            promotion = (
-                package.get("promotion") if isinstance(package.get("promotion"), dict) else {}
-            )
-            table.add_row(
-                package.get("package_id", ""),
-                package.get("name", ""),
-                package.get("version", ""),
-                promotion.get("state", "candidate"),
-                ", ".join(package.get("device_profiles", []) or []),
-            )
-        console.print(table)
-        return
-
-    if action == "promote-package":
-        promotion = payload.get("promotion") if isinstance(payload.get("promotion"), dict) else {}
-        console.print("[green]Hub package promoted[/green]")
-        console.print(f"Package: {payload.get('package_id', '')}")
-        console.print(f"State: {promotion.get('state', '')}")
-        console.print(f"Actor: {promotion.get('actor') or ''}")
-        return
-
-    if action == "runtime-targets":
-        table = Table(title="Hub Runtime Targets")
-        table.add_column("Target")
-        table.add_column("Image")
-        table.add_column("OS/Arch")
-        table.add_column("Profiles")
-        table.add_column("Source")
-        for target in payload.get("runtime_targets", []):
-            table.add_row(
-                target.get("runtime_target_id", ""),
-                target.get("image", ""),
-                f"{target.get('os', 'linux')}/{target.get('arch') or ''}",
-                ", ".join(target.get("device_profiles", []) or []),
-                target.get("source", ""),
-            )
-        console.print(table)
-        return
-
-    if action == "readiness":
-        _print_hub_readiness(payload)
-        return
-
-    if action == "edge-runtime-mission":
-        _print_edge_runtime_mission(payload)
-        return
-
-    if action in {"mission-package-plan", "mission-package-download"}:
-        _print_mission_package_plan(payload, downloaded=action == "mission-package-download")
-        return
-
-    if action == "mission-package-stage":
-        rollout = payload.get("rollout") if isinstance(payload.get("rollout"), dict) else payload
-        console.print("[green]Mission package deployment intent staged[/green]")
-        console.print(
-            f"Rollout: {payload.get('rollout_id') or rollout.get('rollout_id', '')} "
-            f"({payload.get('rollout_state') or rollout.get('state', 'unknown')})"
-        )
-        if payload.get("package_identity_sha256"):
-            console.print(
-                f"Package identity: {payload.get('package_identity_sha256')}"
-            )
-        if rollout.get("device_id"):
-            console.print(f"Device: {rollout.get('device_id')}")
-        if rollout.get("package_id"):
-            console.print(f"Package: {rollout.get('package_id')}")
-        return
-
-    if action == "register-runtime":
-        console.print("[green]Runtime target registered[/green]")
-        console.print(f"Target: {payload.get('runtime_target_id', '')}")
-        console.print(f"Image: {payload.get('image', '')}")
-        return
-
-    if action == "package-from-mlflow":
-        package = payload.get("package", {})
-        console.print("[green]Hub package built from MLflow[/green]")
-        console.print(f"Package: {package.get('package_id', '')}")
-        console.print(f"Path: {payload.get('package_path', '')}")
-        console.print(f"Signed: {payload.get('signed', False)}")
-        return
-
-    if action == "validate-runtime":
-        status = "ready" if payload.get("dry_run") else "passed" if payload.get("ok") else "failed"
-        color = "green" if payload.get("ok") else "red"
-        console.print(f"[{color}]Runtime target validation {status}[/{color}]")
-        console.print(f"Target: {payload.get('runtime_target_id', '')}")
-        console.print(f"Image: {payload.get('image', '')}")
-        validation_record = payload.get("validation_record") or {}
-        if validation_record.get("validation_id"):
-            console.print(f"Evidence: {validation_record.get('validation_id')}")
-        console.print(f"Command: {payload.get('command_text', '')}")
-        if payload.get("exit_code") is not None:
-            console.print(f"Exit code: {payload.get('exit_code')}")
-        stdout = (payload.get("stdout") or "").strip()
-        stderr = (payload.get("stderr") or "").strip()
-        if stdout:
-            console.print(f"stdout:\n{stdout}")
-        if stderr:
-            console.print(f"stderr:\n{stderr}")
-        return
-
-    if action == "runtime-validations":
-        table = Table(title="Hub Runtime Validations")
-        table.add_column("Validation")
-        table.add_column("Package")
-        table.add_column("Runtime")
-        table.add_column("Result")
-        table.add_column("Actor")
-        table.add_column("Created")
-        for validation in payload.get("runtime_validations", []):
-            result = validation.get("result") or {}
-            status = "preview" if result.get("dry_run") else "pass" if result.get("ok") else "fail"
-            table.add_row(
-                validation.get("validation_id", ""),
-                validation.get("package_id") or validation.get("package_path") or "",
-                validation.get("runtime_target_id", ""),
-                status,
-                validation.get("actor") or "",
-                validation.get("created_at") or "",
-            )
-        console.print(table)
-        return
-
-    if action == "benchmarks":
-        table = Table(title="Hub Benchmarks")
-        table.add_column("Benchmark")
-        table.add_column("Device")
-        table.add_column("Package")
-        table.add_column("Runtime")
-        table.add_column("Model")
-        table.add_column("p95 ms")
-        table.add_column("Created")
-        for benchmark in payload.get("benchmarks", []):
-            result = benchmark.get("result") or {}
-            latency = result.get("latency_ms") if isinstance(result.get("latency_ms"), dict) else {}
-            p95 = latency.get("p95")
-            table.add_row(
-                benchmark.get("benchmark_id", ""),
-                benchmark.get("device_id") or "",
-                benchmark.get("package_id") or "",
-                benchmark.get("runtime_target_id") or "",
-                benchmark.get("model_id") or result.get("model_id") or "",
-                "" if p95 is None else str(p95),
-                benchmark.get("created_at") or "",
-            )
-        console.print(table)
-        return
-
-    if action == "preview-compatibility":
-        color = "green" if payload.get("compatible") else "red"
-        status = "compatible" if payload.get("compatible") else "blocked"
-        device = payload.get("device") or {}
-        package = payload.get("package") or {}
-        runtime_target = payload.get("runtime_target") or {}
-        console.print(f"[{color}]Rollout compatibility {status}[/{color}]")
-        console.print(f"Device: {device.get('device_id', '')} ({device.get('profile', 'unknown')})")
-        console.print(f"Package: {package.get('package_id', '')} v{package.get('version', '')}")
-        console.print(
-            "Runtime: "
-            + (
-                f"{runtime_target.get('runtime_target_id')} ({runtime_target.get('image')})"
-                if runtime_target
-                else "auto / device inventory"
-            )
-        )
-        for failure in payload.get("failures", []):
-            console.print(f"[red]Failure:[/red] {failure}")
-        return
-
-    if action == "compatibility-matrix":
-        counts = payload.get("counts") if isinstance(payload.get("counts"), dict) else {}
-        table = Table(title="Hub Compatibility Matrix")
-        table.add_column("Package")
-        table.add_column("Model")
-        table.add_column("Device")
-        table.add_column("Runtime")
-        table.add_column("Compatible")
-        table.add_column("Ready")
-        table.add_column("Validation")
-        table.add_column("Blockers")
-        for cell in payload.get("cells", []):
-            runtime = cell.get("runtime_target_id") or "device inventory"
-            validation = (
-                "pass"
-                if cell.get("runtime_validation_ready")
-                else "missing" if cell.get("runtime_target_id") else "inventory"
-            )
-            blockers = list(cell.get("assignment_blockers") or cell.get("failures") or [])
-            blockers_text = "; ".join(str(blocker) for blocker in blockers[:2])
-            if len(blockers) > 2:
-                blockers_text += f"; +{len(blockers) - 2} more"
-            table.add_row(
-                cell.get("package_id", ""),
-                cell.get("model_id") or "package",
-                cell.get("device_id", ""),
-                runtime,
-                "yes" if cell.get("compatible") else "no",
-                "yes" if cell.get("assignment_ready") else "no",
-                validation,
-                blockers_text or "ready",
-            )
-        console.print(table)
-        console.print(
-            "Ready: " f"{counts.get('assignment_ready', 0)}/{counts.get('cells', 0)} " "cells"
-        )
-        return
-
-    if action == "rollout-plans":
-        table = Table(title="Hub Rollout Plans")
-        table.add_column("Plan")
-        table.add_column("Package")
-        table.add_column("Slot")
-        table.add_column("Runtime")
-        table.add_column("State")
-        table.add_column("Batch")
-        table.add_column("Targets")
-        table.add_column("Updated")
-        for plan in payload.get("rollout_plans", []):
-            counts = plan.get("counts") if isinstance(plan.get("counts"), dict) else {}
-            target_summary = (
-                f"{counts.get('assigned', 0)} assigned / "
-                f"{counts.get('pending', 0)} pending / "
-                f"{counts.get('blocked', 0)} blocked"
-            )
-            table.add_row(
-                plan.get("plan_id", ""),
-                plan.get("package_id", ""),
-                plan.get("slot", "") or "",
-                plan.get("runtime_target_id", "") or "auto",
-                plan.get("state", ""),
-                str(plan.get("current_batch", 0)),
-                target_summary,
-                plan.get("updated_at", "") or "",
-            )
-        console.print(table)
-        return
-
-    if action in {
-        "create-rollout-plan",
-        "advance-rollout-plan",
-        "pause-rollout-plan",
-        "resume-rollout-plan",
-    }:
-        counts = payload.get("counts") if isinstance(payload.get("counts"), dict) else {}
-        console.print(f"[green]Rollout plan {payload.get('state', 'updated')}[/green]")
-        console.print(f"Plan: {payload.get('plan_id', '')}")
-        console.print(f"Package: {payload.get('package_id', '')}")
-        console.print(
-            "Targets: "
-            f"{counts.get('assigned', 0)} assigned / "
-            f"{counts.get('pending', 0)} pending / "
-            f"{counts.get('blocked', 0)} blocked"
-        )
-        rollout_ids = [
-            target.get("rollout_id")
-            for target in payload.get("targets", [])
-            if target.get("rollout_id")
-        ]
-        if rollout_ids:
-            console.print("Rollouts: " + ", ".join(str(rollout_id) for rollout_id in rollout_ids))
-        return
-
-    if action == "rollouts":
-        table = Table(title="Hub Rollouts")
-        table.add_column("Rollout")
-        table.add_column("Device")
-        table.add_column("Package")
-        table.add_column("Slot")
-        table.add_column("Runtime")
-        table.add_column("State")
-        table.add_column("Approval")
-        for rollout in payload.get("rollouts", []):
-            approval = rollout.get("approval") if isinstance(rollout.get("approval"), dict) else {}
-            table.add_row(
-                rollout.get("rollout_id", ""),
-                rollout.get("device_id", ""),
-                rollout.get("package_id", ""),
-                rollout.get("slot", "") or "",
-                rollout.get("runtime_target_id", "") or "auto",
-                rollout.get("state", ""),
-                approval.get("state", "not_required"),
-            )
-        console.print(table)
-        return
-
-    if action == "status":
-        devices = payload.get("devices", {})
-        deployments = payload.get("deployment_status", {})
-        rollouts = payload.get("rollouts", {})
-        telemetry = payload.get("telemetry_events", {})
-        console.print("[bold]Hub Deployment Status[/bold]")
-        console.print(f"Devices: {len(devices)}")
-        console.print(f"Deployment snapshots: {len(deployments)}")
-        console.print(f"Rollouts: {len(rollouts)}")
-        console.print(f"Replayed telemetry events: {len(telemetry)}")
-        return
-
-    if action == "telemetry":
-        table = Table(title="Hub Replayed Telemetry")
-        table.add_column("Event")
-        table.add_column("Type")
-        table.add_column("Device")
-        table.add_column("Timestamp")
-        for event in payload.get("events", []):
-            table.add_row(
-                event.get("event_id", ""),
-                event.get("event_type", ""),
-                event.get("device_id", "") or "",
-                event.get("timestamp", ""),
-            )
-        console.print(table)
-        return
-
-    if action == "evidence":
-        table = Table(title="Hub Evidence Bundles")
-        table.add_column("Evidence")
-        table.add_column("Device")
-        table.add_column("Exported")
-        table.add_column("Ingested")
-        table.add_column("Headline")
-        for record in payload.get("evidence_bundles", []):
-            table.add_row(
-                record.get("evidence_id", ""),
-                record.get("device_id", "") or "",
-                record.get("exported_at", "") or "",
-                record.get("ingested_at", "") or "",
-                record.get("headline", "") or "",
-            )
-        console.print(table)
-        return
-
-    if action == "ingest-evidence":
-        record = payload.get("evidence") if isinstance(payload.get("evidence"), dict) else {}
-        duplicate = " duplicate" if record.get("duplicate") else ""
-        console.print(f"[green]Evidence ingested{duplicate}[/green]")
-        console.print(f"Evidence: {record.get('evidence_id', '')}")
-        console.print(f"Device: {record.get('device_id', '') or 'unknown'}")
-        if record.get("headline"):
-            console.print(f"Headline: {record.get('headline')}")
-        return
-
-    console.print("[green]Hub command succeeded[/green]")
-    if "rollout_id" in payload:
-        console.print(f"Rollout: {payload['rollout_id']} ({payload.get('state', 'unknown')})")
-    elif "package_id" in payload:
-        console.print(f"Package: {payload['package_id']} v{payload.get('version', '')}")
-    elif "status" in payload:
-        console.print(f"Status: {payload['status']}")
 
 
-def _print_hub_readiness(payload: dict[str, Any]) -> None:
-    """Print the full deployment readiness verdict in an operator-readable form."""
-    status = str(payload.get("status") or "unknown")
-    color = _hub_status_color(status)
-    console.print(f"[bold {color}]Hub readiness: {status}[/bold {color}]")
-    if payload.get("headline"):
-        console.print(str(payload["headline"]))
-    if payload.get("next_action"):
-        console.print(f"Next action: {payload['next_action']}")
-
-    selection = payload.get("selection") if isinstance(payload.get("selection"), dict) else {}
-    if selection:
-        console.print(
-            "Path: "
-            f"{selection.get('model_id') or 'package'} -> "
-            f"{selection.get('runtime_target_id') or 'auto'} -> "
-            f"{selection.get('device_id') or 'edge'}"
-        )
-
-    table = Table(title="Readiness Gates")
-    table.add_column("Gate")
-    table.add_column("Status")
-    table.add_column("State")
-    table.add_column("Detail")
-    for gate in payload.get("gates", []):
-        if not isinstance(gate, dict):
-            continue
-        table.add_row(
-            str(gate.get("label") or gate.get("gate_id") or ""),
-            str(gate.get("status") or ""),
-            str(gate.get("state") or ""),
-            str(gate.get("detail") or ""),
-        )
-    console.print(table)
-
-    actions = [action for action in payload.get("actions", []) if isinstance(action, dict)]
-    if actions:
-        action_table = Table(title="Readiness Actions")
-        action_table.add_column("Action")
-        action_table.add_column("Kind")
-        action_table.add_column("Gate")
-        action_table.add_column("Command")
-        for action in actions:
-            command = action.get("command") if isinstance(action.get("command"), dict) else {}
-            command_text = ""
-            if command:
-                command_text = f"{command.get('method', '')} {command.get('path', '')}".strip()
-            action_table.add_row(
-                str(action.get("label") or action.get("action_id") or ""),
-                str(action.get("kind") or ""),
-                str(action.get("gate_id") or ""),
-                command_text,
-            )
-        console.print(action_table)
 
 
-def _print_mission_package_plan(payload: dict[str, Any], *, downloaded: bool) -> None:
-    """Print a compact mission package handoff summary."""
-    selection = payload.get("selection") if isinstance(payload.get("selection"), dict) else {}
-    mission = payload.get("mission") if isinstance(payload.get("mission"), dict) else {}
-    proof_gate = payload.get("proof_gate") if isinstance(payload.get("proof_gate"), dict) else {}
-    integrity = payload.get("integrity") if isinstance(payload.get("integrity"), dict) else {}
-    deployment_intent = (
-        payload.get("deployment_intent")
-        if isinstance(payload.get("deployment_intent"), dict)
-        else {}
-    )
-    edge_handoff = (
-        payload.get("edge_handoff")
-        if isinstance(payload.get("edge_handoff"), dict)
-        else {}
-    )
-    command = (
-        deployment_intent.get("command")
-        if isinstance(deployment_intent.get("command"), dict)
-        else {}
-    )
-    handoff_commands = (
-        edge_handoff.get("commands")
-        if isinstance(edge_handoff.get("commands"), dict)
-        else {}
-    )
-    status = str(proof_gate.get("status") or "planned")
-    color = _hub_status_color(status)
-    label = "downloaded" if downloaded else "planned"
-    console.print(f"[bold {color}]Mission package {label}: {status}[/bold {color}]")
-    if mission.get("goal"):
-        console.print(f"Goal: {mission.get('goal')}")
-    console.print(
-        "Path: "
-        f"{selection.get('model_id') or 'model'} -> "
-        f"{selection.get('runtime_target_id') or 'runtime'} -> "
-        f"{selection.get('device_id') or 'edge'}"
-    )
-    if selection.get("package_id"):
-        console.print(f"Package: {selection.get('package_id')}")
-    sensor_value = mission.get("sensor")
-    slot_value = mission.get("slot") or selection.get("slot")
-    if sensor_value and slot_value:
-        console.print(f"Sensor: {sensor_value} / {slot_value}")
-    elif sensor_value:
-        console.print(f"Sensor: {sensor_value}")
-    elif slot_value:
-        console.print(f"Slot: {slot_value}")
-    if integrity.get("package_identity_sha256"):
-        console.print(f"Package identity: {integrity.get('package_identity_sha256')}")
-    if deployment_intent.get("rollout_id"):
-        console.print(f"Deploy intent: {deployment_intent.get('rollout_id')}")
-    if command.get("path"):
-        console.print(f"Command: {command.get('method', 'POST')} {command.get('path')}")
-    stage_command = (
-        handoff_commands.get("stage_package")
-        if isinstance(handoff_commands.get("stage_package"), dict)
-        else {}
-    )
-    apply_command = (
-        handoff_commands.get("apply_rollout")
-        if isinstance(handoff_commands.get("apply_rollout"), dict)
-        else {}
-    )
-    if stage_command.get("path"):
-        console.print(
-            f"Stage package: {stage_command.get('method', 'POST')} {stage_command.get('path')}"
-        )
-    if apply_command.get("path"):
-        console.print(
-            f"Apply rollout: {apply_command.get('method', 'POST')} {apply_command.get('path')}"
-        )
 
 
-def _print_edge_runtime_mission(payload: dict[str, Any]) -> None:
-    """Print the compact selected model/runtime/edge proof."""
-    if not payload:
-        console.print("[red]Edge runtime mission is not available[/red]")
-        return
 
-    status = str(payload.get("status") or "unknown")
-    color = _hub_status_color(status)
-    console.print(f"[bold {color}]Edge Runtime Mission: {status}[/bold {color}]")
-    if payload.get("headline"):
-        console.print(str(payload["headline"]))
-    if payload.get("detail"):
-        console.print(str(payload["detail"]))
 
-    path = payload.get("path") if isinstance(payload.get("path"), dict) else {}
-    if path:
-        console.print(
-            "Path: "
-            f"{path.get('model_id') or 'model'} -> "
-            f"{path.get('runtime_target_id') or 'runtime'} -> "
-            f"{path.get('device_id') or 'edge'}"
-        )
-    if payload.get("next_action"):
-        console.print(f"Next action: {payload['next_action']}")
 
-    metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
-    table = Table(title="On-Device Proof")
-    table.add_column("Metric")
-    table.add_column("Status")
-    table.add_column("Detail")
-    for key in (
-        "runtime_fit",
-        "target_selection",
-        "runtime_lane",
-        "artifact_fit",
-        "live_inventory",
-        "performance",
-        "resources",
-        "runtime_validation",
-        "production_admission",
-        "ddil_repair",
-    ):
-        metric = metrics.get(key)
-        if not isinstance(metric, dict):
-            continue
-        table.add_row(
-            _mission_metric_label(key),
-            _mission_metric_status(metric),
-            _mission_metric_detail(metric),
-        )
-    console.print(table)
 
-    operator_focus = [str(item) for item in payload.get("operator_focus", []) if item]
-    if operator_focus:
-        focus_table = Table(title="Operator Focus")
-        focus_table.add_column("Item")
-        for item in operator_focus:
-            focus_table.add_row(item)
-        console.print(focus_table)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def _edge_target_assessments(contract_or_decision: dict[str, Any]) -> list[dict[str, Any]]:
@@ -4801,7 +3271,7 @@ def _edge_runtime_decision_trace_row(target: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-def _edge_runtime_decision_trace_consistency(
+def _edge_runtime_decision_trace_consistency(  # noqa: C901  (tracked in #54)
     proof: dict[str, Any],
     trace: dict[str, Any],
 ) -> dict[str, Any]:
@@ -4892,7 +3362,7 @@ def _edge_runtime_decision_trace_consistency(
     }
 
 
-def _edge_execution_manifest_consistency(proof: dict[str, Any]) -> dict[str, Any]:
+def _edge_execution_manifest_consistency(proof: dict[str, Any]) -> dict[str, Any]:  # noqa: C901  (tracked in #54)
     manifest = (
         proof.get("edge_execution_manifest")
         if isinstance(proof.get("edge_execution_manifest"), dict)
@@ -5705,7 +4175,8 @@ def _edge_runtime_trace_next(row: dict[str, Any]) -> str:
     return f"{label} ({kind})" if label else ""
 
 
-def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
+def _print_proof_header(payload: dict) -> None:
+    """Render the header section of a proof verification."""
     """Print local edge proof verification in an operator-readable format."""
     valid = bool(payload.get("valid"))
     color = "green" if valid else "red"
@@ -5722,6 +4193,9 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
             f"{path.get('device_id') or 'edge'}"
         )
 
+
+def _print_proof_path(payload: dict) -> None:
+    """Render the path section of a proof verification."""
     console.print(f"Mission status: {payload.get('status') or 'unknown'}")
     runtime_fit_score = payload.get("runtime_fit_score")
     if runtime_fit_score is not None:
@@ -5730,6 +4204,10 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
         except (TypeError, ValueError):
             score_text = f"{runtime_fit_score}/100"
         console.print(f"Runtime fit: {score_text}")
+
+
+def _print_proof_runtime_fit(payload: dict) -> None:
+    """Render the runtime fit section of a proof verification."""
     console.print(f"Recorded gate: {payload.get('gate_status') or 'unknown'}")
     console.print(f"Requested gate: {payload.get('requested_gate_status') or 'unknown'}")
     proof_freshness = (
@@ -5753,6 +4231,10 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
             except (TypeError, ValueError):
                 freshness_detail += f" / max {max_age}s"
         console.print(f"Proof freshness: {freshness_status}{freshness_detail}")
+
+
+def _print_proof_freshness(payload: dict) -> None:
+    """Render the freshness section of a proof verification."""
     path_expectations = (
         payload.get("path_expectations")
         if isinstance(payload.get("path_expectations"), dict)
@@ -5761,6 +4243,10 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
     if path_expectations and path_expectations.get("status") != "not_requested":
         console.print(f"Path binding: {path_expectations.get('status') or 'unknown'}")
 
+
+def _print_proof_runtime_decision_and_contract(payload: dict) -> None:
+    """Render the runtime decision and contract section of a proof verification."""
+    path = payload.get("path") if isinstance(payload.get("path"), dict) else {}
     runtime_decision = (
         payload.get("runtime_decision")
         if isinstance(payload.get("runtime_decision"), dict)
@@ -5847,6 +4333,10 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
             "Runtime trace consistency: "
             f"{trace_consistency.get('status') or 'unknown'}"
         )
+
+
+def _print_proof_trace_consistency(payload: dict) -> None:
+    """Render the trace consistency section of a proof verification."""
     manifest_consistency = (
         payload.get("edge_execution_manifest_consistency")
         if isinstance(payload.get("edge_execution_manifest_consistency"), dict)
@@ -5857,6 +4347,10 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
             "Execution manifest: "
             f"{manifest_consistency.get('status') or 'unknown'}"
         )
+
+
+def _print_proof_manifest_consistency(payload: dict) -> None:
+    """Render the manifest consistency section of a proof verification."""
     component_digest_consistency = (
         payload.get("component_digest_consistency")
         if isinstance(payload.get("component_digest_consistency"), dict)
@@ -5868,11 +4362,17 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
             f"{component_digest_consistency.get('status') or 'unknown'}"
         )
 
+
+def _print_proof_component_digests(payload: dict) -> None:
+    """Render the component digests section of a proof verification."""
     integrity = payload.get("integrity") if isinstance(payload.get("integrity"), dict) else {}
     recorded_hash = integrity.get("recorded_payload_sha256")
     if recorded_hash:
         console.print(f"Payload SHA256: {recorded_hash}")
 
+
+def _print_proof_integrity(payload: dict) -> None:
+    """Render the integrity section of a proof verification."""
     attestation = payload.get("attestation") if isinstance(payload.get("attestation"), dict) else {}
     if attestation:
         console.print(f"Attestation: {attestation.get('status') or 'unknown'}")
@@ -5881,81 +4381,51 @@ def _print_edge_runtime_proof_verification(payload: dict[str, Any]) -> None:
         if attestation.get("signer"):
             console.print(f"Attestation signer: {attestation['signer']}")
 
+
+def _print_proof_attestation(payload: dict) -> None:
+    """Render the attestation section of a proof verification."""
     for error in payload.get("errors", []) or []:
         console.print(f"[red]Proof invalid:[/red] {error}")
+
+
+def _print_proof_failures(payload: dict) -> None:
+    """Render the failures section of a proof verification."""
     for failure in payload.get("gate_failures", []) or []:
         console.print(f"[yellow]Recorded gate failed:[/yellow] {failure}")
     for failure in payload.get("requested_gate_failures", []) or []:
         console.print(f"[red]Requested gate failed:[/red] {failure}")
 
 
-def _mission_metric_label(key: str) -> str:
-    labels = {
-        "runtime_fit": "Runtime fit",
-        "target_selection": "Target selection",
-        "runtime_lane": "Runtime lane",
-        "artifact_fit": "Artifact fit",
-        "live_inventory": "Live inventory",
-        "performance": "Performance SLO",
-        "resources": "Resource envelope",
-        "runtime_validation": "Runtime validation",
-        "production_admission": "Production admission",
-        "ddil_repair": "DDIL repair",
-    }
-    return labels.get(key, key.replace("_", " ").title())
+def _print_edge_runtime_proof_verification(payload: dict) -> None:
+    """Render an edge-runtime proof verification, section by section."""
+    _print_proof_header(payload)
+    _print_proof_path(payload)
+    _print_proof_runtime_fit(payload)
+    _print_proof_freshness(payload)
+    _print_proof_runtime_decision_and_contract(payload)
+    _print_proof_trace_consistency(payload)
+    _print_proof_manifest_consistency(payload)
+    _print_proof_component_digests(payload)
+    _print_proof_integrity(payload)
+    _print_proof_attestation(payload)
+    _print_proof_failures(payload)
 
 
-def _mission_metric_status(metric: dict[str, Any]) -> str:
-    status = metric.get("status") or metric.get("state") or ""
-    score = metric.get("score")
-    tier = metric.get("tier")
-    if score is not None:
-        suffix = f"score {score}"
-        if tier:
-            suffix += f", {tier}"
-        return f"{status} ({suffix})" if status else suffix
-    if metric.get("apply_allowed") is not None:
-        allowed = "allowed" if metric.get("apply_allowed") else "blocked"
-        return f"{status} ({allowed})" if status else allowed
-    return str(status)
 
 
-def _mission_metric_detail(metric: dict[str, Any]) -> str:
-    if metric.get("detail"):
-        return str(metric["detail"])
-    if metric.get("label"):
-        lane = str(metric["label"])
-        engine = metric.get("execution_engine")
-        acceleration = metric.get("acceleration")
-        parts = [lane]
-        if engine:
-            parts.append(str(engine))
-        if acceleration:
-            parts.append(str(acceleration))
-        return " / ".join(parts)
-    if metric.get("state"):
-        return str(metric["state"])
-    if metric.get("best_runtime_target_id"):
-        return f"best target {metric['best_runtime_target_id']}"
-    return ""
 
 
-def _hub_status_color(status: str) -> str:
-    if status == "go":
-        return "green"
-    if status == "blocked":
-        return "red"
-    if status == "attention":
-        return "yellow"
-    return "white"
+
+
+
 
 
 @app.command()
-def mlflow(
+def mlflow(  # noqa: C901  (tracked in #54)
     action: str = typer.Argument(..., help="Action: list, register, pull"),
-    model_name: Optional[str] = typer.Argument(None, help="Model name (for pull)"),
-    model_version: Optional[str] = typer.Option(None, "--version", "-v", help="Model version"),
-    tracking_uri: Optional[str] = typer.Option(None, "--tracking-uri", help="MLflow tracking URI"),
+    model_name: str | None = typer.Argument(None, help="Model name (for pull)"),
+    model_version: str | None = typer.Option(None, "--version", "-v", help="Model version"),
+    tracking_uri: str | None = typer.Option(None, "--tracking-uri", help="MLflow tracking URI"),
     allow_dev_pull: bool = typer.Option(
         False,
         "--allow-dev-pull",
@@ -6029,8 +4499,8 @@ def mlflow(
         console.print(table)
 
     elif action == "register":
-        from temms.core.config import Config
         from temms.core.cache import ModelCache
+        from temms.core.config import Config
 
         if not config_path.exists():
             console.print("[red]TEMMS not initialized. Run 'temms init' first.[/red]")

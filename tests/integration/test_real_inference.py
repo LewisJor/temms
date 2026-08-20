@@ -17,17 +17,17 @@ import pytest
 onnxruntime = pytest.importorskip("onnxruntime", reason="onnxruntime required")
 onnx_pkg = pytest.importorskip("onnx", reason="onnx package required")
 
+from temms.conditions.store import ConditionStore
 from temms.core.cache import ModelCache, ModelFormat
-from temms.core.storage import ModelStorage
-from temms.core.loader import ONNXRuntime, ModelLoader, RuntimeType
+from temms.core.loader import ModelLoader, ONNXRuntime, RuntimeType
 from temms.core.package import PackageImporter
 from temms.core.package_catalog import package_source_sha256
 from temms.core.package_validation import validate_package
 from temms.core.signing import sign_package
+from temms.core.storage import ModelStorage
 from temms.inference.runtime import InferenceRuntime
-from temms.slots.manager import SlotManager
-from temms.conditions.store import ConditionStore
 from temms.policy.engine import PolicyEngine
+from temms.slots.manager import SlotManager
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -37,7 +37,7 @@ from temms.policy.engine import PolicyEngine
 @pytest.fixture
 def real_onnx_model(tmp_path):
     """Generate a small real ONNX model for testing."""
-    from onnx import helper, TensorProto, numpy_helper, checker
+    from onnx import TensorProto, checker, helper, numpy_helper
 
     rng = np.random.RandomState(42)
 
@@ -88,7 +88,7 @@ def real_onnx_model(tmp_path):
 @pytest.fixture
 def two_real_models(tmp_path):
     """Generate two different real ONNX models for hot-swap testing."""
-    from onnx import helper, TensorProto, numpy_helper, checker
+    from onnx import TensorProto, checker, helper, numpy_helper
 
     models = {}
     for name, seed in [("model_a", 42), ("model_b", 123)]:
@@ -140,7 +140,8 @@ def two_real_models(tmp_path):
 def real_package(tmp_path):
     """Create a complete TEMMS package with real ONNX models."""
     import hashlib
-    from onnx import helper, TensorProto, numpy_helper, checker
+
+    from onnx import TensorProto, checker, helper, numpy_helper
 
     pkg_dir = tmp_path / "test-package"
     models_dir = pkg_dir / "models"
@@ -705,7 +706,7 @@ class TestFullPipeline:
             system["model_storage"],
             require_signature=False,
         )
-        result = importer.import_package(real_package, verify=True)
+        importer.import_package(real_package, verify=True)
 
         # 2. Load policy
         policy_path = (

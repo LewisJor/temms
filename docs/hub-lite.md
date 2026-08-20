@@ -714,7 +714,11 @@ paths should still be recorded from the selected device/runtime with
 
 ## CLI
 
-The same MVP workflow is available through `temms hub`:
+The same MVP workflow is available through `temms hub`. Each action is its own
+sub-command with its own options and help text — `temms hub` lists every
+action, and `temms hub <action> --help` shows exactly the options that action
+accepts (an option belonging to a different action is a usage error, not
+silently ignored):
 
 ```bash
 temms hub enroll \

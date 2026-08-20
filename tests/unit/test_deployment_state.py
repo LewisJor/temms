@@ -1,19 +1,19 @@
 import hashlib
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 
-from temms.daemon.deployment_state import DeploymentStateStore, DeploymentState
-from temms.daemon.pending_preflight import (
-    pending_sync_preflight,
-    runtime_target_assessment_sha256,
-)
+from temms.daemon.deployment_state import DeploymentState, DeploymentStateStore
 from temms.daemon.pending_ops import (
     PendingOperationsStore,
     pending_operation_signature_status,
     verify_pending_operation_signature,
+)
+from temms.daemon.pending_preflight import (
+    pending_sync_preflight,
+    runtime_target_assessment_sha256,
 )
 from temms.hub_lite import HubLiteStore
 
@@ -576,7 +576,7 @@ def test_pending_sync_preflight_blocks_deploy_when_capability_lock_is_stale(tmp_
         package_id="pkg-stale-heartbeat",
         actor="operator:test",
     )
-    _set_hub_device_last_seen(hub, "edge-1", datetime.now(timezone.utc) - timedelta(minutes=10))
+    _set_hub_device_last_seen(hub, "edge-1", datetime.now(UTC) - timedelta(minutes=10))
     state = _pending_preflight_state(
         hub=hub,
         model_id="model-stale-heartbeat",
@@ -982,6 +982,6 @@ def _set_hub_device_last_seen(
 ) -> None:
     data = hub._read()
     data["devices"][device_id]["last_seen_at"] = (
-        last_seen_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        last_seen_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
     )
     hub._write(data)

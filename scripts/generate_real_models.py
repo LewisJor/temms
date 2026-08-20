@@ -28,7 +28,7 @@ def _ensure_onnx():
     """Ensure the onnx package is available."""
     try:
         import onnx  # noqa: F401
-        from onnx import helper, TensorProto, numpy_helper  # noqa: F401
+        from onnx import TensorProto, helper, numpy_helper  # noqa: F401
         return True
     except ImportError:
         print("ERROR: 'onnx' package not installed. Install with: pip install onnx")
@@ -50,7 +50,7 @@ def _make_conv_relu_pool_fc(
 
     Returns serialized ONNX model bytes.
     """
-    from onnx import helper, TensorProto, numpy_helper
+    from onnx import TensorProto, helper, numpy_helper
 
     rng = np.random.RandomState(seed)
 
@@ -339,7 +339,7 @@ def main():
 
     _ensure_onnx()
 
-    print(f"\n=== TEMMS Model Generator ===")
+    print("\n=== TEMMS Model Generator ===")
     print(f"Output: {args.output_dir}\n")
 
     print("1. Generating ONNX models...")

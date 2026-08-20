@@ -10,22 +10,20 @@ Tests:
 - collect_all_async (concurrent collection, error handling)
 """
 
+from unittest.mock import patch
+
 import pytest
-import asyncio
-from unittest.mock import patch, Mock, MagicMock
-from pathlib import Path
 
 from temms.conditions.collectors import (
+    GPUMetricsCollector,
+    MockWeatherCollector,
+    ScenarioCollector,
     SensorRead,
     SensorStatus,
     SystemMetricsCollector,
     TimeBasedCollector,
-    MockWeatherCollector,
-    ScenarioCollector,
-    GPUMetricsCollector,
     collect_all_async,
 )
-
 
 # ── SystemMetricsCollector ───────────────────────────────────────────
 

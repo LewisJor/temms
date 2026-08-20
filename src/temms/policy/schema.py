@@ -2,10 +2,11 @@
 Policy schema definitions using Pydantic.
 """
 
-from typing import List, Optional, Any, Dict
-from pydantic import BaseModel, Field
 from pathlib import Path
+from typing import Any
+
 import yaml
+from pydantic import BaseModel, Field
 
 
 class Condition(BaseModel):
@@ -18,15 +19,15 @@ class Condition(BaseModel):
 
 class ConditionGroup(BaseModel):
     """Group of conditions with AND/OR logic."""
-    all: Optional[List[Condition]] = None  # AND
-    any: Optional[List[Condition]] = None  # OR
+    all: list[Condition] | None = None  # AND
+    any: list[Condition] | None = None  # OR
 
 
 class PolicyAction(BaseModel):
     """Action to take when rule matches."""
     switch_to: str  # Model name to switch to
-    version: Optional[str] = None  # Pin specific version (default: latest imported)
-    preload: Optional[List[str]] = None  # Models to preload (not activate)
+    version: str | None = None  # Pin specific version (default: latest imported)
+    preload: list[str] | None = None  # Models to preload (not activate)
 
 
 class PolicyRule(BaseModel):
@@ -45,16 +46,16 @@ class PolicyRule(BaseModel):
 class SlotPolicyMetadata(BaseModel):
     """Policy metadata."""
     name: str
-    description: Optional[str] = None
+    description: str | None = None
 
 
 class SlotPolicySpec(BaseModel):
     """Policy specification."""
     slot: str  # Which slot this policy controls
-    default_model: Optional[str] = None  # Model to use when no rules match
-    rules: List[PolicyRule]
+    default_model: str | None = None  # Model to use when no rules match
+    rules: list[PolicyRule]
     allow_operator_override: bool = Field(default=True)
-    fallback_chain: List[str] = Field(default_factory=list)
+    fallback_chain: list[str] = Field(default_factory=list)
 
 
 class SlotPolicy(BaseModel):

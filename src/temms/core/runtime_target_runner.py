@@ -93,7 +93,7 @@ def build_local_runtime_target_validation_command(
     return command
 
 
-def build_runtime_target_validation_command(
+def build_runtime_target_validation_command(  # noqa: C901  (tracked in #54)
     runtime_target: dict[str, Any],
     package_path: Path,
     *,

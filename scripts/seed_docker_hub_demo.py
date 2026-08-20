@@ -18,7 +18,6 @@ from typing import Any
 from temms.core.package_archive import sign_package_artifact
 from temms.hub_lite import HubLiteStore
 
-
 PROMOTION_PATH = ("validated", "approved", "released")
 DEMO_RUNTIME_TARGET_ID = "temms-x86_64-cpu"
 DEMO_BENCHMARKS = {

@@ -13,14 +13,14 @@ import asyncio
 import logging
 import os
 import threading
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any
 
-from temms.core.loader import ModelLoader, RuntimeType, ModelRuntime
-from temms.core.cache import ModelCache, CachedModel, ModelFormat
+from temms.core.cache import CachedModel, ModelCache, ModelFormat
+from temms.core.loader import ModelLoader, ModelRuntime, RuntimeType
 from temms.core.runtime_profiles import (
     RuntimeCapabilities,
     detect_runtime_capabilities,
@@ -60,7 +60,7 @@ class SimulatedModelRuntime:
 
     def __init__(self, runtime_type: RuntimeType):
         self.runtime_type = runtime_type
-        self.model_path: Optional[Path] = None
+        self.model_path: Path | None = None
 
     def load(self, model_path: Path) -> "SimulatedModelRuntime":
         self.model_path = model_path
@@ -82,9 +82,9 @@ class LoadedModel:
     model_info: CachedModel
     loaded_at: datetime
     runtime_type: RuntimeType
-    runtime_options: Dict[str, Any] = field(default_factory=dict)
+    runtime_options: dict[str, Any] = field(default_factory=dict)
     inference_count: int = 0
-    last_inference: Optional[datetime] = None
+    last_inference: datetime | None = None
     warmed: bool = False
 
 
@@ -92,8 +92,8 @@ class LoadedModel:
 class SlotRuntime:
     """Runtime state for a single slot."""
     slot_name: str
-    loaded_model: Optional[LoadedModel] = None
-    loading_model: Optional[str] = None  # Model ID currently being loaded
+    loaded_model: LoadedModel | None = None
+    loading_model: str | None = None  # Model ID currently being loaded
     lock: threading.RLock = field(default_factory=threading.RLock)
 
 
@@ -125,10 +125,10 @@ class InferenceRuntime:
         """
         self.model_cache = model_cache
         self.model_storage = model_storage
-        self._slots: Dict[str, SlotRuntime] = {}
+        self._slots: dict[str, SlotRuntime] = {}
         self._global_lock = threading.RLock()
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
-        self._preloaded: Dict[str, LoadedModel] = {}  # model_id -> LoadedModel
+        self._preloaded: dict[str, LoadedModel] = {}  # model_id -> LoadedModel
 
     def _get_slot_runtime(self, slot_name: str) -> SlotRuntime:
         """Get or create slot runtime."""
@@ -258,7 +258,7 @@ class InferenceRuntime:
         self._warmup(loaded)
         return loaded
 
-    def _find_model_file(self, model_dir: Path, format: ModelFormat) -> Optional[Path]:
+    def _find_model_file(self, model_dir: Path, format: ModelFormat) -> Path | None:
         """Find the model file in a directory based on format."""
         extensions = {
             ModelFormat.ONNX: [".onnx"],
@@ -280,11 +280,11 @@ class InferenceRuntime:
 
         return None
 
-    def _runtime_options_for_model(self, model_info: CachedModel) -> Dict[str, Any]:
+    def _runtime_options_for_model(self, model_info: CachedModel) -> dict[str, Any]:
         """Build runtime-specific loader options from package metadata."""
         constraints = model_info.metadata.get("runtime_constraints", {}) or {}
         runtime_options = model_info.metadata.get("runtime_options", {}) or {}
-        options: Dict[str, Any] = {}
+        options: dict[str, Any] = {}
         capabilities = detect_runtime_capabilities()
         capability_dict = self._capabilities_to_dict(capabilities)
         if _simulate_runtime_loads():
@@ -349,9 +349,9 @@ class InferenceRuntime:
 
     def _simulated_capabilities_for_model(
         self,
-        capabilities: Dict[str, Any],
-        constraints: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        capabilities: dict[str, Any],
+        constraints: dict[str, Any],
+    ) -> dict[str, Any]:
         """Overlay required model runtimes for explicit simulation-only loads."""
         simulated = dict(capabilities)
         runtimes = dict(simulated.get("runtimes") or {})
@@ -375,8 +375,8 @@ class InferenceRuntime:
 
     def _capabilities_to_dict(
         self,
-        capabilities: RuntimeCapabilities | Dict[str, Any] | Any,
-    ) -> Dict[str, Any]:
+        capabilities: RuntimeCapabilities | dict[str, Any] | Any,
+    ) -> dict[str, Any]:
         """Return runtime capability data as a plain dict for compatibility checks."""
         if isinstance(capabilities, RuntimeCapabilities):
             return capabilities.to_dict()
@@ -391,10 +391,10 @@ class InferenceRuntime:
     async def infer(
         self,
         slot_name: str,
-        model_id: Optional[str],
+        model_id: str | None,
         input_data: bytes,
         content_type: str = "application/octet-stream",
-    ) -> List[Any]:
+    ) -> list[Any]:
         """
         Run inference on a slot's currently-serving model.
 
@@ -417,7 +417,7 @@ class InferenceRuntime:
         """
         slot_runtime = self._get_slot_runtime(slot_name)
 
-        def _infer() -> List[Any]:
+        def _infer() -> list[Any]:
             with slot_runtime.lock:
                 loaded = slot_runtime.loaded_model
                 if loaded is None:
@@ -467,7 +467,7 @@ class InferenceRuntime:
         loaded.inference_count += 1
         logger.info(f"Warmed model {loaded.model_id} with shape {shape}")
 
-    def _warmup_input_shape(self, loaded: LoadedModel) -> List[int]:
+    def _warmup_input_shape(self, loaded: LoadedModel) -> list[int]:
         """Best-effort concrete input shape for a warmup inference.
 
         Prefers the runtime session's declared input shape (replacing dynamic
@@ -611,7 +611,7 @@ class InferenceRuntime:
                 return array
         return array
 
-    def _postprocess_output(self, outputs: Any) -> List[Any]:
+    def _postprocess_output(self, outputs: Any) -> list[Any]:
         """
         Postprocess model outputs.
 
@@ -665,8 +665,8 @@ class InferenceRuntime:
     async def try_fallback_chain(
         self,
         slot_name: str,
-        fallback_chain: List[str],
-    ) -> Optional[str]:
+        fallback_chain: list[str],
+    ) -> str | None:
         """
         Try loading models from fallback chain until one succeeds.
 
@@ -760,7 +760,7 @@ class InferenceRuntime:
                 logger.warning(f"Error unloading preloaded model {model_id}: {e}")
             del self._preloaded[model_id]
 
-    def get_slot_info(self, slot_name: str) -> Dict[str, Any]:
+    def get_slot_info(self, slot_name: str) -> dict[str, Any]:
         """Get information about a slot's runtime state."""
         slot_runtime = self._get_slot_runtime(slot_name)
 
@@ -780,7 +780,7 @@ class InferenceRuntime:
                 "loading_model": slot_runtime.loading_model,
             }
 
-    def get_all_slots_info(self) -> Dict[str, Dict[str, Any]]:
+    def get_all_slots_info(self) -> dict[str, dict[str, Any]]:
         """Get information about all slots."""
         with self._global_lock:
             return {

@@ -124,7 +124,11 @@ def test_invalid_spec_leaves_no_partial_package(tmp_path):
 
     with pytest.raises(MissionSpecError):
         compile_mission_package(mission, out)
-    assert not out.exists() or not any(out.iterdir())
+
+    # Validation runs before anything is written, so no package directory is
+    # created at all -- not merely an empty one left behind.
+    assert list(out.glob("**/*")) == [] if out.exists() else not out.exists()
+    assert not (out / "vision-1-0-0").exists()
 
 
 def test_overwrite_required_to_replace(mission, tmp_path):

@@ -12,28 +12,25 @@ Responsibilities:
 
 import asyncio
 import hashlib
-import signal
 import logging
 import os
+import signal
 import socket
 import time
-from pathlib import Path
-from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
-from temms.slots.manager import SlotManager, SlotState
-from temms.conditions.store import ConditionStore
 from temms.conditions.collectors import AsyncConditionCollector, ConditionCollector
-from temms.policy.engine import PolicyEngine
+from temms.conditions.store import ConditionStore
 from temms.core.cache import ModelCache
 from temms.core.storage import ModelStorage
-from temms.inference.runtime import InferenceRuntime
-from temms.inference.server import create_app
-from temms.daemon.deployment_state import DeploymentStateStore, DeploymentState
+from temms.daemon.deployment_state import DeploymentState, DeploymentStateStore
 from temms.daemon.pending_ops import PendingOperationsStore
 from temms.hub_lite import HubLiteStore
-from temms.telemetry import TelemetryBuffer
+from temms.inference.runtime import InferenceRuntime
+from temms.inference.server import create_app
 from temms.observability import (
     condition_update_count,
     policy_decision_count,
@@ -43,6 +40,9 @@ from temms.observability import (
     swap_latency_ms,
     uptime_gauge,
 )
+from temms.policy.engine import PolicyEngine
+from temms.slots.manager import SlotManager, SlotState
+from temms.telemetry import TelemetryBuffer
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ DEMO_EDGE_STORAGE_AVAILABLE_MB = 24576.0
 class ActivationPreflightBlocked(RuntimeError):
     """Raised when local edge readiness refuses a model activation."""
 
-    def __init__(self, message: str, *, readiness: Dict[str, Any], blocking_gates: List[Dict[str, Any]]):
+    def __init__(self, message: str, *, readiness: dict[str, Any], blocking_gates: list[dict[str, Any]]):
         super().__init__(message)
         self.readiness = readiness
         self.blocking_gates = blocking_gates
@@ -80,16 +80,16 @@ def _hub_base_url(url: str) -> str:
     return f"{base}/v1/hub"
 
 
-def _hub_headers(token: Optional[str]) -> Dict[str, str]:
+def _hub_headers(token: str | None) -> dict[str, str]:
     """Return auth headers for Hub Lite sync requests."""
     if not token:
         return {}
     return {"X-TEMMS-Token": token}
 
 
-def _hub_error_payload(response: Any) -> Dict[str, Any]:
+def _hub_error_payload(response: Any) -> dict[str, Any]:
     """Return structured telemetry for a failed Hub Lite HTTP response."""
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "status_code": getattr(response, "status_code", None),
         "failure_kind": "http_error",
     }
@@ -127,7 +127,7 @@ def _hub_error_payload(response: Any) -> Dict[str, Any]:
     return payload
 
 
-def _activation_blocking_gates(readiness: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _activation_blocking_gates(readiness: dict[str, Any]) -> list[dict[str, Any]]:
     """Return readiness gates that should block local policy/fallback activation."""
     blocked_gate_ids = {
         "model_package",
@@ -137,7 +137,7 @@ def _activation_blocking_gates(readiness: Dict[str, Any]) -> List[Dict[str, Any]
         "edge_target",
     }
     attention_gate_ids = {"performance_fit", "resource_envelope", "edge_target"}
-    blocking: List[Dict[str, Any]] = []
+    blocking: list[dict[str, Any]] = []
     for gate in readiness.get("gates") or []:
         if not isinstance(gate, dict):
             continue
@@ -163,7 +163,7 @@ def _activation_blocking_gates(readiness: Dict[str, Any]) -> List[Dict[str, Any]
     return blocking
 
 
-def _gate_summary(gates: List[Dict[str, Any]]) -> str:
+def _gate_summary(gates: list[dict[str, Any]]) -> str:
     parts = [
         f"{gate.get('label') or gate.get('gate_id')} {gate.get('state')}: {gate.get('detail')}"
         for gate in gates[:3]
@@ -204,7 +204,7 @@ def _env_float(name: str, default: float) -> float:
         raise ValueError(f"{name} must be a number") from exc
 
 
-def _float_or_none(value: Any) -> Optional[float]:
+def _float_or_none(value: Any) -> float | None:
     """Return a finite float for numeric telemetry values."""
     if isinstance(value, bool):
         return None
@@ -219,11 +219,11 @@ def _float_or_none(value: Any) -> Optional[float]:
 
 
 def _apply_resource_floor(
-    resource: Dict[str, Any],
+    resource: dict[str, Any],
     *,
     available_mb: float,
     total_mb: float,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Raise demo resource telemetry to a deterministic healthy floor."""
     current_available = _float_or_none(resource.get("available_mb"))
     current_total = _float_or_none(resource.get("total_mb"))
@@ -234,7 +234,7 @@ def _apply_resource_floor(
     return resource
 
 
-def _apply_demo_edge_inventory_floor(inventory: Dict[str, Any]) -> Dict[str, Any]:
+def _apply_demo_edge_inventory_floor(inventory: dict[str, Any]) -> dict[str, Any]:
     """Keep the local Docker demo from starting in accidental resource drift."""
     memory = inventory.get("memory") if isinstance(inventory.get("memory"), dict) else {}
     storage = inventory.get("storage") if isinstance(inventory.get("storage"), dict) else {}
@@ -318,7 +318,7 @@ def _resolve_non_root_path_defaults(config: "DaemonConfig") -> None:
         config.policy_dir = fallback_data_dir / "policies"
 
 
-def _read_optional_file(path: Optional[Path]) -> Optional[str]:
+def _read_optional_file(path: Path | None) -> str | None:
     """Read a small optional text file."""
     if path is None:
         return None
@@ -326,8 +326,8 @@ def _read_optional_file(path: Optional[Path]) -> Optional[str]:
 
 
 def _rollout_history_entries_match(
-    local_entry: Dict[str, Any],
-    central_entry: Dict[str, Any],
+    local_entry: dict[str, Any],
+    central_entry: dict[str, Any],
 ) -> bool:
     """Return whether two rollout history entries represent the same transition."""
     return (
@@ -350,31 +350,31 @@ class DaemonConfig:
     inference_port: int = 8080
 
     # Data paths
-    db_path: Optional[Path] = None
-    model_dir: Optional[Path] = None
-    policy_dir: Optional[Path] = None
+    db_path: Path | None = None
+    model_dir: Path | None = None
+    policy_dir: Path | None = None
 
     # Behavior
     auto_start_slots: bool = True  # Start slots with default models
     max_inference_workers: int = 4
-    deployment_state_path: Optional[Path] = None
-    pending_operations_path: Optional[Path] = None
-    hub_state_path: Optional[Path] = None
-    telemetry_path: Optional[Path] = None
+    deployment_state_path: Path | None = None
+    pending_operations_path: Path | None = None
+    hub_state_path: Path | None = None
+    telemetry_path: Path | None = None
     offline_mode: bool = False
-    api_token: Optional[str] = None
-    hub_url: Optional[str] = None
-    hub_token: Optional[str] = None
-    hub_device_id: Optional[str] = None
-    hub_device_profile: Optional[str] = None
+    api_token: str | None = None
+    hub_url: str | None = None
+    hub_token: str | None = None
+    hub_device_id: str | None = None
+    hub_device_profile: str | None = None
     hub_sync_interval_s: float = 30.0
     edge_heartbeat_interval_s: float = 60.0
     hub_auto_apply: bool = False
     rollout_require_signature: bool = True
-    rollout_signing_key: Optional[str] = None
-    rollout_signing_key_file: Optional[Path] = None
+    rollout_signing_key: str | None = None
+    rollout_signing_key_file: Path | None = None
 
-    def __post_init__(self):
+    def __post_init__(self):  # noqa: C901  (tracked in #54)
         """Set default paths if not provided."""
         if self.inference_host == "0.0.0.0":
             self.inference_host = (
@@ -458,7 +458,7 @@ class TEMMSDaemon:
         policy_engine: PolicyEngine,
         model_cache: ModelCache,
         model_storage: ModelStorage,
-        collectors: Optional[List[ConditionCollector]] = None,
+        collectors: list[ConditionCollector] | None = None,
     ):
         self.config = config
         self.slot_manager = slot_manager
@@ -500,16 +500,16 @@ class TEMMSDaemon:
         self._shutdown_event = asyncio.Event()
         self._conditions_changed = asyncio.Event()  # Issue #3: event coordination
         self._server = None
-        self._tasks: List[asyncio.Task] = []
+        self._tasks: list[asyncio.Task] = []
         self._started_at = time.time()
-        self._last_hub_sync_at: Optional[float] = None
+        self._last_hub_sync_at: float | None = None
 
         self.deployment_state = DeploymentStateStore(config.deployment_state_path)
         self.pending_operations = PendingOperationsStore(config.pending_operations_path)
         self.hub_lite = HubLiteStore(config.hub_state_path)
         self.telemetry = TelemetryBuffer(config.telemetry_path)
 
-    def _emit_telemetry(self, event_type: str, payload: Dict[str, Any]) -> None:
+    def _emit_telemetry(self, event_type: str, payload: dict[str, Any]) -> None:
         """Best-effort daemon telemetry append."""
         try:
             self.telemetry.append(event_type, payload, source="daemon")
@@ -767,16 +767,16 @@ class TEMMSDaemon:
                     timeout=self.config.condition_interval_s,
                 )
                 break  # Shutdown requested
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass  # Continue loop
 
         logger.info("Condition collection loop stopped")
 
-    async def _collect_conditions_with_sources(self) -> List[tuple[str, Any, str, int]]:
+    async def _collect_conditions_with_sources(self) -> list[tuple[str, Any, str, int]]:
         """Collect condition values while retaining each collector's source metadata."""
         loop = asyncio.get_running_loop()
 
-        async def collect_one(collector: ConditionCollector) -> List[tuple[str, Any, str, int]]:
+        async def collect_one(collector: ConditionCollector) -> list[tuple[str, Any, str, int]]:
             source = str(getattr(collector, "source_name", None) or "collector")
             priority = int(getattr(collector, "source_priority", 100))
             health_prefix = f"runtime.collectors.{_condition_path_segment(source)}"
@@ -839,7 +839,7 @@ class TEMMSDaemon:
             *(collect_one(collector) for collector in self.collectors),
             return_exceptions=True,
         )
-        collected: List[tuple[str, Any, str, int]] = []
+        collected: list[tuple[str, Any, str, int]] = []
         for result in results:
             if isinstance(result, Exception):
                 logger.error(f"Condition collection task failed: {result}")
@@ -896,7 +896,7 @@ class TEMMSDaemon:
 
         logger.info("Policy evaluation loop stopped")
 
-    async def _reconciliation_loop(self) -> None:
+    async def _reconciliation_loop(self) -> None:  # noqa: C901  (tracked in #54)
         """Simple desired-vs-actual reconciliation loop for deployment lifecycle."""
         while self._running:
             try:
@@ -947,7 +947,7 @@ class TEMMSDaemon:
             try:
                 await asyncio.wait_for(self._shutdown_event.wait(), timeout=1.0)
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
     async def _hub_sync_loop(self) -> None:
@@ -973,7 +973,7 @@ class TEMMSDaemon:
                     timeout=self.config.hub_sync_interval_s,
                 )
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
         logger.info("Hub Lite sync loop stopped")
@@ -998,12 +998,12 @@ class TEMMSDaemon:
                     timeout=self.config.edge_heartbeat_interval_s,
                 )
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
         logger.info("Local edge heartbeat loop stopped")
 
-    def _edge_heartbeat_once(self) -> Dict[str, Any]:
+    def _edge_heartbeat_once(self) -> dict[str, Any]:
         """Refresh this daemon's local Hub Lite heartbeat and capability inventory."""
         device_id = self.config.hub_device_id or socket.gethostname()
         inventory = self._hub_inventory()
@@ -1086,7 +1086,7 @@ class TEMMSDaemon:
         self,
         client: Any,
         *,
-        rollouts: List[Dict[str, Any]],
+        rollouts: list[dict[str, Any]],
         device_id: str,
     ) -> int:
         """Download package archives for assigned local rollouts."""
@@ -1163,7 +1163,7 @@ class TEMMSDaemon:
 
         return downloaded
 
-    def _hub_inventory(self) -> Dict[str, Any]:
+    def _hub_inventory(self) -> dict[str, Any]:
         """Return runtime inventory for hub enrollment and heartbeat."""
         from temms.core.runtime_profiles import (
             detect_runtime_capabilities,
@@ -1182,7 +1182,7 @@ class TEMMSDaemon:
         }
         return inventory
 
-    def _hub_deployment_status(self) -> Dict[str, Any]:
+    def _hub_deployment_status(self) -> dict[str, Any]:
         """Return the local deployment snapshot sent on heartbeat."""
         state = self.deployment_state.get_state()
         return {
@@ -1210,12 +1210,12 @@ class TEMMSDaemon:
     def _mirror_hub_snapshot(
         self,
         *,
-        packages: List[Dict[str, Any]],
-        rollouts: List[Dict[str, Any]],
+        packages: list[dict[str, Any]],
+        rollouts: list[dict[str, Any]],
         device_id: str,
-        profile: Optional[str],
-        inventory: Dict[str, Any],
-    ) -> Dict[str, int]:
+        profile: str | None,
+        inventory: dict[str, Any],
+    ) -> dict[str, int]:
         """Mirror central Hub Lite package and rollout assignments locally."""
         self.hub_lite.enroll_device(device_id, profile=profile, inventory=inventory)
         packages_by_id = {}
@@ -1252,7 +1252,7 @@ class TEMMSDaemon:
 
         return {"packages": len(packages_by_id), "rollouts": mirrored_rollouts}
 
-    def _merge_cached_package_artifact(self, central_package: Dict[str, Any]) -> Dict[str, Any]:
+    def _merge_cached_package_artifact(self, central_package: dict[str, Any]) -> dict[str, Any]:
         """Preserve a valid local artifact path when central source did not change."""
         package_id = central_package.get("package_id")
         if not package_id:
@@ -1289,7 +1289,7 @@ class TEMMSDaemon:
         self,
         client: Any,
         *,
-        central_rollouts: List[Dict[str, Any]],
+        central_rollouts: list[dict[str, Any]],
         device_id: str,
     ) -> None:
         """Replay local rollout state transitions back to central Hub Lite."""
@@ -1320,11 +1320,11 @@ class TEMMSDaemon:
 
     def _rollout_history_entries_to_push(
         self,
-        local: Dict[str, Any],
-        central: Dict[str, Any],
+        local: dict[str, Any],
+        central: dict[str, Any],
         *,
         device_id: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Return local rollout history entries missing from central state."""
         local_history = local.get("history") or []
         central_history = central.get("history") or []
@@ -1476,7 +1476,7 @@ class TEMMSDaemon:
             except Exception as e:
                 logger.error(f"Policy evaluation failed for slot {slot.name}: {e}")
 
-    async def _handle_preloads(self, slot_name: str, preload_list: List[str]) -> None:
+    async def _handle_preloads(self, slot_name: str, preload_list: list[str]) -> None:
         """Preload models specified in policy result."""
         for model_name in preload_list:
             model = self.model_cache.find_model(model_name)
@@ -1495,8 +1495,8 @@ class TEMMSDaemon:
         new_model_id: str,
         trigger_type: str,
         trigger_detail: str,
-        conditions: Dict[str, Any],
-        decision_metadata: Optional[Dict[str, Any]] = None,
+        conditions: dict[str, Any],
+        decision_metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Execute model switch with logging.
@@ -1582,18 +1582,18 @@ class TEMMSDaemon:
     async def _execute_fallback(
         self,
         slot_name: str,
-        fallback_chain: List[str],
-        conditions: Dict[str, Any],
-        selected_model: Optional[str] = None,
+        fallback_chain: list[str],
+        conditions: dict[str, Any],
+        selected_model: str | None = None,
         trigger_detail: str = "primary_failed",
-        load_error: Optional[str] = None,
+        load_error: str | None = None,
         preserve_slot_state_on_failure: bool = False,
     ) -> None:
         """Execute fallback chain for slot."""
         logger.info(f"Executing fallback chain for {slot_name}: {fallback_chain}")
 
-        attempted: List[str] = []
-        failures: List[str] = []
+        attempted: list[str] = []
+        failures: list[str] = []
         if selected_model and load_error:
             failures.append(f"{selected_model}: {load_error}")
 
@@ -1674,10 +1674,10 @@ class TEMMSDaemon:
     def _build_activation_audit(
         self,
         model_id: str,
-        activation_preflight: Optional[Dict[str, Any]],
+        activation_preflight: dict[str, Any] | None,
         *,
-        extra: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Assemble the audit_metadata recorded alongside a model activation."""
         audit_metadata = self._model_audit_metadata(model_id)
         if activation_preflight:
@@ -1693,9 +1693,9 @@ class TEMMSDaemon:
         model_id: str,
         trigger_type: str,
         trigger_detail: str,
-        conditions: Dict[str, Any],
-        extra_audit: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        conditions: dict[str, Any],
+        extra_audit: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Preflight, hot-load, and activate a model on a slot.
 
         Shared by startup auto-start and policy-driven switches: both mark the
@@ -1736,8 +1736,8 @@ class TEMMSDaemon:
         model_id: str,
         trigger_type: str,
         trigger_detail: str,
-        conditions: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
+        conditions: dict[str, Any],
+    ) -> dict[str, Any] | None:
         """Block local activation when Hub Lite proves this edge cannot host the model."""
         model = self.model_cache.get_model(model_id)
         if model is None or not model.package_id:
@@ -1789,7 +1789,7 @@ class TEMMSDaemon:
             blocking_gates=blocking_gates,
         )
 
-    def _model_audit_metadata(self, model_id: str | None) -> Dict[str, Any]:
+    def _model_audit_metadata(self, model_id: str | None) -> dict[str, Any]:
         """Return compact model/package context for decision logs and telemetry."""
         if not model_id:
             return {}
@@ -1867,7 +1867,7 @@ class TEMMSDaemon:
         await serve_with_shutdown()
 
 
-async def start_daemon(config: Optional[DaemonConfig] = None) -> None:
+async def start_daemon(config: DaemonConfig | None = None) -> None:
     """
     Start TEMMS daemon.
 

@@ -3,9 +3,9 @@ TEMMS configuration management.
 """
 
 from pathlib import Path
-from typing import Optional
-from pydantic import BaseModel, Field
+
 import yaml
+from pydantic import BaseModel, Field
 
 
 class DatabaseConfig(BaseModel):
@@ -38,7 +38,7 @@ class PolicyConfig(BaseModel):
 class SyncConfig(BaseModel):
     """Sync configuration."""
     enable_cloud_sync: bool = Field(default=False)
-    cloud_endpoint: Optional[str] = None
+    cloud_endpoint: str | None = None
     sync_interval_s: int = Field(default=300)
 
 

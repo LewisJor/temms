@@ -15,8 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from temms import hub_lite as hub
-from temms.cli import main as cli
+from temms.core import proof_gates
 from temms.core.proof_gates import (
     proof_gate_failures,
     runtime_capability_lock,
@@ -47,28 +46,45 @@ PLACEMENTS = {
 }
 
 
-# -- the equivalence that matters -----------------------------------------
+# -- one implementation, structurally ------------------------------------
+
+
+def test_cli_and_hub_route_through_the_shared_module():
+    """The property that prevents the original bug from returning.
+
+    Comparing cli(x) == hub(x) was meaningful while each kept its own copy. Now
+    both call temms.core.proof_gates directly, so that comparison would be
+    f(x) == f(x) -- a tautology. What still has teeth is the structural claim:
+    neither module may hold its own gate implementation.
+    """
+    import temms.cli.main as cli_mod
+    import temms.hub_lite as hub_mod
+
+    assert cli_mod.proof_gates is proof_gates
+    assert hub_mod.proof_gates is proof_gates
+
+    # And neither may define a competing local implementation.
+    for mod in (cli_mod, hub_mod):
+        for name in dir(mod):
+            if "gate_failures" in name or "capability_lock_for" in name:
+                attr = getattr(mod, name)
+                assert getattr(attr, "__module__", None) != mod.__name__, (
+                    f"{mod.__name__}.{name} is a local gate implementation; "
+                    "gates must live only in temms.core.proof_gates"
+                )
 
 
 @pytest.mark.parametrize("placement", sorted(PLACEMENTS))
-def test_cli_and_hub_agree_on_capability_lock(placement):
-    """The drift that motivated this module: top-level locks must resolve in both."""
+def test_capability_lock_resolves_from_every_placement(placement):
+    """The drift that motivated the module: a top-level lock must resolve too."""
     ctx = PLACEMENTS[placement]("runtime_capability_lock", VALID_LOCK)
-    assert cli._runtime_capability_lock_gate_failures(ctx) == (
-        hub._runtime_capability_lock_gate_failures(ctx)
-    )
-    # and it must actually PASS — a shared implementation that blocks everything
-    # would satisfy equivalence while being useless.
-    assert cli._runtime_capability_lock_gate_failures(ctx) == []
+    assert runtime_capability_lock_failures(ctx) == []
 
 
 @pytest.mark.parametrize("placement", sorted(PLACEMENTS))
-def test_cli_and_hub_agree_on_target_selection(placement):
+def test_target_selection_resolves_from_every_placement(placement):
     ctx = PLACEMENTS[placement]("target_selection", BEST_SELECTION)
-    assert cli._runtime_target_best_gate_failures(ctx) == (
-        hub._runtime_target_best_gate_failures(ctx)
-    )
-    assert cli._runtime_target_best_gate_failures(ctx) == []
+    assert runtime_target_best_failures(ctx) == []
 
 
 @pytest.mark.parametrize(
@@ -83,33 +99,28 @@ def test_cli_and_hub_agree_on_target_selection(placement):
         {"runtime_capability_lock": {**VALID_LOCK, "failures": ["provider missing"]}},
     ],
 )
-def test_cli_and_hub_agree_on_rejection_cases(ctx):
-    """Both sides must reject the same malformed proofs, with the same reasons."""
-    assert cli._runtime_capability_lock_gate_failures(ctx) == (
-        hub._runtime_capability_lock_gate_failures(ctx)
-    )
+def test_malformed_proofs_are_rejected(ctx):
+    assert runtime_capability_lock_failures(ctx) != []
 
 
-def test_full_gate_agreement_across_both_entrypoints():
+def test_full_gate_passes_a_complete_proof():
     payload = {"status": "go", "runtime_fit": {"score": 95}}
     ctx = {"runtime_capability_lock": VALID_LOCK, "target_selection": BEST_SELECTION}
-    kwargs = dict(
+    assert proof_gate_failures(
+        "readiness",
+        payload,
         require_go=True,
         min_runtime_fit=90,
         require_best_runtime=True,
         require_capability_lock=True,
         runtime_context=ctx,
-    )
-    assert cli._hub_gate_failures("readiness", payload, **kwargs) == (
-        hub.edge_runtime_proof_gate_failures("readiness", payload, **kwargs)
-    )
-    assert cli._hub_gate_failures("readiness", payload, **kwargs) == []
+    ) == []
 
 
-def test_non_dict_context_does_not_crash_either_side():
-    """The Hub previously raised AttributeError where the CLI returned {}."""
-    assert cli._runtime_capability_lock_for_gate(None) == {}
-    assert hub._runtime_capability_lock_for_proof_gate(None) == {}
+def test_non_dict_context_does_not_crash():
+    """The Hub copy used to raise AttributeError here; the CLI copy returned {}."""
+    assert runtime_capability_lock(None) == {}
+    assert runtime_target_selection(None) == {}
 
 
 # -- gate semantics --------------------------------------------------------
