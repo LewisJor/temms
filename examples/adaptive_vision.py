@@ -2,7 +2,7 @@
 
 import asyncio
 
-from temms import BestFeasibleSelector, Constraint, ModelRef, Operator, TEMMS
+from temms import TEMMS, BestFeasibleSelector, Constraint, ModelRef, Operator
 from temms.adapters import InMemoryRuntime
 
 
