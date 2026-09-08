@@ -25,9 +25,7 @@ from temms.cli.hub.commands import (
     ListDevices,
     ListPackages,
     ListRuntimeValidations,
-    PauseRolloutPlan,
     Readiness,
-    ResumeRolloutPlan,
 )
 from temms.cli.hub.transport import HttpHubTransport, HubTransportError
 
@@ -139,17 +137,6 @@ def test_enroll_sends_only_its_own_inputs():
     }
 
 
-@pytest.mark.parametrize(
-    "command,verb", [(PauseRolloutPlan, "pause"), (ResumeRolloutPlan, "resume")]
-)
-def test_plan_lifecycle_shares_one_implementation(command, verb):
-    transport = FakeTransport()
-
-    command(transport, plan_id="plan-7", reason="storm", actor="op:jo").execute()
-
-    _, path, body = transport.calls[0]
-    assert path == f"/rollout-plans/plan-7/{verb}"
-    assert body == {"reason": "storm", "actor": "op:jo"}
 
 
 def test_import_posts_the_bundle_contents(tmp_path):
@@ -335,11 +322,6 @@ def test_gate_failures_are_quiet_in_json_mode():
             {"require_signature": True, "signing_key": "K", "actor": "op"},
         ),
         (
-            lambda t: commands.AdvanceRolloutPlan(t, resource_id="p1", batch_size=5, actor="op"),
-            "/rollout-plans/p1/advance",
-            {"limit": 5, "actor": "op"},
-        ),
-        (
             lambda t: commands.PromotePackage(
                 t, resource_id="pkg", state="released", reason="r", actor="op"
             ),
@@ -347,7 +329,7 @@ def test_gate_failures_are_quiet_in_json_mode():
             {"state": "released", "reason": "r", "actor": "op"},
         ),
     ],
-    ids=["approve", "rollback", "apply", "advance-plan", "promote"],
+    ids=["approve", "rollback", "apply", "promote"],
 )
 def test_lifecycle_verbs_post_their_own_path_and_body(command, expected_path, expected_body):
     transport = FakeTransport({"ok": True})
@@ -431,12 +413,6 @@ def test_compatibility_matrix_sends_null_for_unfiltered_dimensions():
 # ---------------------------------------------------------------------------
 
 
-def test_create_rollout_plan_rejects_an_empty_target_set():
-    """A plan with no devices is meaningless, so it fails before the network."""
-    transport = FakeTransport({})
-    with pytest.raises(ValueError, match="at least one target device"):
-        commands.CreateRolloutPlan(transport, package_id="p", device_ids=[])
-    assert transport.calls == []
 
 
 def test_register_package_expands_the_package_path():
@@ -513,13 +489,11 @@ def test_mission_package_plan_selects_its_endpoint(download, expected_path):
 
 HUB_SUBCOMMANDS = frozenset(
     {
-        "advance-rollout-plan",
         "apply",
         "approve",
         "assign",
         "benchmarks",
         "compatibility-matrix",
-        "create-rollout-plan",
         "devices",
         "edge-runtime-mission",
         "enroll",
@@ -532,16 +506,13 @@ HUB_SUBCOMMANDS = frozenset(
         "mission-package-stage",
         "package-from-mlflow",
         "packages",
-        "pause-rollout-plan",
         "preview-compatibility",
         "promote-package",
         "readiness",
         "register-package",
         "register-runtime",
         "replay-telemetry",
-        "resume-rollout-plan",
         "rollback",
-        "rollout-plans",
         "rollouts",
         "runtime-targets",
         "runtime-validations",
@@ -626,7 +597,6 @@ def test_enroll_without_a_device_id_exits_before_any_request():
         ("register-package", "--strict-metadata", True),
         ("register-runtime", "--os", "linux"),
         ("validate-runtime", "--timeout-s", 300),
-        ("create-rollout-plan", "--batch-size", 1),
         ("assign", "--require-approval", False),
         ("export", "--include-packages", False),
     ],

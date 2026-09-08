@@ -33,7 +33,6 @@ def build_evidence_bundle(
     runtime_fit_evidence = runtime_fit_evidence_timeline(state, limit=decision_limit)
     package_imports = package_import_timeline(state, limit=decision_limit)
     package_promotions = package_promotion_timeline(state, limit=decision_limit)
-    rollout_plans = rollout_plan_timeline(state, limit=decision_limit)
     slots = [_slot_to_dict(slot) for slot in state.slot_manager.list_slots()]
     active_slots = _active_slot_summaries({"slots": slots})
 
@@ -68,7 +67,6 @@ def build_evidence_bundle(
         "runtime_fit_evidence": runtime_fit_evidence,
         "package_imports": package_imports,
         "package_promotions": package_promotions,
-        "rollout_plans": rollout_plans,
         "benchmarks": _benchmark_results(state) if include_benchmarks else [],
         "timeline": combined_timeline(
             decisions,
@@ -79,7 +77,6 @@ def build_evidence_bundle(
             runtime_fit_evidence,
             package_imports,
             package_promotions,
-            rollout_plans,
             active_slots=active_slots,
         ),
     }
@@ -118,9 +115,6 @@ def summarize_evidence_bundle(
     rollout_events = [
         event for event in _as_list(bundle.get("rollout_events")) if isinstance(event, dict)
     ]
-    rollout_plans = [
-        event for event in _as_list(bundle.get("rollout_plans")) if isinstance(event, dict)
-    ]
     rollout_approvals = _rollout_approval_summaries(
         bundle,
         rollout_events,
@@ -136,22 +130,6 @@ def summarize_evidence_bundle(
         operation
         for operation in _as_list(runtime.get("pending_operations"))
         if isinstance(operation, dict)
-    ]
-    pending_dead_letters = [
-        {**operation, "acknowledged": bool(operation.get("acknowledged"))}
-        for operation in _as_list(runtime.get("pending_operation_dead_letters"))
-        if isinstance(operation, dict)
-    ]
-    unresolved_dead_letters = [
-        operation
-        for operation in pending_dead_letters
-        if not operation.get("acknowledged") and not operation.get("requeued")
-    ]
-    acknowledged_dead_letters = [
-        operation for operation in pending_dead_letters if operation.get("acknowledged")
-    ]
-    requeued_dead_letters = [
-        operation for operation in pending_dead_letters if operation.get("requeued")
     ]
     deployment_state = _summary_deployment_state(bundle)
     models_by_id = _models_by_id(bundle)
@@ -192,17 +170,6 @@ def summarize_evidence_bundle(
                 limit=limit,
                 active_slots=active_slots,
             ),
-            "pending_operation_dead_letters_count": len(pending_dead_letters),
-            "pending_operation_dead_letters_unresolved_count": len(
-                unresolved_dead_letters
-            ),
-            "pending_operation_dead_letters_acknowledged_count": len(
-                acknowledged_dead_letters
-            ),
-            "pending_operation_dead_letters_requeued_count": len(
-                requeued_dead_letters
-            ),
-            "pending_operation_dead_letters": pending_dead_letters[:limit],
             "pending_operations_count": len(pending_operations),
             "pending_operation_types": sorted(
                 {
@@ -224,7 +191,6 @@ def summarize_evidence_bundle(
             rollout_events=rollout_events,
             package_imports=package_imports,
             package_promotions=package_promotions,
-            rollout_plans=rollout_plans,
             ingested_evidence=ingested_evidence,
         ),
         "trust": _trust_summary(
@@ -236,7 +202,6 @@ def summarize_evidence_bundle(
         ),
         "active_slots": active_slots,
         "package_promotions": package_promotions,
-        "rollout_plans": rollout_plans[:limit],
         "ingested_evidence": ingested_evidence,
         "approvals": rollout_approvals,
         "decisions": decision_summaries,
@@ -564,7 +529,6 @@ def _pending_operation_summary(operation: dict[str, Any]) -> dict[str, Any]:
     signature = _as_dict(operation.get("signature"))
     verification = _as_dict(operation.get("verification"))
     preflight = _as_dict(operation.get("preflight"))
-    retarget = _latest_runtime_retarget_record(payload)
     operation_name = str(operation.get("operation") or "operation")
     summary = {
         "operation": operation_name,
@@ -595,148 +559,13 @@ def _pending_operation_summary(operation: dict[str, Any]) -> dict[str, Any]:
         "superseded_by_index": preflight.get("superseded_by_index"),
         "superseded_by_model_id": preflight.get("superseded_by_model_id"),
         "final_for_slot": preflight.get("final_for_slot"),
-        "runtime_retargeted_at": retarget.get("retargeted_at"),
-        "runtime_retargeted_by": retarget.get("actor"),
-        "runtime_retarget_reason": retarget.get("reason"),
-        "runtime_retargeted_from": retarget.get("previous_runtime_target_id"),
-        "runtime_retargeted_to": retarget.get("runtime_target_id"),
-        **_runtime_retarget_proof_fields(retarget),
-        **_pending_preflight_runtime_proof_fields(preflight),
     }
     summary["summary"] = _pending_operation_label(summary)
     return {key: value for key, value in summary.items() if value is not None}
 
 
-def _latest_runtime_retarget_record(payload: dict[str, Any]) -> dict[str, Any]:
-    records = _as_list(payload.get("_temms_runtime_retarget"))
-    if not records:
-        return {}
-    latest = records[-1]
-    return _as_dict(latest)
 
 
-def _pending_preflight_runtime_proof_fields(preflight: dict[str, Any]) -> dict[str, Any]:
-    optimizer_gates = [
-        _as_dict(gate)
-        for gate in (
-            _as_list(preflight.get("hub_optimization_gates"))
-            + _as_list(preflight.get("hub_blocking_gates"))
-        )
-        if isinstance(gate, dict) and gate.get("gate_id") == "runtime_optimizer"
-    ]
-    optimizer_gate = optimizer_gates[0] if optimizer_gates else {}
-    optimizer_refs = _as_dict(optimizer_gate.get("refs"))
-    remediation_fields = _runtime_remediation_action_fields(optimizer_gate)
-    return {
-        "runtime_optimizer_status": optimizer_gate.get("status"),
-        "runtime_optimizer_state": optimizer_gate.get("state"),
-        "runtime_optimizer_detail": optimizer_gate.get("detail"),
-        "runtime_fit_score": preflight.get("hub_runtime_fit_score"),
-        "runtime_fit_tier": preflight.get("hub_runtime_fit_tier"),
-        "runtime_fit_detail": preflight.get("hub_runtime_fit_detail"),
-        "runtime_lane_id": preflight.get("hub_runtime_lane_id"),
-        "runtime_lane_label": preflight.get("hub_runtime_lane_label"),
-        "runtime_lane_engine": preflight.get("hub_runtime_lane_engine"),
-        "runtime_lane_acceleration": preflight.get("hub_runtime_lane_acceleration"),
-        "artifact_lane_status": preflight.get("hub_artifact_lane_status"),
-        "artifact_lane_state": preflight.get("hub_artifact_lane_state"),
-        "artifact_lane_detail": preflight.get("hub_artifact_lane_detail"),
-        "artifact_format": preflight.get("hub_artifact_format"),
-        "target_selection_status": preflight.get("hub_target_selection_status"),
-        "best_runtime_target_id": preflight.get("hub_best_runtime_target_id")
-        or optimizer_refs.get("best_runtime_target_id"),
-        "runtime_score_delta": preflight.get("hub_runtime_score_delta")
-        or optimizer_refs.get("score_delta"),
-        "production_admission_status": preflight.get("hub_production_admission_status"),
-        "production_apply_allowed": preflight.get("hub_production_apply_allowed"),
-        "runtime_capability_lock_status": preflight.get("hub_capability_lock_status"),
-        "runtime_capability_sha256": preflight.get("hub_capability_sha256"),
-        "runtime_capability_runtime_target_id": preflight.get(
-            "hub_capability_runtime_target_id"
-        ),
-        "runtime_capability_runtime_mode": preflight.get("hub_capability_runtime_mode"),
-        "runtime_capability_edge_profile": preflight.get("hub_capability_edge_profile"),
-        "runtime_capability_telemetry_status": preflight.get(
-            "hub_capability_telemetry_status"
-        ),
-        "runtime_capability_telemetry_state": preflight.get(
-            "hub_capability_telemetry_state"
-        ),
-        "runtime_capability_telemetry_detail": preflight.get(
-            "hub_capability_telemetry_detail"
-        ),
-        "runtime_capability_heartbeat_age_seconds": preflight.get(
-            "hub_capability_heartbeat_age_seconds"
-        ),
-        "runtime_capability_heartbeat_stale_after_seconds": preflight.get(
-            "hub_capability_heartbeat_stale_after_seconds"
-        ),
-        "runtime_capability_failures": preflight.get("hub_capability_failures"),
-        "edge_execution_contract_status": preflight.get(
-            "hub_edge_execution_contract_status"
-        ),
-        "edge_execution_contract_action": preflight.get(
-            "hub_edge_execution_contract_action"
-        ),
-        "edge_execution_contract_path": preflight.get(
-            "hub_edge_execution_contract_path"
-        ),
-        "runtime_workbench_schema_version": preflight.get(
-            "hub_runtime_workbench_schema_version"
-        ),
-        "runtime_workbench_status": preflight.get("hub_runtime_workbench_status"),
-        "runtime_workbench_action": preflight.get("hub_runtime_workbench_action"),
-        "runtime_workbench_selected_runtime_target_id": preflight.get(
-            "hub_runtime_workbench_selected_runtime_target_id"
-        ),
-        "runtime_workbench_best_runtime_target_id": preflight.get(
-            "hub_runtime_workbench_best_runtime_target_id"
-        ),
-        "runtime_workbench_target_selection_status": preflight.get(
-            "hub_runtime_workbench_target_selection_status"
-        ),
-        "runtime_workbench_target_count": preflight.get(
-            "hub_runtime_workbench_target_count"
-        ),
-        "runtime_workbench_eligible_target_count": preflight.get(
-            "hub_runtime_workbench_eligible_target_count"
-        ),
-        "runtime_workbench_blocked_target_count": preflight.get(
-            "hub_runtime_workbench_blocked_target_count"
-        ),
-        "runtime_workbench_selected_is_best": preflight.get(
-            "hub_runtime_workbench_selected_is_best"
-        ),
-        "runtime_retarget_replay_proof_status": preflight.get(
-            "hub_runtime_retarget_proof_status"
-        ),
-        "runtime_retarget_replay_signed_capability_sha256": preflight.get(
-            "hub_runtime_retarget_proof_signed_capability_sha256"
-        ),
-        "runtime_retarget_replay_current_capability_sha256": preflight.get(
-            "hub_runtime_retarget_proof_current_capability_sha256"
-        ),
-        "runtime_retarget_replay_signed_validation_id": preflight.get(
-            "hub_runtime_retarget_proof_signed_validation_id"
-        ),
-        "runtime_retarget_replay_current_validation_id": preflight.get(
-            "hub_runtime_retarget_proof_current_validation_id"
-        ),
-        "runtime_retarget_replay_signed_benchmark_id": preflight.get(
-            "hub_runtime_retarget_proof_signed_benchmark_id"
-        ),
-        "runtime_retarget_replay_current_benchmark_id": preflight.get(
-            "hub_runtime_retarget_proof_current_benchmark_id"
-        ),
-        "runtime_retarget_replay_signed_target_assessment_sha256": preflight.get(
-            "hub_runtime_retarget_proof_signed_target_assessment_sha256"
-        ),
-        "runtime_retarget_replay_current_target_assessment_sha256": preflight.get(
-            "hub_runtime_retarget_proof_current_target_assessment_sha256"
-        ),
-        **remediation_fields,
-        **_target_assessment_remediation_fields(preflight, remediation_fields),
-    }
 
 
 def _runtime_remediation_action_fields(gate: dict[str, Any]) -> dict[str, Any]:
@@ -1023,7 +852,6 @@ def _summary_counts(
     rollout_events: list[dict[str, Any]],
     package_imports: list[dict[str, Any]],
     package_promotions: list[dict[str, Any]],
-    rollout_plans: list[dict[str, Any]],
     runtime_fit_evidence: list[dict[str, Any]],
     ingested_evidence: list[dict[str, Any]],
 ) -> dict[str, int]:
@@ -1043,7 +871,6 @@ def _summary_counts(
         "runtime_fit_evidence": len(runtime_fit_evidence),
         "package_imports": len(package_imports),
         "package_promotions": len(package_promotions),
-        "rollout_plans": len(rollout_plans),
         "ingested_evidence_bundles": len(ingested_evidence),
         "hub_benchmarks": len(_as_list(bundle.get("hub_benchmarks"))),
         "telemetry_events": telemetry_count,
@@ -1304,7 +1131,6 @@ def _summarize_decision(
     signed_package_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     audit_metadata = _as_dict(decision.get("audit_metadata"))
-    retarget = _decision_runtime_retarget_fields(audit_metadata)
     summary = {
         "timestamp": decision.get("created_at"),
         "slot": decision.get("slot"),
@@ -1317,7 +1143,6 @@ def _summarize_decision(
         "package_id": _decision_package_id(decision),
         "signature_verified": _decision_signature_verified(decision, signed_package_ids),
         "summary": _decision_sentence(decision, models_by_id),
-        **retarget,
     }
     if audit_metadata.get("benchmark"):
         summary["benchmark"] = audit_metadata.get("benchmark")
@@ -1326,131 +1151,10 @@ def _summarize_decision(
     return summary
 
 
-def _decision_runtime_retarget_fields(audit_metadata: dict[str, Any]) -> dict[str, Any]:
-    retarget = _as_dict(audit_metadata.get("ddil_runtime_retarget"))
-    latest = _as_dict(retarget.get("latest")) or retarget
-    previous_target = latest.get("previous_runtime_target_id")
-    runtime_target = latest.get("runtime_target_id")
-    if not previous_target or not runtime_target:
-        return {}
-    return {
-        "runtime_retargeted": True,
-        "runtime_retargeted_at": latest.get("retargeted_at") or retarget.get("retargeted_at"),
-        "runtime_retargeted_by": latest.get("actor") or retarget.get("actor"),
-        "runtime_retarget_reason": latest.get("reason") or retarget.get("reason"),
-        "runtime_retargeted_from": previous_target,
-        "runtime_retargeted_to": runtime_target,
-        "runtime_retarget_previous_payload_sha256": latest.get("previous_payload_sha256")
-        or retarget.get("previous_payload_sha256"),
-        **_runtime_retarget_proof_fields(latest),
-    }
 
 
-def _record_runtime_retarget_fields(record: dict[str, Any]) -> dict[str, Any]:
-    if record.get("runtime_retargeted"):
-        previous_target = record.get("runtime_retargeted_from")
-        runtime_target = record.get("runtime_retargeted_to")
-        if previous_target and runtime_target:
-            return {
-                "runtime_retargeted": True,
-                "runtime_retargeted_at": record.get("runtime_retargeted_at"),
-                "runtime_retargeted_by": record.get("runtime_retargeted_by"),
-                "runtime_retarget_reason": record.get("runtime_retarget_reason"),
-                "runtime_retargeted_from": previous_target,
-                "runtime_retargeted_to": runtime_target,
-                "runtime_retarget_previous_payload_sha256": record.get(
-                    "runtime_retarget_previous_payload_sha256"
-                ),
-                "runtime_retarget_proof_status": record.get(
-                    "runtime_retarget_proof_status"
-                ),
-                "runtime_retarget_runtime_fit_score": record.get(
-                    "runtime_retarget_runtime_fit_score"
-                ),
-                "runtime_retarget_best": record.get("runtime_retarget_best"),
-                "runtime_retarget_eligible": record.get("runtime_retarget_eligible"),
-                "runtime_retarget_capability_lock_status": record.get(
-                    "runtime_retarget_capability_lock_status"
-                ),
-                "runtime_retarget_capability_sha256": record.get(
-                    "runtime_retarget_capability_sha256"
-                ),
-                "runtime_retarget_validation_id": record.get(
-                    "runtime_retarget_validation_id"
-                ),
-                "runtime_retarget_benchmark_id": record.get(
-                    "runtime_retarget_benchmark_id"
-                ),
-            }
-    return _decision_runtime_retarget_fields(_as_dict(record.get("audit_metadata")))
 
 
-def _runtime_retarget_proof_fields(record: dict[str, Any]) -> dict[str, Any]:
-    proof = _as_dict(record.get("runtime_target_proof"))
-    if not proof:
-        return {}
-    lock = _as_dict(proof.get("runtime_capability_lock"))
-    telemetry = _as_dict(proof.get("telemetry_freshness"))
-    lane = _as_dict(proof.get("runtime_lane"))
-    artifact = _as_dict(proof.get("artifact_lane"))
-    fields = {
-        "runtime_retarget_proof_status": proof.get("status"),
-        "runtime_retarget_runtime_fit_score": proof.get("runtime_fit_score"),
-        "runtime_retarget_best": proof.get("best"),
-        "runtime_retarget_eligible": proof.get("eligible"),
-        "runtime_retarget_capability_lock_status": lock.get("status"),
-        "runtime_retarget_capability_sha256": proof.get("capability_sha256")
-        or lock.get("capability_sha256"),
-        "runtime_retarget_runtime_mode": lock.get("runtime_mode"),
-        "runtime_retarget_runtime_lane_id": lane.get("lane_id"),
-        "runtime_retarget_runtime_lane_label": lane.get("label"),
-        "runtime_retarget_artifact_lane_state": artifact.get("state"),
-        "runtime_retarget_validation_id": proof.get("runtime_validation_id"),
-        "runtime_retarget_benchmark_id": proof.get("benchmark_id"),
-        "runtime_retarget_target_assessment_sha256": proof.get(
-            "target_assessment_sha256"
-        ),
-        "runtime_retarget_latency_ms_p95": proof.get("latency_ms_p95"),
-        "runtime_retarget_throughput_ips": proof.get("throughput_ips"),
-        "runtime_retarget_workbench_schema_version": proof.get(
-            "runtime_workbench_schema_version"
-        ),
-        "runtime_retarget_workbench_status": proof.get("runtime_workbench_status"),
-        "runtime_retarget_workbench_target_selection_status": proof.get(
-            "runtime_workbench_target_selection_status"
-        ),
-        "runtime_retarget_workbench_previous_selected_runtime_target_id": proof.get(
-            "runtime_workbench_previous_selected_runtime_target_id"
-        ),
-        "runtime_retarget_workbench_selected_runtime_target_id": proof.get(
-            "runtime_workbench_selected_runtime_target_id"
-        ),
-        "runtime_retarget_workbench_best_runtime_target_id": proof.get(
-            "runtime_workbench_best_runtime_target_id"
-        ),
-        "runtime_retarget_workbench_target_count": proof.get(
-            "runtime_workbench_target_count"
-        ),
-        "runtime_retarget_workbench_eligible_target_count": proof.get(
-            "runtime_workbench_eligible_target_count"
-        ),
-        "runtime_retarget_workbench_blocked_target_count": proof.get(
-            "runtime_workbench_blocked_target_count"
-        ),
-        "runtime_retarget_workbench_selected_is_best": proof.get(
-            "runtime_workbench_selected_is_best"
-        ),
-        "runtime_retarget_telemetry_status": telemetry.get("status"),
-        "runtime_retarget_telemetry_state": telemetry.get("state"),
-        "runtime_retarget_telemetry_detail": telemetry.get("detail"),
-        "runtime_retarget_heartbeat_age_seconds": telemetry.get(
-            "heartbeat_age_seconds"
-        ),
-        "runtime_retarget_heartbeat_stale_after_seconds": telemetry.get(
-            "heartbeat_stale_after_seconds"
-        ),
-    }
-    return {key: value for key, value in fields.items() if value is not None}
 
 
 def _decision_package_id(decision: dict[str, Any]) -> str | None:
@@ -1647,8 +1351,6 @@ def _replay_phase_for_event(entry: dict[str, Any], record: dict[str, Any]) -> st
         return "signed_package"
     if kind == "package_promotion":
         return "package_release"
-    if kind == "rollout_plan":
-        return "rollout_coordination"
     if kind == "runtime_validation":
         return "runtime_validation"
     if kind == "runtime_fit":
@@ -1663,10 +1365,6 @@ def _replay_phase_for_event(entry: dict[str, Any], record: dict[str, Any]) -> st
             return "fallback_rollback"
         return "edge_rollout"
     if kind == "decision":
-        if record.get("runtime_retargeted") or _decision_runtime_retarget_fields(
-            _as_dict(record.get("audit_metadata"))
-        ):
-            return "offline_operation"
         trigger = str(record.get("trigger_type") or "").lower()
         if trigger == "fallback" or trigger == "rollback":
             return "fallback_rollback"
@@ -1684,8 +1382,6 @@ def _replay_phase_for_event(entry: dict[str, Any], record: dict[str, Any]) -> st
             or "sync" in event_type
             or "replayed" in event_type
             or "pending_operations" in event_type
-            or "dead_letter" in event_type
-            or "quarantined" in event_type
         ):
             return "offline_operation"
         return "telemetry"
@@ -1695,12 +1391,6 @@ def _replay_phase_for_event(entry: dict[str, Any], record: dict[str, Any]) -> st
 def _replay_event_detail(entry: dict[str, Any], record: dict[str, Any]) -> str | None:  # noqa: C901  (tracked in #54)
     kind = entry.get("kind")
     if kind == "decision":
-        retarget = _record_runtime_retarget_fields(record)
-        if retarget:
-            return (
-                f"retargeted {retarget['runtime_retargeted_from']} -> "
-                f"{retarget['runtime_retargeted_to']}"
-            )
         detail = record.get("trigger_detail")
         trigger = record.get("trigger_type")
         if detail and trigger:
@@ -1736,14 +1426,6 @@ def _replay_event_detail(entry: dict[str, Any], record: dict[str, Any]) -> str |
         if state and reason:
             return f"{state}: {reason}"
         return str(state) if state else None
-    if kind == "rollout_plan":
-        detail = record.get("detail")
-        if detail:
-            return str(detail)
-        state = record.get("state")
-        plan_id = record.get("plan_id")
-        if state or plan_id:
-            return " ".join(str(part) for part in (plan_id, state) if part)
     if kind == "telemetry":
         event_type = record.get("event_type")
         return str(event_type) if event_type else None
@@ -1761,9 +1443,6 @@ def _mission_replay_phases(summary: dict[str, Any]) -> list[dict[str, Any]]:
         promotion
         for promotion in _as_list(summary.get("package_promotions"))
         if isinstance(promotion, dict)
-    ]
-    rollout_plans = [
-        plan for plan in _as_list(summary.get("rollout_plans")) if isinstance(plan, dict)
     ]
     fallbacks = [
         fallback for fallback in _as_list(summary.get("fallbacks")) if isinstance(fallback, dict)
@@ -1823,17 +1502,6 @@ def _mission_replay_phases(summary: dict[str, Any]) -> list[dict[str, Any]]:
                 else "no rollout lifecycle evidence"
             ),
             [],
-        ),
-        _replay_phase(
-            "rollout_coordination",
-            "Rollout coordination",
-            "complete" if rollout_plans else "missing",
-            (
-                f"{len(rollout_plans)} rollout plan events"
-                if rollout_plans
-                else "no staged rollout plan evidence"
-            ),
-            [plan.get("plan_id") for plan in rollout_plans if plan.get("plan_id")],
         ),
         _replay_phase(
             "policy_decision",
@@ -2060,28 +1728,12 @@ def _offline_operation_phase(
     decisions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     pending_count = int(runtime.get("pending_operations_count", 0) or 0)
-    dead_letter_count = int(runtime.get("pending_operation_dead_letters_count", 0) or 0)
-    acknowledged_count = int(
-        runtime.get("pending_operation_dead_letters_acknowledged_count", 0) or 0
-    )
-    requeued_count = int(runtime.get("pending_operation_dead_letters_requeued_count", 0) or 0)
     preflight = _as_dict(runtime.get("pending_operation_preflight"))
     preflight_total = int(preflight.get("total", 0) or 0)
     preflight_superseded = int(preflight.get("superseded", 0) or 0)
     verification = _as_dict(runtime.get("pending_operation_verification"))
     verification_total = int(verification.get("total", 0) or 0)
     pending_types = runtime.get("pending_operation_types", [])
-    dead_letters = [
-        record
-        for record in _as_list(runtime.get("pending_operation_dead_letters"))
-        if isinstance(record, dict)
-    ]
-    retargeted_decisions = [
-        decision
-        for decision in decisions or []
-        if decision.get("runtime_retargeted")
-        or _decision_runtime_retarget_fields(_as_dict(decision.get("audit_metadata")))
-    ]
 
     if runtime.get("offline_mode"):
         return _replay_phase(
@@ -2098,31 +1750,6 @@ def _offline_operation_phase(
             "complete",
             f"{pending_count} pending operations",
             pending_types,
-        )
-    if retargeted_decisions:
-        return _replay_phase(
-            "offline_operation",
-            "Offline operation",
-            "complete",
-            f"{len(retargeted_decisions)} retargeted DDIL replays",
-            [
-                decision.get("to_model")
-                for decision in retargeted_decisions
-                if decision.get("to_model")
-            ],
-        )
-    if dead_letter_count > 0:
-        detail = f"{dead_letter_count} quarantined DDIL intents retained"
-        if requeued_count > 0:
-            detail = f"{detail}; {requeued_count} requeued"
-        if acknowledged_count > 0:
-            detail = f"{detail}; {acknowledged_count} acknowledged"
-        return _replay_phase(
-            "offline_operation",
-            "Offline operation",
-            "complete",
-            detail,
-            [record.get("payload_sha256") for record in dead_letters],
         )
     if preflight_total > 0:
         detail = f"{preflight_total} DDIL intents preflighted"
@@ -2540,39 +2167,6 @@ def package_promotion_timeline(state: Any, limit: int = 100) -> list[dict[str, A
     return promotions[:limit]
 
 
-def rollout_plan_timeline(state: Any, limit: int = 100) -> list[dict[str, Any]]:
-    """Return coordinated rollout-plan history entries from Hub Lite."""
-    hub_lite = getattr(state, "hub_lite", None)
-    if hub_lite is None:
-        return []
-    list_plans = getattr(hub_lite, "list_rollout_plans", None)
-    if not callable(list_plans):
-        return []
-    events: list[dict[str, Any]] = []
-    for plan in list_plans():
-        if not isinstance(plan, dict):
-            continue
-        for history in _as_list(plan.get("history")):
-            if not isinstance(history, dict):
-                continue
-            events.append(
-                {
-                    "schema_version": "temms-rollout-plan-event/v1",
-                    "plan_id": plan.get("plan_id"),
-                    "package_id": plan.get("package_id"),
-                    "slot": plan.get("slot"),
-                    "runtime_target_id": plan.get("runtime_target_id"),
-                    "state": history.get("state"),
-                    "detail": history.get("detail"),
-                    "actor": history.get("actor"),
-                    "batch": history.get("batch"),
-                    "rollout_ids": _as_list(history.get("rollout_ids")),
-                    "counts": _as_dict(history.get("counts")),
-                    "updated_at": history.get("updated_at"),
-                }
-            )
-    events.sort(key=lambda entry: entry.get("updated_at") or "", reverse=True)
-    return events[:limit]
 
 
 def combined_timeline(  # noqa: C901  (tracked in #54)
@@ -2584,26 +2178,17 @@ def combined_timeline(  # noqa: C901  (tracked in #54)
     runtime_fit_evidence: list[dict[str, Any]] | None = None,
     package_imports: list[dict[str, Any]] | None = None,
     package_promotions: list[dict[str, Any]] | None = None,
-    rollout_plans: list[dict[str, Any]] | None = None,
     *,
     active_slots: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Merge decisions, rollouts, telemetry, validation, benchmark, and import evidence."""
     timeline: list[dict[str, Any]] = []
     for decision in decisions:
-        retarget = _record_runtime_retarget_fields(decision)
-        if retarget:
-            summary = (
-                f"{decision.get('to_model') or 'model'} DDIL replay retargeted "
-                f"{retarget['runtime_retargeted_from']} -> "
-                f"{retarget['runtime_retargeted_to']}"
-            )
-        else:
-            summary = (
-                f"{decision.get('from_model') or 'none'} -> "
-                f"{decision.get('to_model')} "
-                f"({decision.get('trigger_type')})"
-            )
+        summary = (
+            f"{decision.get('from_model') or 'none'} -> "
+            f"{decision.get('to_model')} "
+            f"({decision.get('trigger_type')})"
+        )
         timeline.append(
             {
                 "kind": "decision",
@@ -2724,19 +2309,6 @@ def combined_timeline(  # noqa: C901  (tracked in #54)
                 "slot": None,
                 "summary": f"{package_id} promoted to {state} by {actor}",
                 "record": promotion,
-            }
-        )
-    for plan_event in rollout_plans or []:
-        state = plan_event.get("state") or "updated"
-        plan_id = plan_event.get("plan_id") or "rollout plan"
-        actor = plan_event.get("actor") or "unknown"
-        timeline.append(
-            {
-                "kind": "rollout_plan",
-                "timestamp": plan_event.get("updated_at"),
-                "slot": plan_event.get("slot"),
-                "summary": f"{plan_id} {state} by {actor}",
-                "record": plan_event,
             }
         )
     return _sort_timeline_entries(timeline, active_slots=active_slots, reverse=True)
@@ -2961,7 +2533,6 @@ def _runtime_context(state: Any) -> dict[str, Any]:
             pending_operations
         ),
         "pending_operation_preflight": preflight,
-        "pending_operation_dead_letters": _pending_operation_dead_letters(state),
         "pending_operations": pending_operations,
     }
 
@@ -3150,60 +2721,8 @@ def _attach_pending_operation_preflight(
             operation["preflight"] = preflight_entry
 
 
-def _pending_operation_dead_letters(state: Any) -> list[dict[str, Any]]:
-    store = getattr(state, "pending_operations", None)
-    read_dead_letter = getattr(store, "read_dead_letter", None)
-    if not callable(read_dead_letter):
-        return []
-    try:
-        records = read_dead_letter()
-    except Exception:
-        return []
-    return [
-        _pending_operation_dead_letter_summary(record)
-        for record in records
-        if isinstance(record, dict)
-    ]
 
 
-def _pending_operation_dead_letter_summary(record: dict[str, Any]) -> dict[str, Any]:
-    entry = _as_dict(record.get("entry"))
-    payload = _as_dict(entry.get("payload"))
-    request = _as_dict(payload.get("request"))
-    preflight = _as_dict(record.get("preflight"))
-    summary = {
-        "schema_version": record.get("schema_version"),
-        "quarantined_at": record.get("quarantined_at"),
-        "actor": record.get("actor"),
-        "reason": record.get("reason"),
-        "acknowledged": bool(record.get("acknowledged")),
-        "acknowledged_at": record.get("acknowledged_at"),
-        "acknowledged_by": record.get("acknowledged_by"),
-        "acknowledgement_reason": record.get("acknowledgement_reason"),
-        "requeued": bool(record.get("requeued")),
-        "requeued_at": record.get("requeued_at"),
-        "requeued_by": record.get("requeued_by"),
-        "requeue_reason": record.get("requeue_reason"),
-        "operation": entry.get("operation") or preflight.get("operation"),
-        "recorded_at": entry.get("recorded_at"),
-        "slot": _first_string([payload, request, preflight], ("slot", "slot_name")),
-        "device_id": _first_string([payload, request, preflight], ("device_id",)),
-        "package_id": _first_string([payload, request, preflight], ("package_id",)),
-        "model_id": _first_string([payload, request, preflight], ("model_id", "model")),
-        "runtime_target_id": _first_string(
-            [payload, request, preflight],
-            ("runtime_target_id",),
-        ),
-        "payload_sha256": record.get("payload_sha256") or preflight.get("payload_sha256"),
-        "signature_status": preflight.get("signature_status"),
-        "signature_verified": preflight.get("signature_verified"),
-        "replay_status": preflight.get("replay_status"),
-        "replay_ready": preflight.get("ready"),
-        "replay_reason": preflight.get("reason"),
-        **_pending_preflight_runtime_proof_fields(preflight),
-    }
-    summary["summary"] = _pending_operation_label(summary)
-    return {key: value for key, value in summary.items() if value is not None}
 
 
 def _diagnostics(state: Any) -> dict[str, Any]:

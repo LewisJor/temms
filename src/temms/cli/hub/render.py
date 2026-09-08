@@ -273,56 +273,8 @@ def _render_compatibility_matrix(action: str, payload: dict) -> None:
     )
 
 
-def _render_rollout_plans(action: str, payload: dict) -> None:
-    """Render `temms hub rollout-plans`."""
-    table = Table(title="Hub Rollout Plans")
-    table.add_column("Plan")
-    table.add_column("Package")
-    table.add_column("Slot")
-    table.add_column("Runtime")
-    table.add_column("State")
-    table.add_column("Batch")
-    table.add_column("Targets")
-    table.add_column("Updated")
-    for plan in payload.get("rollout_plans", []):
-        counts = plan.get("counts") if isinstance(plan.get("counts"), dict) else {}
-        target_summary = (
-            f"{counts.get('assigned', 0)} assigned / "
-            f"{counts.get('pending', 0)} pending / "
-            f"{counts.get('blocked', 0)} blocked"
-        )
-        table.add_row(
-            plan.get("plan_id", ""),
-            plan.get("package_id", ""),
-            plan.get("slot", "") or "",
-            plan.get("runtime_target_id", "") or "auto",
-            plan.get("state", ""),
-            str(plan.get("current_batch", 0)),
-            target_summary,
-            plan.get("updated_at", "") or "",
-        )
-    console.print(table)
 
 
-def _render_create_rollout_plan(action: str, payload: dict) -> None:
-    """Render `temms hub` create-rollout-plan / advance-rollout-plan / pause-rollout-plan / resume-rollout-plan."""
-    counts = payload.get("counts") if isinstance(payload.get("counts"), dict) else {}
-    console.print(f"[green]Rollout plan {payload.get('state', 'updated')}[/green]")
-    console.print(f"Plan: {payload.get('plan_id', '')}")
-    console.print(f"Package: {payload.get('package_id', '')}")
-    console.print(
-        "Targets: "
-        f"{counts.get('assigned', 0)} assigned / "
-        f"{counts.get('pending', 0)} pending / "
-        f"{counts.get('blocked', 0)} blocked"
-    )
-    rollout_ids = [
-        target.get("rollout_id")
-        for target in payload.get("targets", [])
-        if target.get("rollout_id")
-    ]
-    if rollout_ids:
-        console.print("Rollouts: " + ", ".join(str(rollout_id) for rollout_id in rollout_ids))
 
 
 def _render_rollouts(action: str, payload: dict) -> None:
@@ -438,11 +390,6 @@ HUB_PRINTERS: dict[str, Callable[[str, dict], None]] = {
     "benchmarks": _render_benchmarks,
     "preview-compatibility": _render_preview_compatibility,
     "compatibility-matrix": _render_compatibility_matrix,
-    "rollout-plans": _render_rollout_plans,
-    "create-rollout-plan": _render_create_rollout_plan,
-    "advance-rollout-plan": _render_create_rollout_plan,
-    "pause-rollout-plan": _render_create_rollout_plan,
-    "resume-rollout-plan": _render_create_rollout_plan,
     "rollouts": _render_rollouts,
     "status": _render_status,
     "telemetry": _render_telemetry,

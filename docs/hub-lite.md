@@ -98,26 +98,26 @@ include structured remediation `actions`; the top-level `actions` list
 deduplicates those operator steps for clients that want a compact next-action
 queue. Each action includes `kind` plus `refs` for the selected deployment
 context, such as package, model, device, runtime target, slot, and recommended
-approval defaults for rollout or rollout-plan creation. Performance actions
+approval defaults for rollout creation. Performance actions
 include benchmark refs, p95 latency, throughput, and declared model SLO limits;
 resource refs include declared RAM/storage/thermal/power requirements plus
-observed edge telemetry; DDIL actions include pending, blocked, quarantined,
-and payload-hash summaries; evidence actions include proof event counts,
+observed edge telemetry; DDIL actions include pending, blocked, and
+payload-hash summaries; evidence actions include proof event counts,
 mission replay phase counts, incomplete phases, and the recommended export
 mode. Directly executable actions also include a `command` object with HTTP
 `method`, API `path`, and optional suggested `body`; clients can use that
 metadata for explicit
 operator-confirmed remediation. Mutating remediation command bodies include
 `actor: "operator:readiness-remediation"` plus a reason when the endpoint
-supports one, so package promotion, rollout approval, rollout assignment, and
-DDIL quarantine/acknowledgement remain traceable in evidence history. Readiness
-generated rollout and rollout-plan commands also include deterministic
-`rollout_id` or `plan_id` values derived from the selected package, model,
+supports one, so package promotion, rollout approval, and rollout assignment
+remain traceable in evidence history. Readiness
+generated rollout commands also include deterministic
+`rollout_id` values derived from the selected package, model,
 device, runtime, and slot. Re-running the same command returns the existing
-matching rollout/plan, while conflicting reuse of the same explicit ID is
-rejected. Rollout and rollout-plan creation commands include an explicit
-readiness reason, so the created history entries explain that the assignment or
-plan came from a readiness gate remediation.
+matching rollout, while conflicting reuse of the same explicit ID is
+rejected. Rollout creation commands include an explicit
+readiness reason, so the created history entries explain that the assignment
+came from a readiness gate remediation.
 The same response includes `edge_runtime_mission.schema_version:
 temms-edge-runtime-mission/v1`, a compact API-readable summary of the selected
 `model -> runtime -> edge` path. Its metrics include runtime fit, runtime lane,
@@ -421,8 +421,8 @@ target-selection, gate, and production-admission evidence. It records the
 selected path, recommended action, selected target, best target, score delta,
 runtime lane, artifact lane, runtime capability lock, blocking/attention gates,
 and top measured alternatives. Edge-runtime proof artifacts include this
-capsule so an operator or auditor can verify why TEMMS selected, blocked, or
-retargeted a runtime without reconstructing the decision from scattered
+capsule so an operator or auditor can verify why TEMMS selected or blocked a
+runtime without reconstructing the decision from scattered
 readiness fields.
 Readiness and edge proof artifacts also expose
 `runtime_workbench.schema_version: temms-runtime-workbench/v1`. This is the
@@ -480,50 +480,17 @@ target has a higher-scoring eligible alternative, and blocked when no eligible
 target remains. The attention state exposes a non-mutating
 action with `kind: select_runtime_target`, so a client can switch the
 operator's selected model/device/runtime context before creating a rollout. For
-already-buffered DDIL deploy intents, the pending ledger uses the same Runtime
-optimizer refs to call `/v1/control/sync/retarget-runtime`; the daemon rewrites
-the queued runtime target only when Hub target assessments prove the requested
-target is the best eligible runtime with non-dry-run validation, benchmark
-evidence, and a locked capability hash from fresh edge inventory. The signed
-`_temms_runtime_retarget` audit entry preserves that runtime proof with the
-previous selected target, proved selected target, best target, runtime-workbench
-selection status, target counts, selected-is-best flag, validation id, benchmark
-id, capability digest, and `target_assessment_sha256`. Replay rechecks the live
-target-assessment digest, capability hash, validation id, benchmark id,
-eligibility, and best-target status before applying the repaired queue, so a
-proof minted before runtime image, runtime lane, artifact, evidence, or edge
-inventory drift cannot be replayed silently.
-If the operator quarantines a blocked DDIL intent first, the same recovery loop
-can put it back into service after the edge evidence is fixed:
-`/v1/control/sync/requeue-dead-letters` runs current preflight against the
-quarantined signed payload and restores it to the active replay queue only when
-the intent is ready. The dead-letter record is kept with `requeued_at`,
-`requeued_by`, `requeue_reason`, and the original digest. Blocked candidates
-stay quarantined with the current preflight reason; `force: true` is reserved
-for explicit break-glass drills. Runtime remediation therefore does not require
-losing the forensic quarantine record.
-The same field repair path is scriptable from the edge node:
+already-buffered DDIL deploy intents, the pending ledger surfaces the same
+Runtime optimizer refs as an advisory. A queued deploy is replayed as-is: an
+intent pinned to an ineligible target stays blocked until the operator fixes
+the edge evidence or clears the queue, then syncs again.
+The same inspection path is scriptable from the edge node:
 
 ```bash
 uv run temms control sync-preview --control-url http://127.0.0.1:8080
-uv run temms control retarget-runtime \
-  --control-url http://127.0.0.1:8080 \
-  --payload-sha256 <pending-payload-sha256> \
-  --actor operator:edge-runtime-drill
-uv run temms control requeue-dead-letters \
-  --control-url http://127.0.0.1:8080 \
-  --payload-sha256 <quarantined-payload-sha256> \
-  --actor operator:edge-runtime-drill \
-  --reason "edge runtime proof remediated"
 uv run temms control sync --control-url http://127.0.0.1:8080
 ```
 
-If `--runtime-target-id` is omitted, `retarget-runtime` selects the measured
-candidate carried by the Runtime optimizer gate; supplying the flag makes the
-operator's target explicit. `requeue-dead-letters` requires the restored intent
-to pass current preflight by default; add `--force` only for a deliberate
-break-glass drill where the operator wants to inspect the active queue response
-without treating the intent as field-ready.
 Rollout apply performs the same edge-safety preflight before the daemon marks a
 rollout as `downloading` or touches the model loader. Dashboard discovery can
 show attention-level gates so operators know what to fix, but apply fails closed
@@ -710,26 +677,13 @@ temms hub compatibility-matrix \
   --package-id pkg-vision-1 \
   --model-id model-yolov8-lowlight-001 \
   --include-device-inventory
-
-temms hub create-rollout-plan \
-  --hub-url http://hub-vm:8080 \
-  --plan-id plan-vision-1 \
-  --package-id pkg-vision-1 \
-  --model-id model-yolov8-lowlight-001 \
-  --target-device-id edge-1 \
-  --target-device-id edge-2 \
-  --runtime-target-id temms-x86_64-cpu \
-  --batch-size 1 \
-  --require-approval
-
-temms hub advance-rollout-plan plan-vision-1 --hub-url http://hub-vm:8080
 ```
 
 `register-package`, `package-from-mlflow`, and `validate-runtime` all use strict metadata by default. `validate-runtime` fetches the selected runtime target from Hub Lite and runs `temms package validate --check-runtime --strict-metadata` inside that target's container image. Use `--dry-run` to see the exact `docker run` command before executing it. Use `--no-strict-metadata` only for lab packages that predate the production metadata contract.
 Each validation or dry-run is written back to Hub Lite as runtime validation evidence with the target image, package path or package ID, pass/fail state, actor, timestamp, and a redacted command. Inspect those records with `temms hub runtime-validations`; evidence exports include them in `runtime_validations` and in the merged audit timeline. Evidence exports also derive `runtime_fit_evidence` from the same readiness engine used by `/v1/hub/readiness`, dedupe repeated rollout proofs, and rank active slot evidence first so mission replay proves the selected model/device/runtime score. A lower-scoring pinned target is flagged as `preview_only` instead of fully optimized.
 For stricter rollout control, pass `--package-id` when validating and `--require-runtime-validation` when assigning. Hub Lite then requires a non-dry-run passing validation record for that exact package artifact and runtime target before it creates the rollout. The package must also be promoted to `released`; use `temms hub promote-package` to record the validated, approved, and released transitions.
 `compatibility-matrix` expands the same preview checks across selected packages, models, devices, and runtime targets. For multi-model packages, unfiltered results include a separate cell per declared model, and `--model-id` or API `model_ids` filters constrain the matrix to the exact on-device workload under review. Each cell includes `model_id` when it was evaluated against a declared package model. The matrix separates technical compatibility from assignment readiness, so a package can show as compatible while still blocked by package promotion state or missing runtime validation evidence. Runtime-target cells also evaluate reported edge inventory when it is present; mismatched live runtimes, ONNX providers, or accelerators are technical blockers, not cosmetic warnings. Use the returned `recommendations` list when you need the highest-confidence edge path first; it ranks cells by deployability, runtime validation, SLO/resource proof, and optimization headroom while preserving required actions for anything short of deploy-ready.
-`create-rollout-plan` records a staged rollout plan across multiple devices. Advancing the plan creates the next assignment batch through the same release, compatibility, validation, and approval gates as `assign`, then records plan history in evidence exports and mission replay. Use `pause-rollout-plan` and `resume-rollout-plan` to hold a canary or batch while operators inspect health evidence.
+Multi-device rollouts are sequenced by issuing a per-device `assign` for each target device; every assignment goes through the same release, compatibility, validation, and approval gates and is recorded in evidence exports and mission replay.
 `apply-rollout` is stricter than assignment: before import or activation it
 runs an apply-time readiness preflight against the selected package, model,
 device, runtime target, and slot. Pinned runtime targets must have passing
@@ -909,24 +863,6 @@ curl -X POST http://localhost:8080/v1/hub/compatibility/matrix \
     "include_device_inventory": true
   }'
 
-curl -X POST http://localhost:8080/v1/hub/rollout-plans \
-  -H "Content-Type: application/json" \
-  -d '{
-    "plan_id": "plan-vision-1",
-    "package_id": "pkg-vision-1",
-    "model_id": "model-yolov8-lowlight-001",
-    "device_ids": ["edge-1", "edge-2"],
-    "slot": "vision",
-    "runtime_target_id": "temms-x86_64-cpu",
-    "batch_size": 1,
-    "require_runtime_validation": true,
-    "require_approval": true
-  }'
-
-curl -X POST http://localhost:8080/v1/hub/rollout-plans/plan-vision-1/advance \
-  -H "Content-Type: application/json" \
-  -d '{"actor": "operator:planner"}'
-
 curl -X POST http://localhost:8080/v1/hub/rollouts \
   -H "Content-Type: application/json" \
   -d '{
@@ -942,17 +878,6 @@ curl -X POST http://localhost:8080/v1/hub/rollouts \
 ```
 
 If the package catalog entry declares `device_profiles`, Hub Lite checks that the enrolled device profile is included before creating the assignment. When an assignment names `model_id`, Hub Lite validates that the model is declared by the package and filters model-level runtime constraints to that model; package-only assignments keep the older package-wide check. When the assignment names a `runtime_target_id`, Hub Lite checks the selected model/package constraints against that container target's declared runtimes, ONNX providers, accelerators, OS/arch metadata, and compatible device profiles. When `require_runtime_validation` is true, Hub Lite also requires a passing non-dry-run validation record for the selected package/runtime target and embeds a compact validation summary in the rollout. Without a runtime target, Hub Lite falls back to the device heartbeat inventory. Rollout apply repeats package-level and model-level runtime constraint checks on the edge before import or activation, which keeps air-gap/manual paths aligned with online assignment policy. This keeps `orin-tensorrt`, `tflite`, or customer-provided runtime images from being assigned to incompatible VMs by accident.
-
-Rollout plans are coordination records, not a weaker assignment path. Each
-target still becomes an ordinary Hub Lite rollout only when `advance` assigns
-that batch, and those rollouts keep their approval, validation, runtime target,
-and package release metadata. After all pending targets are assigned, the plan
-enters `advancing` while its rollouts move through download, import, activation,
-failure, or rollback. The plan becomes `completed` only when every assigned
-target reaches a terminal `activated` or `rolled_back` outcome. Plan history
-records created, advanced, paused, resumed, reconciled, and completed events,
-which travel in air-gap bundles and evidence exports as rollout coordination
-proof.
 
 When `require_approval` is true, rollout apply is blocked until an operator or
 automation records approval. Approval is stored in the rollout history and

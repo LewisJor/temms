@@ -29,7 +29,7 @@ from temms.policy.engine import PolicyEngine
 from temms.slots.manager import SlotManager
 from temms.telemetry import TelemetryBuffer
 
-CANONICAL_ROLLOUT_PLAN_ID = "plan-canonical-demo"
+CANONICAL_ROLLOUT_ID = "rollout-canonical-demo"
 
 
 def test_canonical_signed_adaptive_fallback_override_and_evidence_loop(temp_dir):
@@ -103,27 +103,19 @@ def test_canonical_signed_adaptive_fallback_override_and_evidence_loop(temp_dir)
         evidence={"validation_id": validation["validation_id"]},
     )
     assert released_package["promotion"]["state"] == "released"
-    rollout_plan = system["hub_lite"].create_rollout_plan(
-        plan_id=CANONICAL_ROLLOUT_PLAN_ID,
-        package_id="pkg-canonical-edge-demo",
-        device_ids=["edge-demo"],
+    rollout = system["hub_lite"].assign_rollout(
+        "edge-demo",
+        "pkg-canonical-edge-demo",
         slot="vision",
+        rollout_id=CANONICAL_ROLLOUT_ID,
         runtime_target_id="temms-x86_64-cpu",
         require_runtime_validation=True,
         require_approval=True,
         actor="operator:demo",
     )
-    assert rollout_plan["state"] == "ready"
-    advanced_plan = system["hub_lite"].advance_rollout_plan(
-        CANONICAL_ROLLOUT_PLAN_ID,
-        actor="operator:demo",
-    )
-    rollout_id = _assigned_rollout_id(advanced_plan)
-    rollout = system["hub_lite"].get_rollout(rollout_id)
-    assert rollout is not None
+    rollout_id = rollout["rollout_id"]
     assert rollout["runtime_validation"]["validation_id"] == validation["validation_id"]
     assert rollout["approval"]["state"] == "pending"
-    assert rollout["rollout_plan_id"] == CANONICAL_ROLLOUT_PLAN_ID
 
     system["slot_manager"].create_slot(
         name="vision",
@@ -360,12 +352,6 @@ def test_canonical_signed_adaptive_fallback_override_and_evidence_loop(temp_dir)
         == "released"
     )
     assert "released" in {event["state"] for event in bundle["package_promotions"]}
-    assert any(
-        event["plan_id"] == CANONICAL_ROLLOUT_PLAN_ID
-        and event["state"] in {"advanced", "completed"}
-        and rollout_id in event["rollout_ids"]
-        for event in bundle["rollout_plans"]
-    )
     assert bundle["hub_lite"]["rollouts"][rollout_id]["state"] == "rolled_back"
     assert bundle["hub_lite"]["rollouts"][rollout_id]["approval"]["approved"] is True
     assert bundle["hub_lite"]["rollouts"][rollout_id]["approval"]["actor"] == "operator:approver"
@@ -387,7 +373,6 @@ def test_canonical_signed_adaptive_fallback_override_and_evidence_loop(temp_dir)
         "package_promotion",
         "runtime_validation",
         "rollout",
-        "rollout_plan",
     } <= {entry["kind"] for entry in bundle["timeline"]}
 
     summary_response = client.get("/v1/evidence?limit=100&summary=true&summary_limit=10")
@@ -415,8 +400,6 @@ def test_canonical_signed_adaptive_fallback_override_and_evidence_loop(temp_dir)
     assert summary["trust"]["local_runtime_validations"] == 1
     assert summary["trust"]["released_packages"] == 1
     assert summary["package_promotions"][0]["state"] == "released"
-    assert summary["counts"]["rollout_plans"] >= 1
-    assert summary["rollout_plans"][0]["plan_id"] == CANONICAL_ROLLOUT_PLAN_ID
     assert summary["approvals"][0]["rollout_id"] == rollout_id
     assert summary["approvals"][0]["actor"] == "operator:approver"
     assert summary["fallbacks"][0]["failed_model"] == faulty.id
@@ -432,7 +415,6 @@ def test_canonical_signed_adaptive_fallback_override_and_evidence_loop(temp_dir)
         "signed_package",
         "runtime_validation",
         "package_release",
-        "rollout_coordination",
         "policy_approval",
         "edge_rollout",
         "policy_decision",
@@ -497,12 +479,6 @@ def test_canonical_signed_adaptive_fallback_override_and_evidence_loop(temp_dir)
     assert hub_phases["evidence_aggregation"]["status"] == "complete"
 
 
-def _assigned_rollout_id(plan: dict) -> str:
-    for target in plan.get("targets", []):
-        rollout_id = target.get("rollout_id")
-        if rollout_id:
-            return str(rollout_id)
-    raise AssertionError("rollout plan did not assign any target")
 
 
 def _build_system(root: Path) -> dict:

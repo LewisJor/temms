@@ -43,8 +43,8 @@ If any tests fail, check your Python version (`python --version` — need 3.11+)
 
 This runs the TEMMS control loop without Docker or a separate daemon. It builds
 and signs a demo package, catalogs it in Hub Lite, records runtime validation,
-coordinates a staged rollout plan, records rollout approval, applies the first
-batch on a local edge runtime, simulates fog, low battery, model-load failure,
+assigns a per-device rollout, records rollout approval, applies it on a local
+edge runtime, simulates fog, low battery, model-load failure,
 serves an inference request while offline, rolls back, and applies an operator
 override, then exports an evidence bundle and ingests it back into Hub Lite for
 central evidence aggregation.
@@ -78,10 +78,10 @@ curl "http://localhost:8080/v1/evidence?summary=true&summary_limit=20" | python 
 curl "http://localhost:8080/v1/evidence?replay=true&replay_limit=50" | python -m json.tool
 ```
 
-The canonical demo also records the rollout plan, approval gate, Hub evidence
-ingest, and Hub-side mission replay phase, so the exported evidence shows that
-rollout coordination and policy approval happened before edge apply and that
-post-mission evidence can be aggregated centrally.
+The canonical demo also records the rollout assignment, approval gate, Hub
+evidence ingest, and Hub-side mission replay phase, so the exported evidence
+shows that rollout assignment and policy approval happened before edge apply and
+that post-mission evidence can be aggregated centrally.
 
 ## Mission package handoff from the CLI
 

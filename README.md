@@ -57,8 +57,8 @@ make product-demo
 ```
 
 This builds and signs a demo package, catalogs it in Hub Lite, records runtime
-validation, coordinates a staged rollout plan, records rollout approval, applies
-the first batch on a local edge runtime, simulates fog, low battery, model-load
+validation, assigns a per-device rollout, records rollout approval, applies it
+on a local edge runtime, simulates fog, low battery, model-load
 failure, offline inference serving, rollback, and operator override, then writes
 `temms-canonical-evidence.json` and ingests that evidence back into Hub Lite for
 central aggregation and mission replay.
@@ -134,7 +134,7 @@ available runtime targets by fit, validation, benchmark, and live inventory
 state, and can generate a `temms-edge-runtime-proof/v1` payload through Hub and
 download the exact server-backed JSON proof for offline handoff. The same proof
 includes the canonical `temms-runtime-workbench/v1` contract used by the CLI,
-API, and DDIL retarget checks to agree on selected target, best target,
+API, and DDIL replay checks to agree on selected target, best target,
 capability lock, benchmark, telemetry, and blocked-runtime reasons. When the
 daemon has a package signing key, that proof carries an attestation with the
 payload hash, signer, and key fingerprint, and the local `verify-edge-proof`

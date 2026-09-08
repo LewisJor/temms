@@ -1780,8 +1780,7 @@ def control(  # noqa: C901  (tracked in #54)
     action: str = typer.Argument(
         ...,
         help=(
-            "Action: offline, online, deploy, sync-preview, sync, retarget-runtime, "
-            "quarantine-blocked, requeue-dead-letters, acknowledge-dead-letters"
+            "Action: offline, online, deploy, sync-preview, sync"
         ),
     ),
     control_url: str = typer.Option(
@@ -1794,21 +1793,13 @@ def control(  # noqa: C901  (tracked in #54)
         "--token",
         help="Control API token; defaults to TEMMS_HUB_TOKEN or TEMMS_API_TOKEN",
     ),
-    payload_sha256: str | None = typer.Option(
-        None,
-        "--payload-sha256",
-        help="Pending DDIL intent payload SHA256 for retarget-runtime",
-    ),
     package_id: str | None = typer.Option(None, "--package-id", help="Package ID"),
     model_id: str | None = typer.Option(None, "--model-id", help="Model ID"),
     device_id: str | None = typer.Option(None, "--device-id", help="Target edge device ID"),
     runtime_target_id: str | None = typer.Option(
         None,
         "--runtime-target-id",
-        help=(
-            "Runtime target for deploy or retarget-runtime; retarget-runtime can "
-            "auto-select the measured candidate when omitted"
-        ),
+        help="Runtime target for deploy",
     ),
     slot_name: str | None = typer.Option(None, "--slot", help="Target slot"),
     actor: str = typer.Option(
@@ -1824,12 +1815,7 @@ def control(  # noqa: C901  (tracked in #54)
     reason: str | None = typer.Option(
         None,
         "--reason",
-        help="Reason recorded for retarget/quarantine/acknowledgement actions",
-    ),
-    force: bool = typer.Option(
-        False,
-        "--force",
-        help="For requeue-dead-letters, bypass the safe ready-preflight gate",
+        help="Reason recorded on deploy intents",
     ),
     json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON"),
 ):
@@ -1866,61 +1852,9 @@ def control(  # noqa: C901  (tracked in #54)
                     reason=reason,
                 )
                 payload = _checked_json(client.post("/deploy", json=request))
-            elif action == "retarget-runtime":
-                if payload_sha256 is None:
-                    console.print("[red]--payload-sha256 is required for retarget-runtime[/red]")
-                    raise typer.Exit(1)
-                payload = _checked_json(
-                    client.post(
-                        "/sync/retarget-runtime",
-                        json=_control_mutation_body(
-                            actor=actor,
-                            reason=reason or "operator selected measured compatible runtime",
-                            payload_sha256=payload_sha256,
-                            runtime_target_id=runtime_target_id,
-                        ),
-                    )
-                )
-            elif action == "quarantine-blocked":
-                payload = _checked_json(
-                    client.post(
-                        "/sync/quarantine-blocked",
-                        json=_control_mutation_body(
-                            actor=actor,
-                            reason=reason or "operator quarantined blocked DDIL intent",
-                        ),
-                    )
-                )
-            elif action == "requeue-dead-letters":
-                payload = _checked_json(
-                    client.post(
-                        "/sync/requeue-dead-letters",
-                        json=_control_mutation_body(
-                            actor=actor,
-                            reason=reason or "operator requeued remediated DDIL intent",
-                            payload_sha256s=[payload_sha256] if payload_sha256 else None,
-                            require_ready=not force,
-                            force=force,
-                        ),
-                    )
-                )
-            elif action == "acknowledge-dead-letters":
-                payload = _checked_json(
-                    client.post(
-                        "/sync/acknowledge-dead-letters",
-                        json=_control_mutation_body(
-                            actor=actor,
-                            reason=reason or "operator reviewed DDIL dead letter",
-                        ),
-                    )
-                )
             else:
                 console.print(f"[red]Unknown action: {action}[/red]")
-                console.print(
-                    "Valid actions: offline, online, deploy, sync-preview, sync, "
-                    "retarget-runtime, quarantine-blocked, requeue-dead-letters, "
-                    "acknowledge-dead-letters"
-                )
+                console.print("Valid actions: offline, online, deploy, sync-preview, sync")
                 raise typer.Exit(1)
     except typer.Exit:
         raise
@@ -2864,47 +2798,6 @@ def _print_control_payload(action: str, payload: dict) -> None:  # noqa: C901  (
                 f"{preflight.get('blocked', 0)} blocked / "
                 f"{preflight.get('total', 0)} total)"
             )
-        return
-
-    if action == "retarget-runtime":
-        previous = payload.get("previous_runtime_target_id") or "previous"
-        target = payload.get("runtime_target_id") or "target"
-        console.print("[bold green]DDIL runtime retargeted[/bold green]")
-        console.print(f"Runtime: {previous} -> {target}")
-        if payload.get("payload_sha256"):
-            console.print(f"Previous payload: {payload['payload_sha256']}")
-        if payload.get("updated_payload_sha256"):
-            console.print(f"Updated payload: {payload['updated_payload_sha256']}")
-        if payload.get("actor"):
-            console.print(f"Actor: {payload['actor']}")
-        preflight = payload.get("preflight_after")
-        if isinstance(preflight, dict):
-            _print_control_sync_preview(preflight)
-        return
-
-    if action == "quarantine-blocked":
-        console.print("[bold yellow]DDIL blocked intents quarantined[/bold yellow]")
-        console.print(f"Quarantined: {payload.get('quarantined', 0)}")
-        console.print(f"Remaining: {payload.get('remaining', 0)}")
-        return
-
-    if action == "requeue-dead-letters":
-        console.print("[bold green]DDIL dead letters requeued[/bold green]")
-        console.print(f"Requeued: {payload.get('requeued', 0)}")
-        console.print(f"Pending: {payload.get('pending', 0)}")
-        if payload.get("require_ready") is True:
-            console.print("Ready preflight required: yes")
-        if payload.get("blocked"):
-            console.print(f"Blocked candidates: {payload.get('blocked', 0)}")
-        preflight = payload.get("preflight")
-        if isinstance(preflight, dict):
-            _print_control_sync_preview(preflight)
-        return
-
-    if action == "acknowledge-dead-letters":
-        console.print("[bold green]DDIL dead letters acknowledged[/bold green]")
-        console.print(f"Acknowledged: {payload.get('acknowledged', 0)}")
-        console.print(f"Remaining: {payload.get('remaining', 0)}")
         return
 
     console.print("[green]Control command succeeded[/green]")

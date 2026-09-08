@@ -314,50 +314,7 @@ class HubLiteStore:
         """Return one package catalog entry."""
         return self._read()["packages"].get(package_id)
 
-    def upsert_deployment_draft(
-        self,
-        draft_id: str = "active",
-        *,
-        package_id: str,
-        device_id: str,
-        runtime_target_id: str | None = None,
-        slot: str | None = None,
-        actor: str | None = None,
-    ) -> dict[str, Any]:
-        """Persist an operator-selected deployment candidate."""
-        data = self._read()
-        if package_id not in data["packages"]:
-            raise ValueError(f"Unknown package: {package_id}")
-        if device_id not in data["devices"]:
-            raise ValueError(f"Unknown device: {device_id}")
-        runtime_target = None
-        if runtime_target_id:
-            runtime_target = _runtime_targets_with_defaults(data).get(runtime_target_id)
-            if runtime_target is None:
-                raise ValueError(f"Unknown runtime target: {runtime_target_id}")
 
-        now = _now()
-        current = data.setdefault("deployment_drafts", {}).get(draft_id, {})
-        draft = {
-            **current,
-            "schema_version": "temms-deployment-draft/v1",
-            "draft_id": draft_id,
-            "package_id": package_id,
-            "device_id": device_id,
-            "runtime_target_id": runtime_target_id,
-            "slot": slot,
-            "runtime_target": _rollout_runtime_target_summary(runtime_target),
-            "actor": actor,
-            "updated_at": now,
-        }
-        draft.setdefault("created_at", current.get("created_at", now))
-        data["deployment_drafts"][draft_id] = draft
-        self._write(data)
-        return draft
-
-    def get_deployment_draft(self, draft_id: str = "active") -> dict[str, Any] | None:
-        """Return a saved deployment candidate."""
-        return self._read().get("deployment_drafts", {}).get(draft_id)
 
     def list_runtime_targets(self) -> list[dict[str, Any]]:
         """Return container runtime targets, including built-in defaults."""
@@ -711,8 +668,6 @@ class HubLiteStore:
         require_approval: bool = False,
         actor: str | None = None,
         reason: str | None = None,
-        rollout_plan_id: str | None = None,
-        rollout_plan_batch: int | None = None,
         mission_package_stage: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Assign a package rollout to one device."""
@@ -728,8 +683,6 @@ class HubLiteStore:
                 model_id=model_id,
                 require_runtime_validation=require_runtime_validation,
                 require_approval=require_approval,
-                rollout_plan_id=rollout_plan_id,
-                rollout_plan_batch=rollout_plan_batch,
                 mission_package_stage=mission_package_stage,
             )
             return existing
@@ -815,8 +768,6 @@ class HubLiteStore:
             "updated_at": now,
             "actor": actor,
             "reason": reason,
-            "rollout_plan_id": rollout_plan_id,
-            "rollout_plan_batch": rollout_plan_batch,
             "mission_package_stage": mission_package_stage,
             "history": [
                 {
@@ -831,324 +782,13 @@ class HubLiteStore:
         self._write(data)
         return rollout
 
-    def create_rollout_plan(  # noqa: C901  (tracked in #54)
-        self,
-        *,
-        package_id: str,
-        device_ids: list[str],
-        slot: str | None = None,
-        plan_id: str | None = None,
-        runtime_target_id: str | None = None,
-        model_id: str | None = None,
-        batch_size: int = 1,
-        require_runtime_validation: bool = False,
-        require_approval: bool = False,
-        actor: str | None = None,
-        reason: str | None = None,
-    ) -> dict[str, Any]:
-        """Create a coordinated rollout plan across multiple devices."""
-        data = self._read()
-        if plan_id and plan_id in data.setdefault("rollout_plans", {}):
-            existing = data["rollout_plans"][plan_id]
-            _ensure_rollout_plan_request_matches(
-                existing,
-                package_id=package_id,
-                device_ids=device_ids,
-                slot=slot,
-                runtime_target_id=runtime_target_id,
-                model_id=model_id,
-                batch_size=batch_size,
-                require_runtime_validation=require_runtime_validation,
-                require_approval=require_approval,
-            )
-            return existing
-        if package_id not in data["packages"]:
-            raise ValueError(f"Unknown package: {package_id}")
-        if not device_ids:
-            raise ValueError("At least one device_id is required")
-        if batch_size < 1:
-            raise ValueError("batch_size must be at least 1")
-        if runtime_target_id and runtime_target_id not in _runtime_targets_with_defaults(data):
-            raise ValueError(f"Unknown runtime target: {runtime_target_id}")
 
-        package = data["packages"][package_id]
-        if model_id:
-            _validate_package_model(package, package_id=package_id, model_id=model_id)
-        promotion = _normalize_package_promotion(
-            current=package,
-            incoming=package.get("promotion"),
-            package_id=package_id,
-            actor=None,
-            updated_at=_now(),
-        )
-        now = _now()
-        plan_id = plan_id or f"plan-{uuid.uuid4().hex[:12]}"
-        targets = []
-        for device_id in _dedupe_ids(device_ids):
-            if device_id not in data["devices"]:
-                raise ValueError(f"Unknown device: {device_id}")
-            blockers: list[str] = []
-            preview = _rollout_compatibility_preview(
-                data,
-                device_id=device_id,
-                package_id=package_id,
-                runtime_target_id=runtime_target_id,
-                model_id=model_id,
-            )
-            blockers.extend(preview.get("failures") or [])
-            validation = None
-            if require_runtime_validation:
-                if not runtime_target_id:
-                    blockers.append("runtime validation gate requires a runtime target")
-                else:
-                    validation = _latest_passing_runtime_validation(
-                        data,
-                        package_id=package_id,
-                        runtime_target_id=runtime_target_id,
-                        package=package,
-                    )
-                    if validation is None:
-                        blockers.append(
-                            f"no passing runtime validation for package {package_id} "
-                            f"on runtime target {runtime_target_id}"
-                        )
-            if promotion.get("state") != "released":
-                blockers.append(
-                    f"package promotion state is {promotion.get('state')}, not released"
-                )
-            targets.append(
-                {
-                    "device_id": device_id,
-                    "state": "blocked" if blockers else "pending",
-                    "rollout_id": None,
-                    "assigned_at": None,
-                    "blockers": blockers,
-                    "compatible": not preview.get("failures"),
-                    "runtime_validation_ready": validation is not None,
-                    "runtime_validation": _rollout_runtime_validation_summary(validation),
-                }
-            )
 
-        pending_targets = [target for target in targets if target.get("state") == "pending"]
-        plan_state = "ready" if pending_targets else "blocked"
-        plan = {
-            "schema_version": "temms-rollout-plan/v1",
-            "plan_id": plan_id,
-            "package_id": package_id,
-            "model_id": model_id,
-            "package_promotion": _package_promotion_summary(package),
-            "slot": slot,
-            "runtime_target_id": runtime_target_id,
-            "runtime_target": _rollout_runtime_target_summary(
-                _runtime_targets_with_defaults(data).get(runtime_target_id)
-                if runtime_target_id
-                else None
-            ),
-            "batch_size": batch_size,
-            "require_runtime_validation": require_runtime_validation,
-            "require_approval": require_approval,
-            "state": plan_state,
-            "current_batch": 0,
-            "targets": targets,
-            "counts": _rollout_plan_counts(targets),
-            "created_at": now,
-            "updated_at": now,
-            "actor": actor,
-            "reason": reason,
-            "history": [
-                {
-                    "state": "created",
-                    "updated_at": now,
-                    "detail": reason or f"created rollout plan with {len(targets)} targets",
-                    "actor": actor,
-                    "counts": _rollout_plan_counts(targets),
-                }
-            ],
-        }
-        data.setdefault("rollout_plans", {})[plan_id] = plan
-        self._write(data)
-        return plan
 
-    def advance_rollout_plan(  # noqa: C901  (tracked in #54)
-        self,
-        plan_id: str,
-        *,
-        limit: int | None = None,
-        actor: str | None = None,
-    ) -> dict[str, Any]:
-        """Assign the next batch for a rollout plan."""
-        data = self._read()
-        plan = data.setdefault("rollout_plans", {}).get(plan_id)
-        if plan is None:
-            raise ValueError(f"Unknown rollout plan: {plan_id}")
-        if plan.get("state") == "paused":
-            raise ValueError(f"Rollout plan {plan_id} is paused")
-        if plan.get("state") == "blocked":
-            raise ValueError(f"Rollout plan {plan_id} has no assignable targets")
-        if plan.get("state") == "completed":
-            return plan
 
-        batch_limit = limit if limit is not None else int(plan.get("batch_size") or 1)
-        if batch_limit < 1:
-            raise ValueError("limit must be at least 1")
-        pending = [target for target in plan.get("targets", []) if target.get("state") == "pending"]
-        if not pending:
-            return self._complete_rollout_plan(plan_id, actor=actor, detail="no pending targets")
 
-        batch_number = int(plan.get("current_batch") or 0) + 1
-        assigned_rollout_ids: list[str] = []
-        for index, target in enumerate(pending[:batch_limit], start=1):
-            device_id = str(target.get("device_id") or "")
-            rollout_id = f"{plan_id}-b{batch_number}-{index}"
-            rollout = self.assign_rollout(
-                device_id=device_id,
-                package_id=str(plan.get("package_id") or ""),
-                slot=plan.get("slot"),
-                rollout_id=rollout_id,
-                runtime_target_id=plan.get("runtime_target_id"),
-                model_id=plan.get("model_id"),
-                require_runtime_validation=bool(plan.get("require_runtime_validation")),
-                require_approval=bool(plan.get("require_approval")),
-                actor=actor,
-                reason=f"assigned by rollout plan {plan_id} batch {batch_number}",
-                rollout_plan_id=plan_id,
-                rollout_plan_batch=batch_number,
-            )
-            target["state"] = "assigned"
-            target["rollout_id"] = rollout["rollout_id"]
-            target["assigned_at"] = rollout.get("created_at")
-            assigned_rollout_ids.append(rollout["rollout_id"])
 
-        data = self._read()
-        plan = data.setdefault("rollout_plans", {}).get(plan_id)
-        if plan is None:
-            raise ValueError(f"Unknown rollout plan: {plan_id}")
-        assigned_by_device = {target["device_id"]: target for target in pending[:batch_limit]}
-        for target in plan.get("targets", []):
-            assigned = assigned_by_device.get(target.get("device_id"))
-            if assigned is not None:
-                target.update(
-                    {
-                        "state": "assigned",
-                        "rollout_id": assigned.get("rollout_id"),
-                        "assigned_at": assigned.get("assigned_at"),
-                    }
-                )
 
-        now = _now()
-        remaining = [
-            target for target in plan.get("targets", []) if target.get("state") == "pending"
-        ]
-        plan["current_batch"] = batch_number
-        plan["state"] = "ready" if remaining else _rollout_plan_state(plan.get("targets", []))
-        plan["updated_at"] = now
-        plan["actor"] = actor or plan.get("actor")
-        plan["counts"] = _rollout_plan_counts(plan.get("targets", []))
-        plan.setdefault("history", []).append(
-            {
-                "state": "advanced",
-                "updated_at": now,
-                "detail": f"assigned batch {batch_number}",
-                "actor": actor,
-                "batch": batch_number,
-                "rollout_ids": assigned_rollout_ids,
-                "counts": plan["counts"],
-            }
-        )
-        if plan["state"] == "completed":
-            plan["history"].append(
-                {
-                    "state": "completed",
-                    "updated_at": now,
-                    "detail": "all assignable targets assigned",
-                    "actor": actor,
-                    "counts": plan["counts"],
-                }
-            )
-        self._write(data)
-        return plan
-
-    def pause_rollout_plan(
-        self,
-        plan_id: str,
-        *,
-        actor: str | None = None,
-        reason: str | None = None,
-    ) -> dict[str, Any]:
-        """Pause a rollout plan before assigning more batches."""
-        return self._set_rollout_plan_state(
-            plan_id,
-            "paused",
-            actor=actor,
-            reason=reason or "rollout plan paused",
-        )
-
-    def resume_rollout_plan(
-        self,
-        plan_id: str,
-        *,
-        actor: str | None = None,
-        reason: str | None = None,
-    ) -> dict[str, Any]:
-        """Resume a paused rollout plan."""
-        return self._set_rollout_plan_state(
-            plan_id,
-            "ready",
-            actor=actor,
-            reason=reason or "rollout plan resumed",
-        )
-
-    def list_rollout_plans(self) -> list[dict[str, Any]]:
-        """Return coordinated rollout plans."""
-        plans = list(self._read().setdefault("rollout_plans", {}).values())
-        plans.sort(key=lambda plan: plan.get("updated_at", ""), reverse=True)
-        return plans
-
-    def get_rollout_plan(self, plan_id: str) -> dict[str, Any] | None:
-        """Return one coordinated rollout plan."""
-        return self._read().setdefault("rollout_plans", {}).get(plan_id)
-
-    def _complete_rollout_plan(
-        self,
-        plan_id: str,
-        *,
-        actor: str | None = None,
-        detail: str = "completed",
-    ) -> dict[str, Any]:
-        return self._set_rollout_plan_state(plan_id, "completed", actor=actor, reason=detail)
-
-    def _set_rollout_plan_state(
-        self,
-        plan_id: str,
-        state: str,
-        *,
-        actor: str | None = None,
-        reason: str | None = None,
-    ) -> dict[str, Any]:
-        if state not in ROLLOUT_PLAN_STATES:
-            raise ValueError(f"Invalid rollout plan state: {state}")
-        data = self._read()
-        plan = data.setdefault("rollout_plans", {}).get(plan_id)
-        if plan is None:
-            raise ValueError(f"Unknown rollout plan: {plan_id}")
-        if state == "ready":
-            state = _rollout_plan_state(plan.get("targets", []))
-        now = _now()
-        plan["state"] = state
-        plan["updated_at"] = now
-        plan["actor"] = actor or plan.get("actor")
-        plan["counts"] = _rollout_plan_counts(plan.get("targets", []))
-        plan.setdefault("history", []).append(
-            {
-                "state": state,
-                "updated_at": now,
-                "detail": reason,
-                "actor": actor,
-                "counts": plan["counts"],
-            }
-        )
-        self._write(data)
-        return plan
 
     def approve_rollout(
         self,
@@ -1208,7 +848,6 @@ class HubLiteStore:
         rollout.setdefault("history", []).append(
             {"state": state, "updated_at": now, "detail": detail, "actor": actor}
         )
-        _reconcile_rollout_plan_target(data, rollout, state=state, actor=actor, updated_at=now)
         self._write(data)
         return rollout
 
@@ -1227,7 +866,6 @@ class HubLiteStore:
             "devices": data["devices"],
             "deployment_status": data["deployment_status"],
             "rollouts": data["rollouts"],
-            "rollout_plans": data.setdefault("rollout_plans", {}),
             "telemetry_events": data.get("telemetry_events", {}),
             "telemetry_replays": data.get("telemetry_replays", {}),
             "evidence_bundles": data.get("evidence_bundles", {}),
@@ -1430,8 +1068,6 @@ class HubLiteStore:
             "runtime_targets",
             "runtime_validations",
             "benchmarks",
-            "deployment_drafts",
-            "rollout_plans",
             "evidence_bundles",
             "evidence_ingests",
         ):
@@ -1445,7 +1081,7 @@ class HubLiteStore:
                 collection[record_id] = _merge_record(
                     current_record,
                     incoming_record,
-                    merge_history=key in {"rollouts", "rollout_plans"},
+                    merge_history=key == "rollouts",
                 )
             counts[key] = len(records)
 
@@ -1529,8 +1165,6 @@ class HubLiteStore:
             "runtime_targets": default_runtime_targets(),
             "runtime_validations": {},
             "benchmarks": {},
-            "deployment_drafts": {},
-            "rollout_plans": {},
             "evidence_bundles": {},
             "evidence_ingests": {},
         }
@@ -1558,8 +1192,6 @@ def _ensure_rollout_request_matches(
     model_id: str | None,
     require_runtime_validation: bool,
     require_approval: bool,
-    rollout_plan_id: str | None,
-    rollout_plan_batch: int | None,
     mission_package_stage: dict[str, Any] | None = None,
 ) -> None:
     expected = {
@@ -1570,8 +1202,6 @@ def _ensure_rollout_request_matches(
         "model_id": model_id,
         "runtime_validation_required": require_runtime_validation,
         "approval_required": require_approval,
-        "rollout_plan_id": rollout_plan_id,
-        "rollout_plan_batch": rollout_plan_batch,
     }
     if rollout.get("mission_package_stage") or mission_package_stage:
         expected["mission_package_stage"] = mission_package_stage
@@ -1588,128 +1218,12 @@ def _ensure_rollout_request_matches(
         )
 
 
-def _ensure_rollout_plan_request_matches(
-    plan: dict[str, Any],
-    *,
-    package_id: str,
-    device_ids: list[str],
-    slot: str | None,
-    runtime_target_id: str | None,
-    model_id: str | None,
-    batch_size: int,
-    require_runtime_validation: bool,
-    require_approval: bool,
-) -> None:
-    expected = {
-        "package_id": package_id,
-        "model_id": model_id,
-        "slot": slot,
-        "runtime_target_id": runtime_target_id,
-        "batch_size": batch_size,
-        "require_runtime_validation": require_runtime_validation,
-        "require_approval": require_approval,
-    }
-    mismatches = [
-        key
-        for key, value in expected.items()
-        if plan.get(key) != value
-    ]
-    existing_devices = [
-        str(target.get("device_id") or "")
-        for target in plan.get("targets", [])
-        if target.get("device_id")
-    ]
-    if existing_devices != _dedupe_ids(device_ids):
-        mismatches.append("device_ids")
-    if mismatches:
-        plan_id = plan.get("plan_id", "existing rollout plan")
-        raise ValueError(
-            f"Rollout plan {plan_id} already exists with different "
-            + ", ".join(mismatches)
-        )
 
 
-def _reconcile_rollout_plan_target(
-    data: dict[str, Any],
-    rollout: dict[str, Any],
-    *,
-    state: str,
-    actor: str | None,
-    updated_at: str,
-) -> None:
-    """Mirror a rollout lifecycle transition onto its owning rollout plan target."""
-    plan_id = rollout.get("rollout_plan_id")
-    rollout_id = rollout.get("rollout_id")
-    if not plan_id or not rollout_id:
-        return
-    plan = data.setdefault("rollout_plans", {}).get(plan_id)
-    if not isinstance(plan, dict):
-        return
-
-    changed = False
-    for target in plan.get("targets", []):
-        if target.get("rollout_id") != rollout_id:
-            continue
-        target["state"] = state
-        target["updated_at"] = updated_at
-        target["last_actor"] = actor
-        changed = True
-        break
-
-    if not changed:
-        return
-
-    plan["counts"] = _rollout_plan_counts(plan.get("targets", []))
-    plan["state"] = _rollout_plan_state(plan.get("targets", []))
-    plan["updated_at"] = updated_at
-    plan["actor"] = actor or plan.get("actor")
-    plan.setdefault("history", []).append(
-        {
-            "state": "reconciled",
-            "updated_at": updated_at,
-            "detail": f"{rollout_id} moved to {state}",
-            "actor": actor,
-            "rollout_ids": [rollout_id],
-            "counts": plan["counts"],
-        }
-    )
 
 
-def _rollout_plan_state(targets: list[dict[str, Any]]) -> str:
-    """Return the operator-facing state for a coordinated rollout plan."""
-    states = {str(target.get("state") or "") for target in targets}
-    if not targets:
-        return "blocked"
-    if states <= {"blocked"}:
-        return "blocked"
-    if "failed" in states:
-        return "failed"
-    if "pending" in states:
-        return "ready"
-    if states <= {"activated", "rolled_back"}:
-        return "completed"
-    if states & {"assigned", "downloading", "imported"}:
-        return "advancing"
-    return "ready"
 
 
-def _rollout_plan_counts(targets: list[dict[str, Any]]) -> dict[str, int]:
-    counts = {
-        "targets": len(targets),
-        "pending": 0,
-        "assigned": 0,
-        "blocked": 0,
-        "downloading": 0,
-        "imported": 0,
-        "activated": 0,
-        "rolled_back": 0,
-        "failed": 0,
-    }
-    for target in targets:
-        state = target.get("state")
-        if state in counts:
-            counts[state] += 1
-    return counts
 
 
 def _normalize_package_promotion(
@@ -4601,15 +4115,6 @@ def _rollout_readiness_gate(
             "slot": slot,
             "require_approval": True,
         }
-        plan_refs = {
-            "package_id": package_id,
-            "model_id": model_id,
-            "device_ids": [device_id] if device_id else [],
-            "runtime_target_id": runtime_target_id,
-            "slot": slot,
-            "batch_size": 1,
-            "require_approval": True,
-        }
         return _readiness_gate(
             "rollout_gate",
             "Rollout gate",
@@ -4623,12 +4128,6 @@ def _rollout_readiness_gate(
                     "Create rollout",
                     "create_rollout",
                     refs=rollout_refs,
-                ),
-                _readiness_action(
-                    "create_rollout_plan",
-                    "Create staged plan",
-                    "create_rollout_plan",
-                    refs=plan_refs,
                 ),
             ],
         )
@@ -4846,35 +4345,6 @@ def _readiness_action_command(kind: str, refs: dict[str, Any]) -> dict[str, Any]
                     "require_runtime_validation": refs.get("require_runtime_validation"),
                     "actor": READINESS_REMEDIATION_ACTOR,
                     "reason": refs.get("reason", "readiness gate rollout assignment"),
-                }
-            ),
-        )
-    if kind == "create_rollout_plan":
-        return _readiness_command(
-            "POST",
-            "/v1/hub/rollout-plans",
-            _readiness_refs(
-                {
-                    "plan_id": _readiness_command_id(
-                        "plan",
-                        refs,
-                        [
-                            "package_id",
-                            "model_id",
-                            "device_ids",
-                            "runtime_target_id",
-                            "slot",
-                        ],
-                    ),
-                    "package_id": refs.get("package_id"),
-                    "model_id": refs.get("model_id"),
-                    "device_ids": refs.get("device_ids"),
-                    "runtime_target_id": refs.get("runtime_target_id"),
-                    "slot": refs.get("slot"),
-                    "batch_size": refs.get("batch_size", 1),
-                    "require_approval": refs.get("require_approval"),
-                    "actor": READINESS_REMEDIATION_ACTOR,
-                    "reason": "readiness gate staged rollout plan",
                 }
             ),
         )

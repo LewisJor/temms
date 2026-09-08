@@ -81,8 +81,6 @@ class ListRollouts(_Listing):
     path = "/rollouts"
 
 
-class ListRolloutPlans(_Listing):
-    path = "/rollout-plans"
 
 
 class ListTelemetry(_Listing):
@@ -194,39 +192,10 @@ class EnrollDevice:
         )
 
 
-class _PlanLifecycle:
-    """Pause / resume / advance differ only by the verb in their path."""
-
-    verb: str
-
-    def __init__(
-        self,
-        transport: HubTransport,
-        *,
-        plan_id: str,
-        reason: str | None = None,
-        actor: str | None = None,
-    ) -> None:
-        self._transport = transport
-        self._plan_id = plan_id
-        self._reason = reason
-        self._actor = actor
-
-    def execute(self) -> HubResult:
-        return HubResult(
-            self._transport.post(
-                f"/rollout-plans/{self._plan_id}/{self.verb}",
-                json={"reason": self._reason, "actor": self._actor},
-            )
-        )
 
 
-class PauseRolloutPlan(_PlanLifecycle):
-    verb = "pause"
 
 
-class ResumeRolloutPlan(_PlanLifecycle):
-    verb = "resume"
 
 
 class ImportAirgapBundle:
@@ -345,23 +314,6 @@ class _ResourceAction:
         )
 
 
-class AdvanceRolloutPlan(_ResourceAction):
-    collection, verb = "rollout-plans", "advance"
-
-    def __init__(
-        self,
-        transport: HubTransport,
-        *,
-        resource_id: str,
-        batch_size: int | None = None,
-        actor: str | None = None,
-    ) -> None:
-        super().__init__(transport, resource_id=resource_id)
-        self._batch_size = batch_size
-        self._actor = actor
-
-    def _body(self) -> dict[str, Any]:
-        return {"limit": self._batch_size, "actor": self._actor}
 
 
 class ApproveRollout(_ResourceAction):
@@ -567,43 +519,6 @@ class AssignRollout:
         return HubResult(self._transport.post("/rollouts", json=self._request))
 
 
-class CreateRolloutPlan:
-    """``device_ids`` merges the repeatable --target-device with --device-id."""
-
-    def __init__(
-        self,
-        transport: HubTransport,
-        *,
-        package_id: str,
-        device_ids: list[str],
-        plan_id: str | None = None,
-        slot: str | None = None,
-        runtime_target_id: str | None = None,
-        batch_size: int | None = None,
-        require_runtime_validation: bool = False,
-        require_approval: bool = False,
-        actor: str | None = None,
-        model_id: str | None = None,
-    ) -> None:
-        if not device_ids:
-            raise ValueError("a rollout plan needs at least one target device")
-        self._transport = transport
-        self._request: dict[str, Any] = {
-            "plan_id": plan_id,
-            "package_id": package_id,
-            "device_ids": device_ids,
-            "slot": slot,
-            "runtime_target_id": runtime_target_id,
-            "batch_size": batch_size,
-            "require_runtime_validation": require_runtime_validation,
-            "require_approval": require_approval,
-            "actor": actor,
-        }
-        if model_id:
-            self._request["model_id"] = model_id
-
-    def execute(self) -> HubResult:
-        return HubResult(self._transport.post("/rollout-plans", json=self._request))
 
 
 # --------------------------------------------------------------------------

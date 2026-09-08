@@ -34,10 +34,8 @@ from temms.core.mission_package import (
 )
 from temms.core.storage import ModelStorage
 from temms.daemon.pending_preflight import (
-    RUNTIME_TARGET_ASSESSMENT_DIGEST_SCHEMA_VERSION,
     deploy_intent_context,
     pending_sync_preflight,
-    runtime_target_assessment_sha256,
 )
 from temms.hub_lite import (
     EDGE_MISSION_PACKAGE_SCHEMA_VERSION,
@@ -319,34 +317,10 @@ class RolloutAssignRequest(BaseModel):
     actor: str | None = None
 
 
-class RolloutPlanCreateRequest(BaseModel):
-    """Create a coordinated Hub Lite rollout plan."""
-
-    plan_id: str | None = None
-    package_id: str
-    model_id: str | None = None
-    device_ids: list[str]
-    slot: str | None = None
-    runtime_target_id: str | None = None
-    batch_size: int = 1
-    require_runtime_validation: bool = False
-    require_approval: bool = False
-    reason: str | None = None
-    actor: str | None = None
 
 
-class RolloutPlanAdvanceRequest(BaseModel):
-    """Advance a coordinated rollout plan by one batch."""
-
-    limit: int | None = None
-    actor: str | None = None
 
 
-class RolloutPlanStateRequest(BaseModel):
-    """Pause or resume a coordinated rollout plan."""
-
-    reason: str | None = None
-    actor: str | None = None
 
 
 class RolloutApprovalRequest(BaseModel):
@@ -744,26 +718,6 @@ def _normalize_payload_sha256(value: Any) -> str:
     return text
 
 
-def _runtime_retarget_audit(payload: dict[str, Any]) -> dict[str, Any]:
-    records = [
-        record
-        for record in payload.get("_temms_runtime_retarget", [])
-        if isinstance(record, dict)
-    ]
-    if not records:
-        return {}
-    latest = records[-1]
-    return {
-        "schema_version": "temms-ddil-runtime-retarget-audit/v1",
-        "latest": latest,
-        "records": records,
-        "retargeted_at": latest.get("retargeted_at"),
-        "actor": latest.get("actor"),
-        "reason": latest.get("reason"),
-        "previous_runtime_target_id": latest.get("previous_runtime_target_id"),
-        "runtime_target_id": latest.get("runtime_target_id"),
-        "previous_payload_sha256": latest.get("previous_payload_sha256"),
-    }
 
 
 def package_signature_verified(package: dict[str, Any] | None) -> bool:
@@ -876,13 +830,6 @@ def _edge_runtime_ddil_repair_metric(
                 f"{'' if replay_blocked == 1 else 's'} blocked by preflight"
             ),
         }
-    retarget_proof = _latest_runtime_retarget_replay_proof(mission_replay)
-    if retarget_proof:
-        return {
-            "status": "go",
-            "state": "retarget proved",
-            "detail": retarget_proof,
-        }
     if pending:
         return {
             "status": "attention",
@@ -901,34 +848,8 @@ def _runtime_repair_detail(previous: Any, target: Any, delta: Any) -> str:
     return f"{path}{f' (+{delta} fit)' if delta is not None else ''}"
 
 
-def _latest_runtime_retarget_replay_proof(mission_replay: dict[str, Any]) -> str:
-    for event in mission_replay.get("events") or []:
-        if not isinstance(event, dict):
-            continue
-        summary = str(event.get("summary") or "")
-        detail = str(event.get("detail") or "")
-        if event.get("runtime_retargeted") is True or "DDIL replay retargeted" in summary:
-            return _runtime_retarget_proof_text(summary, detail)
-        if detail.startswith("retargeted "):
-            return _runtime_retarget_proof_text(summary, detail)
-    for phase in mission_replay.get("phases") or []:
-        if not isinstance(phase, dict):
-            continue
-        summary = str(phase.get("summary") or "")
-        if phase.get("phase") == "offline_operation" and "retargeted" in summary:
-            return summary
-    return ""
 
 
-def _runtime_retarget_proof_text(summary: str, detail: str) -> str:
-    if not summary:
-        return detail
-    if not detail:
-        return summary
-    detail_path = detail.removeprefix("retargeted ").strip()
-    if detail_path and detail_path in summary:
-        return summary
-    return f"{summary}; {detail}"
 
 
 def _edge_runtime_mission_headline(status: str) -> str:
@@ -960,9 +881,6 @@ def _ddil_readiness_gate(summary: dict[str, Any]) -> dict[str, Any]:
     invalid = _int_of(verification.get("invalid"))
     replay_blocked = _int_of(preflight.get("blocked"))
     optimization_advisories = _int_of(preflight.get("optimization_advisories"))
-    unresolved_dead_letters = _int_of(
-        runtime.get("pending_operation_dead_letters_unresolved_count")
-    )
     unsafe = invalid + replay_blocked
     refs = _ddil_readiness_refs(runtime)
     if unsafe:
@@ -971,13 +889,13 @@ def _ddil_readiness_gate(summary: dict[str, Any]) -> dict[str, Any]:
             "DDIL queue",
             "blocked",
             "blocked",
-            f"{unsafe} unsafe intent{'s' if unsafe != 1 else ''} need quarantine or review",
+            f"{unsafe} unsafe intent{'s' if unsafe != 1 else ''} need review",
             refs=refs,
             actions=[
                 _readiness_action(
-                    "quarantine_blocked_ddil",
-                    "Quarantine blocked intents",
-                    "quarantine_blocked",
+                    "preview_blocked_ddil",
+                    "Preview blocked intents",
+                    "sync_preview",
                     refs=refs,
                 )
             ],
@@ -1006,32 +924,6 @@ def _ddil_readiness_gate(summary: dict[str, Any]) -> dict[str, Any]:
                     "sync_pending_ddil",
                     "Sync pending intents",
                     "sync_pending",
-                    refs=refs,
-                )
-            ],
-        )
-    if unresolved_dead_letters:
-        return _readiness_gate(
-            "ddil_queue",
-            "DDIL queue",
-            "attention",
-            "quarantined",
-            (
-                f"{unresolved_dead_letters} unresolved quarantined intent"
-                f"{'s' if unresolved_dead_letters != 1 else ''}"
-            ),
-            refs=refs,
-            actions=[
-                _readiness_action(
-                    "requeue_quarantined_ddil",
-                    "Requeue quarantine",
-                    "requeue_dead_letters",
-                    refs=refs,
-                ),
-                _readiness_action(
-                    "acknowledge_quarantined_ddil",
-                    "Acknowledge quarantine",
-                    "acknowledge_dead_letters",
                     refs=refs,
                 )
             ],
@@ -1133,19 +1025,10 @@ def _ddil_readiness_refs(runtime: dict[str, Any]) -> dict[str, Any]:
     verification = _dict_of(runtime.get("pending_operation_verification"))
     preflight = _dict_of(runtime.get("pending_operation_preflight"))
     pending_records = runtime.get("pending_operations")
-    dead_letter_records = runtime.get("pending_operation_dead_letters")
     pending_operations = [
         _dict_of(operation)
         for operation in (pending_records if isinstance(pending_records, list) else [])
         if isinstance(operation, dict)
-    ]
-    dead_letters = [
-        _dict_of(operation)
-        for operation in (dead_letter_records if isinstance(dead_letter_records, list) else [])
-        if isinstance(operation, dict)
-    ]
-    unresolved_dead_letters = [
-        operation for operation in dead_letters if operation.get("acknowledged") is not True
     ]
     return _readiness_refs(
         {
@@ -1162,9 +1045,7 @@ def _ddil_readiness_refs(runtime: dict[str, Any]) -> dict[str, Any]:
             "runtime_optimization_advisories": _int_of(
                 preflight.get("optimization_advisories")
             ),
-            "unresolved_dead_letters": len(unresolved_dead_letters),
             "pending_operation_hashes": _readiness_payload_hashes(pending_operations),
-            "dead_letter_hashes": _readiness_payload_hashes(unresolved_dead_letters),
         }
     )
 
@@ -1238,34 +1119,6 @@ def _readiness_action_command(
         return _readiness_command("POST", "/v1/control/online")
     if kind == "sync_pending":
         return _readiness_command("POST", "/v1/control/sync")
-    if kind == "quarantine_blocked":
-        return _readiness_command(
-            "POST",
-            "/v1/control/sync/quarantine-blocked",
-            {
-                "actor": READINESS_REMEDIATION_ACTOR,
-                "reason": "readiness gate quarantine",
-            },
-        )
-    if kind == "acknowledge_dead_letters":
-        return _readiness_command(
-            "POST",
-            "/v1/control/sync/acknowledge-dead-letters",
-            {
-                "actor": READINESS_REMEDIATION_ACTOR,
-                "reason": "readiness gate acknowledgement",
-            },
-        )
-    if kind == "requeue_dead_letters":
-        return _readiness_command(
-            "POST",
-            "/v1/control/sync/requeue-dead-letters",
-            {
-                "actor": READINESS_REMEDIATION_ACTOR,
-                "reason": "readiness gate requeue",
-                "require_ready": True,
-            },
-        )
     if kind == "export_replay":
         return _readiness_command(
             "POST",
@@ -2564,9 +2417,6 @@ async def _replay_deploy_operation(
         "device_id": context.get("device_id"),
         "runtime_target_id": context.get("runtime_target_id"),
     }
-    retarget_audit = _runtime_retarget_audit(payload)
-    if retarget_audit:
-        audit_metadata["ddil_runtime_retarget"] = retarget_audit
     if activation_preflight:
         audit_metadata["activation_preflight"] = activation_preflight
     state.slot_manager.set_operator_override(
@@ -2790,64 +2640,6 @@ async def sync_pending_preview(
     return pending_sync_preflight(state, state.pending_operations.read_all())
 
 
-@control_router.post("/sync/quarantine-blocked")
-async def quarantine_blocked_pending(
-    request: Request,
-    body: dict[str, Any] = Body(default_factory=dict),
-    state: AppState = Depends(get_state),
-) -> dict[str, Any]:
-    require_rbac_role(request, state, "operator")
-    if state.pending_operations is None:
-        return {"status": "success", "quarantined": 0, "remaining": 0}
-    entries = state.pending_operations.read_all()
-    preflight = pending_sync_preflight(state, entries)
-    blocked_entries = [
-        entry
-        for entry in preflight.get("entries", [])
-        if isinstance(entry, dict) and not entry.get("ready")
-    ]
-    if not blocked_entries:
-        return {
-            "status": "success",
-            "quarantined": 0,
-            "remaining": len(entries),
-            "preflight": preflight,
-        }
-
-    actor = request_actor(
-        request,
-        explicit=str(body.get("actor") or "") if isinstance(body, dict) else None,
-        default="operator_api",
-    )
-    reason = str(body.get("reason") or "blocked DDIL preflight") if isinstance(body, dict) else (
-        "blocked DDIL preflight"
-    )
-    preflight_by_index = {
-        int(entry["index"]): entry
-        for entry in blocked_entries
-        if isinstance(entry.get("index"), int)
-    }
-    result = state.pending_operations.quarantine(
-        indexes=set(preflight_by_index),
-        preflight_entries=preflight_by_index,
-        actor=actor,
-        reason=reason,
-    )
-    emit_telemetry(
-        state,
-        "pending_operations.quarantined",
-        {
-            "actor": actor,
-            "reason": reason,
-            "quarantined": result["quarantined"],
-            "remaining": result["remaining"],
-        },
-    )
-    return {
-        "status": "success",
-        "preflight": preflight,
-        **result,
-    }
 
 
 def _pending_preflight_entry_for_payload(
@@ -2863,209 +2655,10 @@ def _pending_preflight_entry_for_payload(
     return None
 
 
-def _runtime_retarget_candidate(entry: dict[str, Any]) -> str | None:
-    gate_lists = [
-        entry.get("hub_optimization_gates"),
-        entry.get("hub_blocking_gates"),
-    ]
-    for gates in gate_lists:
-        if not isinstance(gates, list):
-            continue
-        for gate in gates:
-            if not isinstance(gate, dict) or gate.get("gate_id") != "runtime_optimizer":
-                continue
-            for action in gate.get("actions", []):
-                if not isinstance(action, dict):
-                    continue
-                if action.get("kind") != "select_runtime_target":
-                    continue
-                refs = action.get("refs") if isinstance(action.get("refs"), dict) else {}
-                runtime_target_id = str(refs.get("runtime_target_id") or "").strip()
-                if runtime_target_id:
-                    return runtime_target_id
-    best_runtime_target_id = str(entry.get("hub_best_runtime_target_id") or "").strip()
-    return best_runtime_target_id or None
 
 
-def _runtime_retarget_target_proof(  # noqa: C901  (tracked in #54)
-    entry: dict[str, Any],
-    runtime_target_id: str,
-) -> dict[str, Any]:
-    assessments = entry.get("hub_target_assessments")
-    if not isinstance(assessments, list) or not assessments:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Runtime retarget requires Hub target assessments with measured "
-                "edge/runtime proof"
-            ),
-        )
-
-    target = str(runtime_target_id or "").strip()
-    assessment = next(
-        (
-            candidate
-            for candidate in assessments
-            if isinstance(candidate, dict)
-            and str(candidate.get("runtime_target_id") or "").strip() == target
-        ),
-        None,
-    )
-    if assessment is None:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Runtime target {target} is not present in Hub target assessments",
-        )
-
-    if assessment.get("best") is not True:
-        best = str(entry.get("hub_best_runtime_target_id") or "").strip()
-        suffix = f"; best measured target is {best}" if best else ""
-        raise HTTPException(
-            status_code=409,
-            detail=f"Runtime target {target} is not the best measured target{suffix}",
-        )
-    if assessment.get("eligible") is not True or assessment.get("blocked") is True:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Runtime target {target} is not eligible for this edge/model path",
-        )
-    status = str(assessment.get("status") or "").lower()
-    if status and status != "eligible":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Runtime target {target} assessment status is {status}, expected eligible",
-        )
-
-    score = _optional_float(assessment.get("score"))
-    if score is None:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Runtime target {target} is missing measured runtime-fit score",
-        )
-    validation = (
-        assessment.get("component_states")
-        if isinstance(assessment.get("component_states"), dict)
-        else {}
-    )
-    runtime_validation = (
-        validation.get("runtime_validation")
-        if isinstance(validation.get("runtime_validation"), dict)
-        else {}
-    )
-    validation_id = str(runtime_validation.get("validation_id") or "").strip()
-    if not validation_id:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Runtime target {target} is missing non-dry-run validation proof",
-        )
-    benchmark_id = str(assessment.get("benchmark_id") or "").strip()
-    if not benchmark_id:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Runtime target {target} is missing benchmark proof",
-        )
-
-    lock = (
-        assessment.get("runtime_capability_lock")
-        if isinstance(assessment.get("runtime_capability_lock"), dict)
-        else {}
-    )
-    lock_status = str(lock.get("status") or "").lower()
-    if lock_status != "locked":
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Runtime target {target} capability lock is {lock_status or 'missing'}, "
-                "expected locked"
-            ),
-        )
-    capability_sha256 = str(lock.get("capability_sha256") or "").strip()
-    if len(capability_sha256) != 64:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Runtime target {target} capability hash is missing",
-        )
-    locked_target = str(lock.get("runtime_target_id") or "").strip()
-    if locked_target and locked_target != target:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Runtime target {target} capability lock belongs to {locked_target}"
-            ),
-        )
-
-    edge_inventory = (
-        lock.get("edge_inventory")
-        if isinstance(lock.get("edge_inventory"), dict)
-        else {}
-    )
-    telemetry_freshness = (
-        edge_inventory.get("telemetry_freshness")
-        if isinstance(edge_inventory.get("telemetry_freshness"), dict)
-        else {}
-    )
-    workbench_best_runtime_target_id = str(
-        entry.get("hub_runtime_workbench_best_runtime_target_id") or ""
-    ).strip()
-    return _compact_runtime_retarget_proof(
-        {
-            "schema_version": "temms-ddil-runtime-retarget-proof/v1",
-            "status": "proved",
-            "runtime_target_id": target,
-            "target_assessment_schema_version": (
-                RUNTIME_TARGET_ASSESSMENT_DIGEST_SCHEMA_VERSION
-            ),
-            "target_assessment_sha256": runtime_target_assessment_sha256(assessment),
-            "best": True,
-            "eligible": True,
-            "runtime_fit_score": score,
-            "rank": assessment.get("rank"),
-            "tier": assessment.get("tier"),
-            "detail": assessment.get("detail"),
-            "runtime_lane": assessment.get("runtime_lane"),
-            "artifact_lane": assessment.get("artifact_lane"),
-            "runtime_capability_lock": lock,
-            "capability_sha256": capability_sha256,
-            "telemetry_freshness": telemetry_freshness,
-            "runtime_validation_id": validation_id,
-            "benchmark_id": benchmark_id,
-            "latency_ms_p95": assessment.get("latency_ms_p95"),
-            "throughput_ips": assessment.get("throughput_ips"),
-            "component_states": assessment.get("component_states"),
-            "runtime_workbench_schema_version": entry.get(
-                "hub_runtime_workbench_schema_version"
-            ),
-            "runtime_workbench_status": entry.get("hub_runtime_workbench_status"),
-            "runtime_workbench_target_selection_status": entry.get(
-                "hub_runtime_workbench_target_selection_status"
-            ),
-            "runtime_workbench_previous_selected_runtime_target_id": entry.get(
-                "hub_runtime_workbench_selected_runtime_target_id"
-            ),
-            "runtime_workbench_selected_runtime_target_id": target,
-            "runtime_workbench_best_runtime_target_id": workbench_best_runtime_target_id,
-            "runtime_workbench_target_count": entry.get(
-                "hub_runtime_workbench_target_count"
-            ),
-            "runtime_workbench_eligible_target_count": entry.get(
-                "hub_runtime_workbench_eligible_target_count"
-            ),
-            "runtime_workbench_blocked_target_count": entry.get(
-                "hub_runtime_workbench_blocked_target_count"
-            ),
-            "runtime_workbench_selected_is_best": (
-                workbench_best_runtime_target_id == target
-            ),
-        }
-    )
 
 
-def _compact_runtime_retarget_proof(proof: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: value
-        for key, value in proof.items()
-        if value is not None and value != "" and value != [] and value != {}
-    }
 
 
 def _optional_float(value: Any) -> float | None:
@@ -3077,145 +2670,8 @@ def _optional_float(value: Any) -> float | None:
         return None
 
 
-@control_router.post("/sync/retarget-runtime")
-async def retarget_pending_runtime(
-    request: Request,
-    body: dict[str, Any] = Body(default_factory=dict),
-    state: AppState = Depends(get_state),
-) -> dict[str, Any]:
-    require_rbac_role(request, state, "operator")
-    if state.pending_operations is None:
-        return {"status": "success", "retargeted": 0, "remaining": 0}
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="Request body must be an object")
-
-    payload_sha256 = _normalize_payload_sha256(body.get("payload_sha256"))
-    if not payload_sha256:
-        raise HTTPException(status_code=400, detail="payload_sha256 is required")
-
-    entries = state.pending_operations.read_all()
-    preflight_before = pending_sync_preflight(state, entries)
-    preflight_entry = _pending_preflight_entry_for_payload(preflight_before, payload_sha256)
-    if preflight_entry is None:
-        raise HTTPException(status_code=404, detail="Pending operation payload not found")
-
-    requested_target = str(body.get("runtime_target_id") or "").strip()
-    runtime_target_id = requested_target or _runtime_retarget_candidate(preflight_entry)
-    if not runtime_target_id:
-        raise HTTPException(
-            status_code=409,
-            detail="No runtime retarget candidate is available for this pending operation",
-        )
-    previous_runtime_target_id = str(preflight_entry.get("runtime_target_id") or "").strip()
-    if previous_runtime_target_id == runtime_target_id:
-        raise HTTPException(
-            status_code=409,
-            detail="Pending operation already targets the requested runtime",
-        )
-    runtime_target_proof = _runtime_retarget_target_proof(
-        preflight_entry,
-        runtime_target_id,
-    )
-
-    signature_required, signing_key = rollout_signature_policy(state)
-    matching_entry = entries[int(preflight_entry["index"])]
-    entry_has_signature = isinstance(matching_entry.get("signature"), dict)
-    if (signature_required or entry_has_signature) and not signing_key:
-        raise HTTPException(
-            status_code=409,
-            detail="Retargeting this pending operation requires a configured signing key",
-        )
-
-    actor = request_actor(
-        request,
-        explicit=str(body.get("actor") or ""),
-        default="operator_api",
-    )
-    reason = str(body.get("reason") or "operator selected best runtime target")
-    try:
-        result = state.pending_operations.retarget_runtime(
-            payload_sha256=payload_sha256,
-            runtime_target_id=runtime_target_id,
-            actor=actor,
-            reason=reason,
-            runtime_target_proof=runtime_target_proof,
-            signing_key=signing_key,
-            signer=actor,
-            require_signature=signature_required,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    updated_entries = state.pending_operations.read_all()
-    preflight_after = pending_sync_preflight(state, updated_entries)
-    emit_telemetry(
-        state,
-        "pending_operations.runtime_retargeted",
-        {
-            "actor": actor,
-            "reason": reason,
-            "payload_sha256": result.get("payload_sha256"),
-            "updated_payload_sha256": result.get("updated_payload_sha256"),
-            "previous_runtime_target_id": result.get("previous_runtime_target_id"),
-            "runtime_target_id": result.get("runtime_target_id"),
-            "runtime_target_proof": runtime_target_proof,
-        },
-    )
-    return {
-        "status": "success",
-        "preflight_before": preflight_before,
-        "preflight_after": preflight_after,
-        **result,
-    }
 
 
-@control_router.post("/sync/acknowledge-dead-letters")
-async def acknowledge_pending_dead_letters(
-    request: Request,
-    body: dict[str, Any] = Body(default_factory=dict),
-    state: AppState = Depends(get_state),
-) -> dict[str, Any]:
-    require_rbac_role(request, state, "operator")
-    if state.pending_operations is None:
-        return {"status": "success", "acknowledged": 0, "dead_letters": 0}
-    actor = request_actor(
-        request,
-        explicit=str(body.get("actor") or "") if isinstance(body, dict) else None,
-        default="operator_api",
-    )
-    reason = (
-        str(body.get("reason") or "quarantined DDIL intent reviewed")
-        if isinstance(body, dict)
-        else "quarantined DDIL intent reviewed"
-    )
-    payload_sha256s: set[str] | None = None
-    if isinstance(body, dict) and isinstance(body.get("payload_sha256s"), list):
-        payload_sha256s = {
-            digest
-            for value in body["payload_sha256s"]
-            if isinstance(value, (str, int, float)) and str(value)
-            for digest in [_normalize_payload_sha256(value)]
-            if digest
-        }
-    result = state.pending_operations.acknowledge_dead_letters(
-        actor=actor,
-        reason=reason,
-        payload_sha256s=payload_sha256s,
-    )
-    emit_telemetry(
-        state,
-        "pending_operations.dead_letters_acknowledged",
-        {
-            "actor": actor,
-            "reason": reason,
-            "acknowledged": result["acknowledged"],
-            "dead_letters": result["dead_letters"],
-        },
-    )
-    return {
-        "status": "success",
-        **result,
-    }
 
 
 def _body_bool(body: dict[str, Any], key: str, *, default: bool = False) -> bool:
@@ -3231,133 +2687,8 @@ def _body_bool(body: dict[str, Any], key: str, *, default: bool = False) -> bool
     return default
 
 
-def _requeue_ready_payload_sha256s(
-    state: AppState,
-    payload_sha256s: set[str] | None,
-) -> tuple[set[str], list[dict[str, Any]]]:
-    store = state.pending_operations
-    if store is None:
-        return set(), []
-    ready: set[str] = set()
-    blocked: list[dict[str, Any]] = []
-    for record in store.read_dead_letter():
-        if not isinstance(record, dict):
-            continue
-        if record.get("acknowledged") or record.get("requeued"):
-            continue
-        digest = _normalize_payload_sha256(record.get("payload_sha256"))
-        if payload_sha256s is not None and digest not in payload_sha256s:
-            continue
-        entry = record.get("entry")
-        if not isinstance(entry, dict):
-            blocked.append(
-                {
-                    "payload_sha256": digest,
-                    "reason": "dead-letter record is missing original pending entry",
-                    "replay_status": "blocked",
-                }
-            )
-            continue
-        preflight = pending_sync_preflight(state, [entry])
-        preflight_entries = preflight.get("entries")
-        preflight_entry = (
-            preflight_entries[0]
-            if isinstance(preflight_entries, list)
-            and preflight_entries
-            and isinstance(preflight_entries[0], dict)
-            else {}
-        )
-        if preflight.get("status") == "ready" and preflight_entry.get("ready") is True:
-            if digest:
-                ready.add(digest)
-            continue
-        blocked.append(
-            {
-                "payload_sha256": digest,
-                "operation": preflight_entry.get("operation") or entry.get("operation"),
-                "reason": preflight_entry.get("reason")
-                or "dead-letter requeue preflight blocked",
-                "replay_status": preflight_entry.get("replay_status") or "blocked",
-                "signature_status": preflight_entry.get("signature_status"),
-                "slot": preflight_entry.get("slot"),
-                "model_id": preflight_entry.get("model_id"),
-                "device_id": preflight_entry.get("device_id"),
-                "package_id": preflight_entry.get("package_id"),
-                "runtime_target_id": preflight_entry.get("runtime_target_id"),
-                "hub_readiness_status": preflight_entry.get("hub_readiness_status"),
-                "hub_capability_lock_status": preflight_entry.get(
-                    "hub_capability_lock_status"
-                ),
-                "hub_capability_sha256": preflight_entry.get("hub_capability_sha256"),
-            }
-        )
-    return ready, blocked
 
 
-@control_router.post("/sync/requeue-dead-letters")
-async def requeue_pending_dead_letters(
-    request: Request,
-    body: dict[str, Any] = Body(default_factory=dict),
-    state: AppState = Depends(get_state),
-) -> dict[str, Any]:
-    require_rbac_role(request, state, "operator")
-    if state.pending_operations is None:
-        return {"status": "success", "requeued": 0, "pending": 0, "dead_letters": 0}
-    actor = request_actor(
-        request,
-        explicit=str(body.get("actor") or "") if isinstance(body, dict) else None,
-        default="operator_api",
-    )
-    reason = (
-        str(body.get("reason") or "operator requeued remediated DDIL intent")
-        if isinstance(body, dict)
-        else "operator requeued remediated DDIL intent"
-    )
-    payload_sha256s: set[str] | None = None
-    if isinstance(body, dict) and isinstance(body.get("payload_sha256s"), list):
-        payload_sha256s = {
-            digest
-            for value in body["payload_sha256s"]
-            if isinstance(value, (str, int, float)) and str(value)
-            for digest in [_normalize_payload_sha256(value)]
-            if digest
-        }
-    force = _body_bool(body, "force", default=False)
-    require_ready = _body_bool(body, "require_ready", default=True) and not force
-    blocked_entries: list[dict[str, Any]] = []
-    requeue_filter = payload_sha256s
-    if require_ready:
-        requeue_filter, blocked_entries = _requeue_ready_payload_sha256s(
-            state,
-            payload_sha256s,
-        )
-    result = state.pending_operations.requeue_dead_letters(
-        actor=actor,
-        reason=reason,
-        payload_sha256s=requeue_filter,
-    )
-    preflight = pending_sync_preflight(state, state.pending_operations.read_all())
-    emit_telemetry(
-        state,
-        "pending_operations.dead_letters_requeued",
-        {
-            "actor": actor,
-            "reason": reason,
-            "requeued": result["requeued"],
-            "pending": result["pending"],
-            "dead_letters": result["dead_letters"],
-            "require_ready": require_ready,
-            "blocked": len(blocked_entries),
-        },
-    )
-    return {
-        "status": "success",
-        "preflight": preflight,
-        "require_ready": require_ready,
-        "blocked": len(blocked_entries),
-        "blocked_entries": blocked_entries,
-        **result,
-    }
 
 
 @control_router.post("/deploy")
@@ -4708,106 +4039,14 @@ async def list_rollouts(state: AppState = Depends(get_state)) -> dict[str, Any]:
     return {"rollouts": hub.list_rollouts()}
 
 
-@hub_router.post("/rollout-plans")
-async def create_rollout_plan(
-    request: RolloutPlanCreateRequest,
-    http_request: Request,
-    state: AppState = Depends(get_state),
-) -> dict[str, Any]:
-    """Create a coordinated rollout plan across multiple devices."""
-    require_rbac_role(http_request, state, "operator")
-    hub = get_hub_store(state)
-    actor = request_actor(http_request, request.actor, default="operator")
-    require_signature, _ = rollout_signature_policy(state, resolve_key=False)
-    package = hub.get_package(request.package_id)
-    if require_signature and package is not None and not package_signature_verified(package):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Package {request.package_id} does not have a verified signature",
-        )
-    if require_signature and package is not None and not package_strict_metadata_verified(package):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Package {request.package_id} does not have strict production "
-                "metadata validation"
-            ),
-        )
-    try:
-        return hub.create_rollout_plan(
-            plan_id=request.plan_id,
-            package_id=request.package_id,
-            model_id=request.model_id,
-            device_ids=request.device_ids,
-            slot=request.slot,
-            runtime_target_id=request.runtime_target_id,
-            batch_size=request.batch_size,
-            require_runtime_validation=request.require_runtime_validation,
-            require_approval=request.require_approval,
-            actor=actor,
-            reason=request.reason,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 
-@hub_router.get("/rollout-plans")
-async def list_rollout_plans(state: AppState = Depends(get_state)) -> dict[str, Any]:
-    """List coordinated rollout plans."""
-    hub = get_hub_store(state)
-    plans = hub.list_rollout_plans()
-    return {"rollout_plans": plans, "count": len(plans)}
 
 
-@hub_router.post("/rollout-plans/{plan_id}/advance")
-async def advance_rollout_plan(
-    plan_id: str,
-    request: RolloutPlanAdvanceRequest,
-    http_request: Request,
-    state: AppState = Depends(get_state),
-) -> dict[str, Any]:
-    """Assign the next rollout-plan batch."""
-    require_rbac_role(http_request, state, "operator")
-    hub = get_hub_store(state)
-    actor = request_actor(http_request, request.actor, default="operator")
-    try:
-        return hub.advance_rollout_plan(plan_id, limit=request.limit, actor=actor)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 
-@hub_router.post("/rollout-plans/{plan_id}/pause")
-async def pause_rollout_plan(
-    plan_id: str,
-    request: RolloutPlanStateRequest,
-    http_request: Request,
-    state: AppState = Depends(get_state),
-) -> dict[str, Any]:
-    """Pause a rollout plan before assigning more batches."""
-    require_rbac_role(http_request, state, "operator")
-    hub = get_hub_store(state)
-    actor = request_actor(http_request, request.actor, default="operator")
-    try:
-        return hub.pause_rollout_plan(plan_id, actor=actor, reason=request.reason)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 
-@hub_router.post("/rollout-plans/{plan_id}/resume")
-async def resume_rollout_plan(
-    plan_id: str,
-    request: RolloutPlanStateRequest,
-    http_request: Request,
-    state: AppState = Depends(get_state),
-) -> dict[str, Any]:
-    """Resume a paused rollout plan."""
-    require_rbac_role(http_request, state, "operator")
-    hub = get_hub_store(state)
-    actor = request_actor(http_request, request.actor, default="operator")
-    try:
-        return hub.resume_rollout_plan(plan_id, actor=actor, reason=request.reason)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 
 @hub_router.post("/rollouts/{rollout_id}/status")
