@@ -1,12 +1,12 @@
 .PHONY: help install dev-install sim-install test clean format lint build \
        docker-up docker-down docker-clean docker-build docker-build-runtime docker-buildx docker-logs docker-product-smoke \
-       generate-models product-demo sim-weather sim-override sim-visual sim-headless test-e2e \
+       generate-models product-demo sim-headless test-e2e \
        mvp-smoke mvp-acceptance soak soak-short docker-acceptance docker-acceptance-up \
        docker-acceptance-down init-local run-daemon ui-install ui-build ui-ci ui-dev ui-smoke ui-typecheck
 
 # ==============================================================================
 #  TEMMS — Makefile
-#  "make help" shows all targets. "make sim-visual" is the one you want.
+#  "make help" shows all targets.
 # ==============================================================================
 
 export MLFLOW_HOST_PORT ?= 5001
@@ -35,11 +35,8 @@ help:
 	@echo "    make docker-clean      Nuke volumes, start fresh"
 	@echo "    make docker-logs       Tail daemon logs"
 	@echo ""
-	@echo "  Visual Simulation (the cool part):"
-	@echo "    make sim-visual        Run fog scenario with live GUI window"
-	@echo "    make sim-headless      Run fog scenario in text mode (Docker/CI)"
-	@echo "    make sim-weather       Run API-only weather scenario"
-	@echo "    make sim-override      Run API-only operator override scenario"
+	@echo "  Simulation:"
+	@echo "    make sim-headless      Step a DDIL scenario against the daemon"
 	@echo ""
 	@echo "  Code Quality:"
 	@echo "    make format            Format with black"
@@ -62,9 +59,6 @@ dev-install:
 
 sim-install:
 	pip install -e ".[dev,sim]"
-
-sim-visual-install:
-	pip install -e ".[dev,sim-visual]"
 
 # ---- Test targets ----
 
@@ -221,29 +215,8 @@ generate-models:
 product-demo:
 	uv run python scripts/canonical_product_demo.py
 
-# Visual sim with live GUI window (needs: pip install -e ".[sim-visual]")
-sim-visual:
-	python -m temms.sim.runner --scenario fog_rollout
-
-sim-visual-night:
-	python -m temms.sim.runner --scenario day_night_cycle
-
-sim-visual-rain:
-	python -m temms.sim.runner --scenario rainstorm
-
-sim-visual-stress:
-	python -m temms.sim.runner --scenario combined_stress
-
-# Headless sim (text output, works in Docker/CI)
 sim-headless:
-	python -m temms.sim.runner --scenario fog_rollout --headless
-
-# API-only simulation scripts (no video, just condition injection)
-sim-weather:
-	python scripts/sim_weather_scenario.py
-
-sim-override:
-	python scripts/sim_operator_override.py
+	python -m temms.sim.runner --scenario fog_rollout
 
 # ---- Development shortcuts ----
 

@@ -1867,14 +1867,3 @@ class TEMMSDaemon:
         await serve_with_shutdown()
 
 
-async def start_daemon(config: DaemonConfig | None = None) -> None:
-    """
-    Start TEMMS daemon.
-
-    Convenience function for CLI.
-    """
-    if config is None:
-        config = DaemonConfig()
-
-    daemon = TEMMSDaemon.from_config(config)
-    await daemon.start()

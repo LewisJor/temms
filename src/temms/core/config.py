@@ -23,9 +23,6 @@ class InferenceConfig(BaseModel):
     """Inference server configuration."""
     host: str = Field(default="0.0.0.0")
     http_port: int = Field(default=8080)
-    grpc_port: int = Field(default=50051)
-    max_batch_size: int = Field(default=1)
-    timeout_ms: int = Field(default=5000)
 
 
 class PolicyConfig(BaseModel):
@@ -35,11 +32,6 @@ class PolicyConfig(BaseModel):
     enable_auto_switching: bool = Field(default=True)
 
 
-class SyncConfig(BaseModel):
-    """Sync configuration."""
-    enable_cloud_sync: bool = Field(default=False)
-    cloud_endpoint: str | None = None
-    sync_interval_s: int = Field(default=300)
 
 
 class Config(BaseModel):
@@ -48,7 +40,6 @@ class Config(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     inference: InferenceConfig = Field(default_factory=InferenceConfig)
     policy: PolicyConfig = Field(default_factory=PolicyConfig)
-    sync: SyncConfig = Field(default_factory=SyncConfig)
 
     @classmethod
     def load(cls, path: Path) -> "Config":

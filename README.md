@@ -177,14 +177,6 @@ Run a headless scenario:
 make sim-headless
 ```
 
-Run the visual simulator:
-
-```bash
-pip install -e ".[dev,sim-visual]"
-make docker-up
-make sim-visual
-```
-
 ## How It Works
 
 TEMMS has two layers:

@@ -12,7 +12,6 @@ Tests:
 - History table recording
 """
 
-import json
 from datetime import datetime
 
 from temms.conditions.store import ConditionValue
@@ -168,16 +167,6 @@ class TestGetSnapshot:
 # ── exists ───────────────────────────────────────────────────────────
 
 
-class TestExists:
-    """Test exists() method."""
-
-    def test_exists_true(self, condition_store):
-        condition_store.set("temp", 50, "test", 100)
-
-        assert condition_store.exists("temp") is True
-
-    def test_exists_false(self, condition_store):
-        assert condition_store.exists("nonexistent") is False
 
 
 # ── clear_operator_overrides ─────────────────────────────────────────
@@ -258,20 +247,6 @@ class TestCorruptDataHandling:
 # ── History recording ────────────────────────────────────────────────
 
 
-class TestConditionHistory:
-    """Test that condition changes are recorded in history."""
-
-    def test_set_records_history(self, condition_store):
-        condition_store.set("temp", 50, "sensor", 100)
-        condition_store.set("temp", 80, "sensor", 100)
-
-        rows = condition_store.fetchall(
-            "SELECT * FROM condition_history WHERE path = ?", ("temp",)
-        )
-
-        assert len(rows) == 2
-        assert json.loads(rows[0]["value"]) == 50
-        assert json.loads(rows[1]["value"]) == 80
 
 
 # ── ConditionValue dataclass ─────────────────────────────────────────

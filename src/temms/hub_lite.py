@@ -8355,13 +8355,6 @@ def _verified_package_path(package_id: str, package: dict[str, Any]) -> Path:
     return path
 
 
-def _sha256_file(path: Path) -> str:
-    """Compute SHA256 for a package artifact."""
-    digest = hashlib.sha256()
-    with path.open("rb") as file:
-        while chunk := file.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _sha256_bytes(content: bytes) -> str:
