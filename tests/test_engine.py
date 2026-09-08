@@ -3,13 +3,13 @@ from dataclasses import dataclass
 import pytest
 
 from temms import (
+    TEMMS,
     ActivationResult,
     BestFeasibleSelector,
     InferenceResult,
     ModelRef,
     RuntimeContractError,
     RuntimeState,
-    TEMMS,
 )
 from temms.adapters import InMemoryRuntime
 
