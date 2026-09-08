@@ -64,21 +64,15 @@ TEMMS has two main layers:
   model selection, runtime planning, sensor bindings, model switch/fallback
   policy, package assembly, signing, compatibility matrices, runtime/device
   validation, rollout approval, staged rollout plans, and evidence aggregation.
-  The guided **Mission Package Workbench** UI now follows the operator path:
+  The guided mission package flow follows the operator path:
   **Mission -> Model Plan -> Runtime Fit -> Sensor Handling -> Package Handoff
   -> Edge Deploy -> Field Ops**.
-  The shell opens as a **Mission workflow cockpit** with an operator path rail,
-  a focused current-stage decision panel, package path signals, and a compact
-  **Live context** drawer for inventory, rollout, evidence, and DDIL telemetry,
-  so operators start with a deployable workflow rather than a mixed status board.
-  It starts with a mission package builder that captures the goal or uses
-  **Import YAML** to hydrate the mission spec into sensor input, slot,
+  It starts with a mission package plan that captures the goal or hydrates a
+  mission spec YAML into sensor input, slot,
   latency/throughput SLO, confidence-based model switching, fallback model, and
   DDIL behavior. If the spec carries known `model_id`, `package_id`,
-  `device_id`, or `runtime_target_id` hints, the workbench also preselects the
-  matching model/runtime/edge path before package planning. Those handling
-  controls then get their own **Sensor Handling** step, while model/runtime
-  targeting moves into explicit planning steps. The resulting
+  `device_id`, or `runtime_target_id` hints, the planner also preselects the
+  matching model/runtime/edge path before package planning. The resulting
   `temms-edge-mission-package/v1` manifest binds the selected model, runtime
   target, edge node, policy, and proof gates.
   The manifest is now backed by `POST /v1/hub/mission-package/plan`, which
@@ -110,58 +104,40 @@ TEMMS has two main layers:
   passed proof gate, preserve the embedded `edge_handoff`, and stage the
   package-bound rollout without reconstructing the model/runtime/device body by
   hand. The rollout retains a compact `mission_package_stage` binding with the
-  verified digests so Edge Deploy can show package provenance after refresh.
+  verified digests so package provenance stays visible after staging.
   Advisory or failed proof-gate packages remain inspectable but are fail-closed
   at deploy time.
-  The Hub stage renderer keeps the active step narrow: model selection under
-  **Model Plan**, runtime ranking under **Runtime Fit**, sensor/model switching
-  policy under **Sensor Handling**, package/proof handoff under **Package
-  Handoff**, package-bound rollout staging under **Edge Deploy**, and DDIL plus
-  evidence export under **Field Ops**. Setup-only controls such as package
-  registration and edge enrollment sit behind **Advanced intake**, and direct
-  rollout forms sit behind **Manual controls**.
-  The **Package Handoff** step now shows a mission package binding chain before action:
-  the product smoke covers that chain end to end by planning the package,
+  The product smoke covers the package chain end to end by planning the package,
   downloading the artifact, staging through `/mission-package/stage`, approving
   the policy gate, and applying the rollout until the selected edge path is
   activated.
-  mission spec, selected model/runtime/edge path, handling policy, and deploy
-  intent are visible as the exact package boundary. Readiness gates, runtime
-  mission proof, proof artifacts, and the edge execution contract are preserved
-  behind **Advanced verification** so the default demo path stays package-first
-  while still exposing the full proof system when needed.
-  The cockpit's stage focus keeps the current step, operator decision, ready condition,
-  operational risk, previous step, next step, and the small set of actions for
-  that stage visible so operators can drive the demo as a continuous
-  mission-to-edge workflow instead of a dashboard hunt. For example,
-  **Package Handoff** keeps
-  **Stage rollout** disabled until **Plan package** has produced the mission
+  Staging stays fail-closed until package planning has produced the mission
   package identity, deployment intent, and passed proof gate.
-  The runtime stage still includes the **Runtime workbench** for ranking every
+  The runtime stage ranks every
   available target by measured fit, validation, benchmark freshness, live
-  inventory, and blocker state. It preserves the model chosen in **Model Plan**
+  inventory, and blocker state. It preserves the selected model
   as locked context, so Runtime Fit only changes the edge node and runtime
-  target rather than reopening model selection. That workbench is backed by the canonical
+  target rather than reopening model selection. That ranking is backed by the canonical
   `temms-runtime-workbench/v1` contract in Hub readiness and edge proof
-  artifacts, so the UI, CLI, downloaded JSON, DDIL retarget proof, and API all
+  artifacts, so the CLI, downloaded JSON, DDIL retarget proof, and API all
   explain the same selected target, best target, capability lock, benchmark,
   telemetry, and blocked-runtime reasons. The package stage shows runtime-fit
   score, runtime lane,
   selected/blocked runtime alternatives, artifact fit, live edge inventory,
   declared SLO proof, resource envelope, runtime validation, and DDIL runtime
-  repair proof before the operator reaches lower-level workflow controls. The
-  next lane produces the
-  edge-runtime proof artifact for that exact path through Hub, lets the operator
-  download the server-backed JSON artifact for handoff, mirrors the download
+  repair proof before the operator reaches lower-level workflow controls. Hub
+  then produces the
+  edge-runtime proof artifact for that exact path, lets the operator
+  download the server-backed JSON artifact for handoff with
   response headers for payload, attestation, and component-digest parity, and
-  keeps the local CLI commands beside it, including offline `verify-edge-proof`
+  pairs it with the local CLI commands, including offline `verify-edge-proof`
   gate verification for `go`, best measured runtime selection, runtime fit,
   proof freshness, exact path binding, capability-locked runtime, provider, and
   accelerator evidence, and proof attestation when a signing key is configured. Signed model
   inventory, signed runtime proof artifacts, compatible runtime targets,
-  benchmark proof, rollout approval/apply controls, and mission evidence remain
-  in the same cockpit, so policy approval is part of the normal operator path
-  rather than a hidden API.
+  benchmark proof, rollout approval/apply, and mission evidence live
+  in the same `temms hub` surface, so policy approval is part of the normal
+  operator path rather than a hidden API.
   Active rollouts are rechecked against fresh benchmark, runtime capability, and
   edge telemetry, so lost providers, missing accelerators, latency, throughput,
   RAM, storage, thermal, battery, or power drift becomes a readiness finding
@@ -185,8 +161,9 @@ TEMMS has two main layers:
   retarget and re-sign that DDIL intent in place before replay. The retained
   audit proof records the previous target, proved target, best target, workbench
   counts, validation, benchmark, and capability hash so the repair remains
-  explainable after the queue is drained. The Hub cockpit keeps that proof
-  visible in DDIL readiness and Evidence views so field operators can verify the
+  explainable after the queue is drained. Hub keeps that proof
+  visible in DDIL readiness and evidence exports so field operators can verify
+  the
   queued runtime, proved runtime, best measured runtime, capability lock, and
   validation/benchmark evidence without opening raw JSON.
 
@@ -224,7 +201,8 @@ not a generic MLOps platform, training system, labeling tool, experiment
 tracker, feature store, fleet orchestrator, or broad model registry. Its job is
 narrower and more valuable: control what model runs on an edge device, adapt
 when local conditions change, and prove why each decision happened. The Hub
-workbench makes that proof operational by showing the ranked runtime decision
+runtime workbench contract makes that proof operational by exposing the ranked
+runtime decision
 trace, retained capability digest, validation/benchmark state, blocker reason,
 and copyable remediation command for each on-device target.
 

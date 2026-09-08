@@ -5,32 +5,9 @@ demo. It focuses on the product path: signed model inventory, compatible
 on-device runtime target, sensor/model handling policy, mission package
 handoff, rollout approval, activation controls, and evidence export.
 
-## 1. Build And Verify The Product UI
+## 1. Run The Server Regression Suite
 
-Install the React Hub dependencies once, then typecheck, build, and smoke the
-production bundle served by the daemon. The source package is under `ui/`, but
-the repo root exposes the demo-facing npm scripts:
-
-```bash
-npm --prefix ui install
-npm run typecheck
-npm run build
-npm run smoke:workbench
-```
-
-The same commands are available as `make ui-install`, `make ui-typecheck`,
-`make ui-build`, and `make ui-smoke`.
-
-Expected build output has one Hub JavaScript bundle and one Hub CSS bundle under
-`src/temms/ui/static/hub/assets/`. The Hub product source lives in `ui/src/` and
-is a Vite + React + TypeScript app. The smoke check verifies that the built Hub
-keeps the mission-first flow, `temms-edge-mission-package/v1` handoff manifest,
-Runtime workbench, selected model, edge node, target runtime, proof, and
-per-runtime retarget contracts used by browser automation and operator demos.
-It also enforces conservative raw and gzip bundle-size budgets so the daemon
-served Hub cannot quietly bloat before a field demo.
-
-Run the focused server/UI regression suite:
+Run the focused server regression suite:
 
 ```bash
 uv run pytest tests/unit/test_server.py -q
@@ -45,8 +22,8 @@ demo seed refreshes only its own synthetic benchmark rows for the selected
 device/package/model/runtime, so a restarted local demo does not inherit stale
 edge evidence. Operator-uploaded benchmark records are left untouched. Docker
 demo mode also gives `edge-sim` a deterministic healthy memory/storage envelope
-on heartbeat while leaving runtime/provider detection real, so the first-open
-Mission Package Workbench starts on the deployable path instead of depending on
+on heartbeat while leaving runtime/provider detection real, so the first
+mission package plan starts on the deployable path instead of depending on
 the Docker VM's transient free-memory number. Use the manual canonical
 workspace when you want the full offline/fallback/rollback/evidence loop in a
 local foreground daemon:
@@ -89,187 +66,91 @@ It does not fake runtime support: if the machine running the daemon lacks the
 declared provider or capability, the proof gate should remain blocked and show
 the runtime/capability gap.
 
-Open the product UI:
+Point the CLI and curl checks below at `http://127.0.0.1:18080`.
 
-```text
-http://127.0.0.1:18080/ui/hub
-```
+## 3. Product Contract Smoke Test
 
-`/ui/` redirects to `/ui/hub` when Hub is enabled.
-
-## 3. Product UI Smoke Test
-
-The first screen should be **Mission Package Workbench** with the **Mission** step
-active. The first viewport should show the **Mission workflow cockpit**, not a
-wall of system telemetry: the operator path rail chooses the stage, the stage
-focus panel shows the current decision and next action, package path signals
-show mission/model/runtime/handling/package state, and **Live context** keeps
-inventory, rollout, evidence, and DDIL health available without making them the
-primary surface. Start the demo there: define the mission goal or use
-**Import YAML** to load a mission spec; the workbench should populate
-sensor, slot, latency/throughput SLO, switch policy, fallback model, and DDIL
-behavior. When the YAML carries `model_id`, `package_id`, `device_id`, or
-`runtime_target_id` values that match Hub inventory, the selected
-model/runtime/edge path should hydrate from the spec before package planning.
-The stage focus panel should keep the ready condition, risk, and primary actions
-visible while you move
-through the top flow in order: **Model Plan** for signed package/model
-selection, **Runtime Fit** for edge node/runtime ranking and proof,
-**Sensor Handling** for switching and DDIL policy, **Package Handoff** for the
-mission package boundary, **Edge Deploy** for rollout staging, and **Field Ops**
-for DDIL state plus evidence export.
-
-The Runtime step should show the **Runtime workbench** before the deeper proof
-panels. It should preserve the model chosen in **Model Plan** as a locked
-selected-model context, then let the operator choose the edge node and runtime
-target. The ranked runtime table should show selected, best, validated,
-benchmarked, inventory-matched, and blocked target lanes. The workbench should
-show the selected fit score, expose the best runtime target, and keep
-**Generate proof** beside the active model/runtime/device path. Then narrate the active **On-device runtime proof**
-path, **Edge execution contract**, **Operational verdict**, **Edge runtime
-mission** proof band, and **Runtime proof artifact**. The execution contract
+Exercise the product path against the seeded daemon with the CLI and API. The
+flow follows **Mission -> Model Plan -> Runtime Fit -> Sensor Handling ->
+Package Handoff -> Edge Deploy -> Field Ops**: define the mission goal or YAML,
+choose the signed model, rank and prove the runtime, set switching and DDIL
+policy, plan and download the mission package, stage the rollout, and finish
+with DDIL state plus evidence export. `temms hub mission-package-plan` should
+populate sensor, slot, latency/throughput SLO, switch policy, fallback model,
+and DDIL behavior from a mission YAML. When the YAML carries `model_id`,
+`package_id`, `device_id`, or `runtime_target_id` values that match Hub
+inventory, the selected model/runtime/edge path should hydrate from the spec
+before package planning. The execution contract for the selected path
 should show selected model artifact, target runtime, edge node, fit score,
 runtime lane, artifact path, SLO/resource evidence, admission state, ranked
-measured runtime candidates, and **Target runtime coverage** for every known
+measured runtime candidates, and target runtime coverage for every known
 runtime target, including blocked Jetson/Orin/RPi/TFLite-style lanes and the
 exact capability or evidence gap that made them ineligible for the selected
-edge. Each runtime lane should include a short **Next:** remediation line such
+edge. Each runtime lane should include a compact remediation record such
 as use matching edge class, validate runtime, record edge benchmark, or use for
-field apply, plus a command copy control when the execution contract carries an
+field apply, plus a command payload when the execution contract carries an
 operator or edge-local remediation command for that lane. Edge-run actions such
-as benchmark collection or heartbeat refresh should be visibly labeled as
-edge-run so the operator does not mistake them for safe central mutations. Each
-lane should also show compact component proof chips for compatibility,
-validation, performance, resource, and telemetry. Finally use **Runtime proof
-artifact** to copy the generated
-`temms hub edge-runtime-mission` and `temms hub verify-edge-proof` commands for
-the currently selected model/runtime/device path, or press **Generate artifact**
-to inspect the same `temms-edge-runtime-proof/v1` JSON envelope from Hub. Use
-**Download JSON** when you want the browser demo to hand off the exact proof
-file for offline verification.
+as benchmark collection or heartbeat refresh should be explicitly marked
+`requires_edge_execution` so the operator does not mistake them for safe
+central mutations. Each lane should also carry compact component proof states
+for compatibility, validation, performance, resource, and telemetry. Use
+`temms hub edge-runtime-mission` and `temms hub verify-edge-proof` for the
+runtime proof lane, inspecting the same `temms-edge-runtime-proof/v1` JSON
+envelope from Hub.
 
-Expected visible state with the Docker Hub seed:
+Expected state with the Docker Hub seed:
 
-- The top flow is **Mission -> Model Plan -> Runtime Fit -> Sensor Handling ->
-  Package Handoff -> Edge Deploy -> Field Ops**. Mission should be a focused builder, not a dashboard
-  dump: goal or YAML should be editable without burying the operator in rollout
-  controls, and **Live context** should keep inventory and telemetry available
-  without making them the primary surface. **Sensor Handling** should own sensor input, slot,
-  latency/throughput SLO, switch policy, fallback model, and DDIL behavior in
-  one place.
-- The staged Hub should not show unrelated console sections under the active
-  step. **Model Plan** owns model inventory and selected model detail, while
-  package registration, edge enrollment, and bundle import sit behind
-  **Advanced intake**. **Edge Deploy** opens on the mission-package deploy lane;
-  direct rollout forms live behind **Manual controls**, and rollout-plan/fleet
-  panels surface only when a workflow action opens them. **Field Ops** owns DDIL
-  field state and mission evidence export.
-- The **Mission workflow cockpit** should show the current step status, the
-  operator decision, package path signals, and previous/next buttons, so the
-  demo can move through the path without hunting through the page. Changing
-  stages should return focus to the operator path rail, while readiness actions
-  and package rollout staging may focus the exact operational section they opened.
-- The active stage should show ready condition and risk facts plus only the
-  actions relevant to that stage. On
-  **Package Handoff**, **Stage rollout** should stay disabled until
-  **Plan package** produces a package identity, deployment intent, and passed proof gate; after proof passes, the cockpit should unlock **Stage rollout**
-  and keep **Download package** available for field handoff.
-- **Plan package** should call `POST /v1/hub/mission-package/plan` and return a
-  `temms-edge-mission-package/v1` payload. The preview/copy payload should
+- `POST /v1/hub/mission-package/plan` should return a
+  `temms-edge-mission-package/v1` payload. The payload should
   include mission, selection, SLO, model handling, DDIL policy, runtime plan,
   proof gate, `deployment_intent`, `edge_handoff`, component digests, and
   `integrity.payload_sha256`. The `edge_handoff` block should use schema
   `temms-edge-mission-package-handoff/v1`, mode `stage_approve_apply`, and
   include package stage, rollout approval, rollout apply, and digest-verification
   commands for the edge operator. Package planning is advisory so operators can plan while readiness is still
-  `attention`; **Generate artifact** and **Download JSON** stay strict. The
+  `attention`; proof generation and proof download stay strict. The
   same endpoint should derive missing `package_id`, `model_id`, `device_id`,
   `runtime_target_id`, `slot`, SLO, handling, and DDIL fields from
   `mission_yaml` when the YAML carries them, while explicit JSON fields still
   take precedence.
-- The **Package Handoff** step should show a **Mission package binding chain** before the
-  action buttons are used: mission spec, model/runtime/edge selection, handling
-  policy, and deploy intent should all be visible as the package boundary. If
-  the operator has not pressed **Plan package** yet, the deploy lane may show a
-  draft rollout path; planning upgrades it to a hashed mission handoff.
-- The top flow's **Package Handoff** status should describe package progress, not raw
-  runtime proof export state: `draft handoff` before planning, `package
-  planned` after `POST /v1/hub/mission-package/plan`, and `downloaded` after a
-  retained package handoff.
-- The **Package Handoff** step should keep the primary package handoff first. Deeper
-  readiness gates, runtime mission proof, runtime proof artifact, and execution
-  contract should live behind **Advanced verification** so the demo can stay on
-  the package boundary unless the audience asks for proof internals.
-- **Download package** should call `POST /v1/hub/mission-package/download`,
-  save a `temms-edge-mission-package-*.json` file, and expose the package
+- `POST /v1/hub/mission-package/download` should return a
+  `temms-edge-mission-package-*.json` attachment and expose the package
   identity, payload, runtime-plan, deployment-intent, and edge-handoff hashes in
-  the preview handoff.
-  The Package stage should then show **Mission package handoff** with retained
-  filename, package identity hash, payload hash, mission hash, runtime-plan
-  hash, deploy-intent hash, edge-handoff hash, and preserved `edge_handoff`
+  its response headers, with the preserved `edge_handoff`
   runbook matching the package body. Repeated plan/download
   calls may produce different payload hashes because artifact observation time
   changes, but they must keep the same package identity hash for the same
   mission/model/runtime/device policy.
-- **Stage rollout** in the Package/Deploy path should create a rollout from the
+- `POST /v1/hub/mission-package/stage` should create a rollout from the
   planned package/model/device/runtime/slot, require approval and runtime
-  validation, switch the UI to **Edge Deploy**, and use the package payload's
+  validation, and use the package payload's
   `deployment_intent.command.body`. The deployment intent should also carry the
   exact `mission_contract_sha256`, `runtime_capability_lock_sha256`, and
   `runtime_plan_sha256`, and staging should reject an artifact whose intent
   points at a different mission-contract, capability-lock, or runtime-plan
   digest. The rollout reason should include the mission package identity digest.
-  It should not stage directly from the draft package preview; press
-  **Plan package** first so the rollout is tied to the hashed deployment intent.
+  Staging requires a planned package, so the rollout is tied to the hashed
+  deployment intent rather than a draft preview.
 - Model inventory shows three signed vision models: daylight, lowlight, and
   mobilenet-tiny.
-- The Runtime workbench shows the selected model from **Model Plan** as locked
-  context, plus edge node and runtime target selectors above the proof panels.
-  Its ranked target table should put the selected
-  runtime first, mark the best target, display fit score or proof-needed state,
-  and show validation, benchmark, and live inventory status per runtime target.
-  Directly below the controls, the **On-device runtime capability vector**
-  should show runtime image/arch/profile, provider match, artifact lane, and
-  capability-lock state for the selected path.
-- The active edge path panel shows the selected
-  `model-yolov8-lowlight-001 -> temms-x86_64-cpu -> edge-sim` style path,
-  runtime fit, target coverage counts, admission state, and signed proof
-  policy together before the detailed workflow sections.
-- The selected model panel shows package, version, runtime, provider, source,
-  and update time.
-- Model rows and the selected model panel show p95 latency, throughput,
-  benchmark target, declared performance SLO, SLO met/miss state, and passing
-  runtime validation status.
-- The Runtime proof artifact panel shows gate policy
-  `go + best runtime + capability lock + fit >= 95 + proof <= 15m + path bound`,
-  a stable `/tmp/temms-edge-runtime-proof-*.json` output path, and copyable
-  generate/verify commands. **Generate artifact** opens a proof payload whose
-  `integrity.payload_sha256` and `runtime_capability_lock.capability_sha256`
-  can be inspected in the browser, and the Hub UI should immediately adopt the
-  returned `proof.readiness` for the selected path. The same panel shows
-  **Signed runtime trace**, **Execution manifest**, and component digest status
-  for the last generated or downloaded proof. For a current proof, the trace
-  should report
+- Generated proofs for the seeded path should pass gate policy
+  `go + best runtime + capability lock + fit >= 95 + proof <= 15m + path bound`.
+  A generated proof payload exposes
+  `integrity.payload_sha256` and `runtime_capability_lock.capability_sha256`.
+  For a current proof, the trace should report
   `trace consistent`, schema `temms-runtime-decision-trace/v1`, the ranked
   target count, remediation command count, and
-  `trace agrees with runtime_workbench`; stale or mismatched proofs must warn
-  before the raw JSON is expanded. The execution manifest should report schema
+  agreement with `runtime_workbench`. The execution manifest should report schema
   `temms-edge-execution-manifest/v1`, selected runtime image, runtime lane,
   capability-lock digest, validation and benchmark ids, best-target status, and
   gate admission policy. The proof should also carry
   `component_digests.schema_version:
   temms-edge-runtime-proof-component-digests/v1` with separate hashes for
   `runtime_workbench`, `runtime_decision_trace`, and
-  `edge_execution_manifest`. The Hub UI recomputes those component hashes in
-  the browser for the selected proof and should report them as verified before
-  the operator falls back to the offline verifier. After **Download JSON**, the
-  same panel should show **Download handoff headers** with the selected proof
+  `edge_execution_manifest`. Proof download responses should include the
+  selected proof
   filename, payload hash, gate status, attestation state, and workbench, trace,
-  and manifest header digests matching the proof body. The preview summary should read as an operator proof
-  report: gate status, runtime fit, selected model, selected runtime, edge node,
-  capability lock digest, heartbeat freshness, payload hash, and signer
-  fingerprint should be visible before expanding the raw JSON. **Download JSON**
-  saves the same payload with the selected proof filename, so the copied
+  and manifest header digests matching the proof body, so the
   `verify-edge-proof` command can validate signature, best-runtime selection,
   capability lock, runtime fit, proof freshness, and exact path binding locally
   without contacting Hub.
@@ -278,26 +159,21 @@ Expected visible state with the Docker Hub seed:
   should be `blocked`, its failures should name the heartbeat freshness gap,
   and strict proof generation or local verification with `--require-capability-lock`
   should fail closed.
-- The Edge execution contract panel shows the selected model -> runtime -> edge
+- The edge execution contract carries the selected model -> runtime -> edge
   path, the runtime decision action such as `apply or stage`, `use best
   runtime`, or `collect evidence`, top measured runtime candidates, and full
   target runtime coverage with selected/best/blocked status plus per-target
-  remediation guidance and component proof chips.
-  If a pinned runtime is lower-scoring or ineligible, the panel should expose
-  **Use best runtime** and switch the selected runtime without mutating Hub
-  state.
+  remediation guidance and component proof states.
 - `/v1/hub/readiness`, `/v1/hub/edge-runtime-proof`, downloaded proof JSON, and
   runtime-fit evidence exports should include
   `edge_execution_contract.schema_version:
-  temms-edge-execution-contract/v1`. The browser panel should reflect that
-  contract, including `target_assessments` and each assessment's remediation
-  command payloads, not a separate UI-only reconstruction.
+  temms-edge-execution-contract/v1`, including `target_assessments` and each
+  assessment's remediation command payloads.
 - `/v1/hub/readiness`, `/v1/hub/edge-runtime-proof`, and downloaded proof JSON
   should also include `runtime_workbench.schema_version:
-  temms-runtime-workbench/v1`. The selected target, best target, target count,
-  selected-is-best flag, capability-lock status, validation id, benchmark
-  evidence, telemetry state, and blocked target rows in the browser Runtime
-  workbench should match that backend contract. The browser Runtime decision
+  temms-runtime-workbench/v1` with the selected target, best target, target
+  count, selected-is-best flag, capability-lock status, validation id, benchmark
+  evidence, telemetry state, and blocked target rows. The runtime decision
   trace should expose each target's rank, selected/best state, proof component
   states, retained capability digest, blocker reason or penalty, and copyable
   operator or edge-run remediation command from the same contract.
@@ -326,12 +202,10 @@ Expected visible state with the Docker Hub seed:
   `runtime_remediation_contract_command_text`, with
   `runtime_remediation_contract_kind` identifying operator versus edge-local
   execution and `runtime_remediation_contract_requires_edge_execution` making
-  edge-only actions explicit. In the Hub DDIL ledger, pending and quarantined
-  rows should show the same command as a copyable operator or edge-run runtime
-  command. The Hub DDIL readiness and Evidence views should also keep a visible
-  **DDIL runtime repair proof** card after sync, showing the queued runtime,
-  proved runtime, best measured runtime, runtime-fit score, capability lock,
-  validation id, benchmark id, target coverage, and replay source.
+  edge-only actions explicit. Evidence exports should retain the queued
+  runtime, proved runtime, best measured runtime, runtime-fit score, capability
+  lock, validation id, benchmark id, target coverage, and replay source after
+  sync.
 - DDIL replay should reject stale retarget proof. If runtime target metadata,
   validation evidence, benchmark evidence, eligibility, or best-target status
   changes after the retarget audit is signed, `sync/preview` should block the
@@ -344,48 +218,40 @@ Expected visible state with the Docker Hub seed:
   `yolov8-lowlight`, compatibility preview, rollout creation, rollout apply,
   and DDIL queueing should all carry `model-yolov8-lowlight-001`, not just the
   package ID.
-- The **Operational verdict** panel gives a single go/attention/blocked status
+- `/v1/hub/readiness` gives a single go/attention/blocked status
   and lists eight gates: model package, runtime target, performance fit,
   resource envelope, edge target, rollout gate, DDIL queue, and evidence chain.
-  The panel should be backed by `/v1/hub/readiness`; each gate should include a
+  Each gate should include a
   short state and the next operator action when it is not ready.
 - With the seeded data, `yolov8-lowlight` should show a green `go` verdict with
-  no remediation chips. `mobilenet-tiny` should show `attention` because it has
-  no selected-model rollout yet; the rollout gate should show **Create rollout**
-  and **Create staged plan** action buttons. Clicking each button should focus
-  the matching rollout or staged-plan workflow section and open a
-  **Readiness remediation** review panel. The action should not mutate state
-  until **Run command** is pressed. The mobilenet readiness API response should
-  include action `refs` for package, model, device, runtime target, slot, and
-  approval defaults.
+  no remediation actions. `mobilenet-tiny` should show `attention` because it
+  has no selected-model rollout yet; the rollout gate should expose
+  create-rollout and create-staged-plan actions. The mobilenet readiness API
+  response should include action `refs` for package, model, device, runtime
+  target, slot, and approval defaults.
 - Executable readiness actions should include a `command` object with HTTP
   method, API path, and any suggested body. For example, mobilenet's
-  **Create rollout** action should point to `POST /v1/hub/rollouts`; the UI
-  review panel should show that path and the selected model/device/runtime body
-  with `actor: "operator:readiness-remediation"` for audit history. Rollout and
+  create-rollout action should point to `POST /v1/hub/rollouts` with
+  the selected model/device/runtime body
+  and `actor: "operator:readiness-remediation"` for audit history. Rollout and
   staged-plan remediation bodies should include deterministic `rollout_id` or
   `plan_id` values so retrying the same command does not create duplicate
   records, plus a `reason` explaining the readiness gate remediation.
-- Benchmark remediation should not be centrally executable from the cockpit.
+- Benchmark remediation should not be centrally executable.
   A missing or stale SLO benchmark action should expose
   `requires_edge_execution: true`, show the exact `temms benchmark ... --hub-url`
   command for the selected device/package/model/runtime, and leave the central
   POST body as an inspection envelope only. Runtime-lane remediation rows should
-  expose the same contract-carried edge-local command as a copyable action and
-  label it as edge-run. The UI should label that action as
-  edge-run required and prevent **Run command** from publishing synthetic
-  performance proof.
+  expose the same contract-carried edge-local command and
+  label it as edge-run, so clients cannot publish synthetic
+  performance proof centrally.
 - The deployment path shows model, runtime, runtime lane, edge, runtime fit,
   resource envelope, rollout, and evidence status together. The on-device fit
   band should name live runtime inventory, runtime-target requirements, the
   selected execution lane such as CPU portable, Jetson CUDA, Raspberry Pi 5
   TFLite, or Orin TensorRT, declared performance SLO, resource envelope,
   validation or benchmark proof, and any missing runtime/provider/accelerator/
-  resource telemetry. The
-  **On-device capability dossier** should condense that same selected
-  model/device/runtime context into runtime fit, runtime lane, resource
-  envelope, performance proof, validation state, live edge inventory, target
-  requirements, and the current Hub admission gate without opening raw JSON. If
+  resource telemetry. If
   a runtime target
   requires something the selected edge inventory does not report, readiness
   should block before rollout assignment. After a rollout is `imported` or
@@ -426,14 +292,12 @@ Expected visible state with the Docker Hub seed:
   upgrade_available`, the selected rank, best target id, score delta, and top
   alternatives. If an impossible runtime target is pinned, readiness should set
   `runtime_fit.target_selection.status: selected_not_eligible` while still
-  exposing the measured best runtime target when one exists. The cockpit's
-  **On-device capability dossier** should show this as a target-rank warning or
-  blocker rather than making the pinned target look optimal. The readiness
+  exposing the measured best runtime target when one exists. The readiness
   gates should also include **Runtime optimizer** with attention state
   `better target available` or blocked state `selected not eligible` and a
-  **Use best runtime** action whose refs point at the better runtime target.
-  Clicking that action should switch the cockpit's selected runtime context and
-  focus the deployment path without making a mutating API call. The readiness
+  non-mutating `select_runtime_target` action whose refs point at the better
+  runtime target, so a client can switch the selected runtime context without
+  a mutating API call. The readiness
   payload should include
   `production_admission.schema_version: temms-production-admission/v1`; when a
   pinned runtime is compatible but lower scoring than the best measured target,
@@ -442,9 +306,9 @@ Expected visible state with the Docker Hub seed:
   edge-runtime proof should also include `runtime_decision.schema_version:
   temms-runtime-decision/v1`, with selected path, recommended action, selected
   target, best target, score delta, runtime/artifact lane, blocking or
-  attention gates, and top measured alternatives. The Edge runtime mission band
-  should surface this as **Runtime decision** so operators can see whether the
-  selected path is ready to apply/stage, needs the best runtime, or is blocked.
+  attention gates, and top measured alternatives, so operators can see whether
+  the selected path is ready to apply/stage, needs the best runtime, or is
+  blocked.
   Evidence export should include
   `runtime_fit_evidence` records derived from the same readiness payload, and
   those summaries should preserve the selected runtime lane, accelerator,
@@ -454,30 +318,26 @@ Expected visible state with the Docker Hub seed:
   and replay should prefer the active slot's model/runtime evidence even if a
   newer inactive rollout has fit data. A best-target fit should be complete; a
   safe but lower-scoring pinned target should be `preview_only` with the better
-  target and score delta in the phase summary. In the Hub cockpit's field operating picture, the evidence feed
-  should label the active model/runtime row as `active runtime proof` before
-  any inactive runtime-fit rows with similar timestamps. Evidence summary
+  target and score delta in the phase summary. Evidence summary
   timelines, full bundle timelines, and mission replay events should carry
-  `active_runtime_proof: true` on that active runtime-fit row so exported
-  artifacts remain clear outside the browser.
+  `active_runtime_proof: true` on the active runtime-fit row so exported
+  artifacts remain clear.
   During normal daemon operation the local edge heartbeat loop should refresh
   runtime/resource/deployment telemetry automatically; use manual heartbeat
   curls only to force a test condition.
-  If the Hub shows **Refresh edge inventory**, open the readiness remediation
-  panel and copy the **Edge execution command**. The browser must not execute
-  that command centrally; heartbeat refresh, benchmark collection, and runtime
+  A **Refresh edge inventory** remediation carries an **Edge execution
+  command** that must not run centrally; heartbeat refresh, benchmark
+  collection, and runtime
   validation have to run on the actual edge node so the resulting capability
   lock is tied to live on-device inventory.
-  The top-level **Edge runtime mission** band should mirror the selected path
-  from the same data. It should show `model -> runtime -> edge`, runtime fit,
+  The `/v1/hub/readiness` response should expose
+  `edge_runtime_mission.schema_version: temms-edge-runtime-mission/v1` as a
+  compact mirror of the selected path:
+  `model -> runtime -> edge`, runtime fit,
   runtime lane, artifact fit, live inventory, performance SLO, resource
   envelope, validation, and DDIL repair status without requiring raw JSON.
-  The `/v1/hub/readiness` response should also expose
-  `edge_runtime_mission.schema_version: temms-edge-runtime-mission/v1` with the
-  same path and metric states, so curl/API demos and the browser are proving the
-  same on-device story.
-  After a retargeted DDIL replay, that band should show **retarget proved** even
-  though the pending queue is empty.
+  After a retargeted DDIL replay, that summary should show **retarget proved**
+  even though the pending queue is empty.
   After a rollout is `imported` or `activated`, a benchmark that misses the
   declared SLO should surface as `performance drift`, include benchmark and
   rollout refs, and offer a reviewed rollback command for the active rollout.
@@ -558,28 +418,29 @@ Expected visible state with the Docker Hub seed:
   runtime advisory, best runtime target, runtime fit score, selected runtime
   lane, artifact fit, runtime capability lock, capability hash, heartbeat
   freshness, and production-apply admission before the operator syncs.
-- Rollout coordination shows staged-plan creation plus advance/pause/resume
-  controls.
-- Rollouts show approval, apply, and rollback controls where applicable.
-- Evidence offers Summary, Replay, Full bundle, and Air-gap bundle actions.
-- No old tabbed admin console should appear in the Hub product UI.
+- Rollout coordination supports staged-plan creation plus advance/pause/resume.
+- Rollouts support approval, apply, and rollback where applicable.
+- Evidence export offers summary, replay, full bundle, and air-gap bundle
+  modes.
 
-DDIL drill from the UI:
+DDIL drill from the CLI and API:
 
-1. Select `yolov8-lowlight`, then click **Link loss** in the DDIL readiness
-   section. The DDIL tile should move to offline mode and deployment state
-   should show `OFFLINE`.
-2. Click **Queue intent**. The daemon buffers a deployment intent locally while
-   offline, the DDIL tile should show pending operations after refresh, and the
-   readiness panel should show a queued-operation row for
+1. Take the daemon offline with
+   `uv run temms control offline --control-url http://127.0.0.1:18080`. DDIL
+   readiness should show offline mode and deployment state `OFFLINE`.
+2. Queue a deploy intent for `model-yolov8-lowlight-001` with
+   `uv run temms control deploy ...` while offline. The daemon buffers the
+   deployment intent locally, and
+   `uv run temms control sync-preview` should show a queued-operation row for
    `model-yolov8-lowlight-001` with operation type, actor, target, and a short
    `sha256:` digest plus `verified intent` and `ready to replay`. The API
    evidence summary should also report
    `pending_operation_verification.verified: 1` and
    `pending_operation_preflight.ready: 1`.
-3. Click **Restore link**. The daemon returns to online mode while preserving the
-   queued intent until sync.
-4. Click **Sync pending**. Pending operations should replay and clear, the
+3. Restore the link with `uv run temms control online`. The daemon returns to
+   online mode while preserving the queued intent until sync.
+4. Sync with `uv run temms control sync`. Pending operations should replay and
+   clear, the
    active slot should change to `model-yolov8-lowlight-001`, and evidence export
    should include connectivity, deploy-request, and deploy-replayed telemetry
    with zero pending operations.
@@ -588,21 +449,24 @@ DDIL drill from the UI:
    should show `tampered intent` in the pending ledger, reject sync with HTTP
    `409`, and leave the pending queue intact.
 6. For blocked-replay testing, queue or craft an intent that names a missing
-   model or slot. The DDIL tile should show a blocked intent, **Sync pending**
-   should not be the recovery action, and **Quarantine blocked** should move the
+   model or slot. Sync preview should show a blocked intent, `sync`
+   should not be the recovery action, and
+   `POST /v1/control/sync/quarantine-blocked` should move the
    bad intent into the dead-letter ledger while preserving any replay-ready
-   intents in the active queue. After quarantine, the readiness panel should
-   show a compact **Quarantined DDIL intents** ledger row with the model/slot
+   intents in the active queue. After quarantine, sync preview should
+   show the quarantined intent with the model/slot
    target, digest, signature state, and replay-block reason. After fixing the
-   missing model, slot, runtime validation, or edge inventory evidence, click
-   **Requeue intent** to run current DDIL preflight and restore that signed
+   missing model, slot, runtime validation, or edge inventory evidence, call
+   `POST /v1/control/sync/requeue-dead-letters`
+   to run current DDIL preflight and restore that signed
    payload to the active queue only if it is ready. If the issue is not truly
    remediated, the response should report a blocked requeue candidate and the
    row should remain quarantined. Once ready, the row should leave the active
    quarantine ledger while evidence exports retain `requeued_at`,
    `requeued_by`, and `requeue_reason`. Use
-   **Acknowledge quarantine** only for intents that should not be replayed; the
-   row should leave the active readiness panel while remaining in evidence
+   `POST /v1/control/sync/acknowledge-dead-letters`
+   only for intents that should not be replayed; the
+   row should leave the active quarantine ledger while remaining in evidence
    exports as acknowledged audit history.
 7. For edge-runtime replay testing, queue or craft a deploy intent that names
    `package_id`, `device_id`, and `runtime_target_id`, then make the selected
@@ -610,16 +474,17 @@ DDIL drill from the UI:
    should return `blocked`, the row should include
    `hub_readiness_status: blocked`, and the blocking gate should name the failed
    runtime/provider/accelerator fit. When a measured compatible target exists,
-   the runtime optimizer gate should carry **Use best runtime** refs and the
+   the runtime optimizer gate should carry `select_runtime_target` refs and the
    pending row should show a compact runtime-fix line with previous target,
    corrected target, and score delta. Artifact-lane mismatches, such as ONNX on
    `temms-rpi5-tflite`, should show `artifact mismatch` and `production apply
-   blocked`. Click **Use best runtime** on the pending row to call
-   `/v1/control/sync/retarget-runtime`; the row should refresh with the new
+   blocked`. Call
+   `/v1/control/sync/retarget-runtime` for the pending intent; the row should
+   refresh with the new
    runtime target, `verified intent`, and a retarget audit line that names the
-   previous and selected targets. After **Sync pending**, evidence summary and
+   previous and selected targets. After sync, evidence summary and
    mission replay should preserve the retarget under the replayed activation
-   decision, even though the pending queue is empty. **Sync pending** should
+   decision, even though the pending queue is empty. Sync should
    leave the queue intact until the operator retargets the intent, fixes
    inventory, or quarantines the bad intent.
 8. For stacked-intent testing, queue two valid deploy or operator override
@@ -734,7 +599,7 @@ payload hash, and signature. In the Docker demo stack, the daemon is configured
 with `TEMMS_PACKAGE_SIGNING_KEY=temms-local-demo-signing-key`, so API-generated
 proof artifacts are signed by Hub and can be verified locally with
 `--require-proof-signature`. `GET /v1/hub/edge-runtime-proof` returns the same
-envelope from the evidence-enriched readiness path used by the React Hub. `GET
+envelope from the evidence-enriched readiness path. `GET
 /v1/hub/edge-runtime-proof/download` returns the same envelope as a JSON
 attachment with proof filename, gate status, payload hash, attestation state,
 signing-key fingerprint, and component digest headers. The digest headers are
@@ -774,16 +639,11 @@ attestation verify. For the seeded demo path, a strong proof should show the
 selected runtime as eligible/best and the non-matching edge classes as blocked
 with remediation such as selecting a matching edge class or running edge-local
 benchmark proof.
-The React Hub shows the command pair, a **Generate artifact** inspection action,
-and a **Download JSON** artifact handoff in the Runtime proof artifact panel for
-the selected path. Successful proof generation also refreshes the selected
-readiness state from the returned proof, so the browser demo and CLI proof trail
-stay aligned even when a previous page snapshot was stale.
 
 Raw API version:
 
 For the Docker demo on `localhost:8080`, run the live contract smoke first. It
-checks `/ui/hub`, `POST /v1/hub/mission-package/plan`,
+checks `POST /v1/hub/mission-package/plan`,
 `POST /v1/hub/mission-package/download`, and
 `POST /v1/hub/mission-package/stage`, including the digest headers that tie the
 mission package to its edge handoff, mission contract, capability lock, runtime
@@ -797,11 +657,10 @@ package identity, edge-handoff, mission-contract, capability-lock, runtime-plan,
 and deployment-intent digests. The smoke then approves and applies the staged rollout so
 repeated runs leave the selected edge path activated rather than stuck in an
 approval or assigned state. It exercises both explicit JSON planning and
-YAML-only mission planning so the backend path stays aligned with the browser
-importer:
+YAML-only mission planning so both intake paths stay aligned:
 
 ```bash
-make docker-product-smoke
+uv run python scripts/mission_package_smoke.py --hub-url http://localhost:8080
 ```
 
 CLI version:
@@ -913,24 +772,29 @@ Expected proof:
 - The second sync preview is replay-ready for `temms-x86_64-cpu`.
 - Mission replay includes an `offline_operation` event whose detail reads
   `retargeted temms-rpi5-tflite -> temms-x86_64-cpu`.
-- The Hub **Edge runtime mission** band shows DDIL repair as **retarget proved**,
-  and the DDIL readiness plus Evidence sections retain the runtime repair proof
-  cards after the replay queue drains.
+- The `edge_runtime_mission` summary shows DDIL repair as **retarget proved**,
+  and evidence exports retain the runtime repair proof after the replay queue
+  drains.
 
-Staged rollout and rollback drill from the UI:
+Staged rollout and rollback drill from the API:
 
-1. Select `yolov8-lowlight`, then use **Create plan** in Rollout coordination.
+1. Create a staged plan for `yolov8-lowlight` with `POST /v1/hub/rollout-plans`
+   (see the spot checks below).
    The plan list should show a ready plan with one target and batch size `1`.
-2. Click **Advance**. The plan should assign the next batch and a rollout should
-   appear in Approval and activation. If there are no remaining pending targets,
+2. Advance the plan with `POST /v1/hub/rollout-plans/{plan_id}/advance`. The
+   plan should assign the next batch and a rollout should
+   appear in rollout history. If there are no remaining pending targets,
    the plan state should move to `advancing` while the target waits for a
    terminal rollout outcome.
-3. Approve and apply the assigned rollout. The active slot should show
+3. Approve and apply the assigned rollout with `temms hub approve` and
+   `temms hub apply`. The active slot should show
    `model-yolov8-lowlight-001`, and the plan should show the target as
    reconciled.
-4. In Mission proof, confirm the replay phase checklist is visible. Before the
+4. In the mission replay export, confirm the phase checklist. Before the
    rollback drill, `Fallback or rollback` may be the remaining incomplete phase.
-5. Click **Rollback** on the activated rollout. The rollout state should move to
+5. Roll back the activated rollout with
+   `POST /v1/hub/rollouts/{rollout_id}/rollback`. The rollout state should move
+   to
    `rolled_back`, the active slot should return to the previous model from the
    slot decision log, and mission replay should mark both `rollout_coordination`
    and `fallback_rollback` complete.
@@ -1070,13 +934,12 @@ curl http://localhost:8080/v1/hub/packages | python -m json.tool
 Open:
 
 ```text
-TEMMS Hub  http://localhost:8080/ui/hub
 TEMMS API  http://localhost:8080/v1/health
 API docs   http://localhost:8080/docs
 MLflow UI  http://localhost:5001
 ```
 
-Expected first-open Hub state:
+Expected seeded Hub state:
 
 - Model inventory shows three signed models: daylight, lowlight, and tiny.
 - Package state is `released`.
@@ -1089,13 +952,13 @@ Expected first-open Hub state:
   SLO/resource-clean runtime target should outrank a generic device-inventory
   match, and selecting an incompatible runtime such as Orin TensorRT for the
   local x86 `edge-sim` should demote that path with concrete runtime/provider/
-  accelerator blockers. The on-device dossier should show the selected runtime
+  accelerator blockers. Runtime fit should name the selected runtime
   lane; the local default path should read as CPU portable and an incompatible
-  Orin/TensorRT target should read as Orin TensorRT while staying blocked. The
-  dossier should also show **Artifact fit** so a native ONNX CPU/CUDA path,
-  TensorRT conversion path, or TFLite artifact mismatch is visible without
-  inspecting JSON.
-- Create rollout, approve, and apply work from the UI because the daemon has
+  Orin/TensorRT target should read as Orin TensorRT while staying blocked.
+  Artifact fit should make a native ONNX CPU/CUDA path,
+  TensorRT conversion path, or TFLite artifact mismatch visible in the same
+  readiness payload.
+- Create rollout, approve, and apply work because the daemon has
   `TEMMS_PACKAGE_SIGNING_KEY` configured in `docker-compose.yml`.
 - Create rollout records the selected model ID; applying a lowlight rollout
   activates `model-yolov8-lowlight-001` instead of defaulting back to the first
@@ -1126,12 +989,10 @@ make docker-acceptance
 
 ## Troubleshooting
 
-- If the Hub UI says the React app has not been built, run `npm run build` from
-  the repo root.
-- If `/ui/hub` loads but has no model rows, seed a workspace with
+- If Hub has no model rows, seed a workspace with
   `scripts/canonical_product_demo.py`, run `scripts/seed_docker_hub_demo.py`, or
   restart the Docker stack with `TEMMS_DEMO_SEED_HUB=1`.
-- If UI rollout apply reports that signature verification needs a signing key,
+- If rollout apply reports that signature verification needs a signing key,
   confirm `TEMMS_PACKAGE_SIGNING_KEY` is set for the daemon.
 - If rollout assignment is blocked, confirm the package is `released`, strict
   metadata is present, and runtime validation exists for the selected runtime

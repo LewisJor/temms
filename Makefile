@@ -1,8 +1,8 @@
 .PHONY: help install dev-install sim-install test clean format lint build \
-       docker-up docker-down docker-clean docker-build docker-build-runtime docker-buildx docker-logs docker-product-smoke \
+       docker-up docker-down docker-clean docker-build docker-build-runtime docker-buildx docker-logs \
        generate-models product-demo sim-headless test-e2e \
        mvp-smoke mvp-acceptance soak soak-short docker-acceptance docker-acceptance-up \
-       docker-acceptance-down init-local run-daemon ui-install ui-build ui-ci ui-dev ui-smoke ui-typecheck
+       docker-acceptance-down init-local run-daemon
 
 # ==============================================================================
 #  TEMMS — Makefile
@@ -30,7 +30,6 @@ help:
 	@echo "    make docker-buildx     Build multi-arch agent image with buildx bake"
 	@echo "    make docker-acceptance     Run containerized Hub + two edge acceptance"
 	@echo "    make docker-acceptance-up  Start Hub + two edge agent containers"
-	@echo "    make docker-product-smoke  Verify live Mission Package Workbench routes"
 	@echo "    make docker-down       Stop all containers"
 	@echo "    make docker-clean      Nuke volumes, start fresh"
 	@echo "    make docker-logs       Tail daemon logs"
@@ -41,11 +40,6 @@ help:
 	@echo "  Code Quality:"
 	@echo "    make format            Format with black"
 	@echo "    make lint              Lint with ruff + mypy"
-	@echo "    make ui-install        Install React Hub UI dependencies"
-	@echo "    make ui-build          Build the React Hub UI into src/temms/ui/static"
-	@echo "    make ui-ci             Typecheck, build, and smoke the React Hub UI"
-	@echo "    make ui-smoke          Verify the built Runtime workbench UI contract"
-	@echo "    make ui-dev            Run the React Hub UI dev server"
 	@echo "    make clean             Remove build artifacts"
 	@echo ""
 
@@ -125,26 +119,6 @@ clean:
 build:
 	python -m build
 
-# ---- React Hub UI ----
-
-ui-install:
-	cd ui && npm install
-
-ui-build:
-	cd ui && npm run build
-
-ui-typecheck:
-	cd ui && npm run typecheck
-
-ui-ci:
-	npm run ui:ci
-
-ui-smoke:
-	cd ui && npm run smoke:workbench
-
-ui-dev:
-	cd ui && npm run dev
-
 # ---- Docker / Simulation ----
 
 docker-build:
@@ -162,7 +136,6 @@ docker-up:
 	@echo "  ┌────────────────────────────────────────┐"
 	@echo "  │  Services starting...                   │"
 	@echo "  │                                         │"
-	@echo "  │  TEMMS Hub:   http://localhost:8080/ui/hub │"
 	@echo "  │  TEMMS API:   http://localhost:8080/v1/  │"
 	@printf "  │  MLflow UI:   http://localhost:%-9s │\n" "$(MLFLOW_HOST_PORT)"
 	@echo "  │  API Docs:    http://localhost:8080/docs │"
@@ -203,9 +176,6 @@ docker-clean:
 
 docker-logs:
 	docker compose logs -f temms-daemon
-
-docker-product-smoke:
-	python scripts/mission_package_smoke.py --hub-url http://localhost:8080
 
 # ---- Simulation runners ----
 

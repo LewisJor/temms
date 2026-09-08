@@ -119,9 +119,6 @@ class TestWebUI:
     # They must redirect operators to the single Hub shell rather than 404 or
     # render legacy dashboards.
     RETIRED_UI_ROUTES = (
-        "/ui/",
-        "/ui/slots",
-        "/ui/conditions",
         "/ui/decisions",
         "/ui/models",
         "/ui/import",

@@ -1,8 +1,8 @@
 # Canonical JSON Hashing (`temms-canonical-json/v1`)
 
 Every TEMMS proof/package/evidence digest is a SHA-256 over a **canonical JSON
-serialization**. For a digest to be verifiable by *any* client — the React Hub,
-the CLI, and a future native (Rust/C++) port — every implementation must produce
+serialization**. For a digest to be verifiable by *any* client — the CLI, API
+clients, and a future native (Rust/C++) port — every implementation must produce
 byte-identical canonical bytes. This document is that contract.
 
 Reference implementation: `core.mission_package.canonical_json_hash`
