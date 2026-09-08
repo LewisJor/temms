@@ -5,7 +5,6 @@ import asyncio
 from temms import TEMMS, BestFeasibleSelector, Constraint, ModelPolicy, ModelRef, Operator
 from temms.adapters import InMemoryRuntime
 
-
 daylight = ModelRef(id="daylight", digest="sha256:daylight")
 lowlight = ModelRef(id="lowlight", digest="sha256:lowlight")
 selector = BestFeasibleSelector(
