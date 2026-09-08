@@ -1,424 +1,91 @@
 # TEMMS
 
-TEMMS is an optimized edge model management system for **DDIL** environments
-(Denied, Disrupted, Intermittent, Limited connectivity). It runs next to your
-inference application, watches local operating conditions, and switches the
-active model for each inference slot when policy says another model is a better
-fit — deterministically, and with a signed evidence trail.
+TEMMS is a tiny runtime-independent library for selecting and activating the
+best feasible model under changing operating conditions.
 
-It is designed for disconnected or degraded edge systems where model choice
-depends on local state: visibility, lighting, battery, thermals, available
-runtime, mission phase, or operator input.
+> Inject a runtime. Supply context. TEMMS selects the model.
 
-> **Direction:** TEMMS integrates the commodity (serving via ONNX Runtime,
-> registry via MLflow) and builds only the differentiator — the DDIL policy,
-> provenance, and evidence layer. See [`docs/direction.md`](docs/direction.md).
+TEMMS does not own a model registry, HTTP server, daemon, database, fleet
+manager, UI, or condition-collection framework. The injected runtime owns model
+access, actual active state, activation, and inference.
 
-## Features
+```python
+import asyncio
 
-- Slot-based inference endpoints
-- YAML policies for condition-based model selection, with anti-flap dwell
-  hysteresis (`min_dwell_s`)
-- Local condition store with source priority
-- Operator overrides
-- Hot-swap model activation (old model serves until the new one is warmed)
-- Fallback chains when a selected model fails to load
-- Offline mode with buffered control operations
-- YAML-driven mission packages: one `mission.yaml` compiles to a signed,
-  multi-model portfolio; the build fails if a policy references a model the
-  portfolio doesn't carry
-- Ed25519-signed packages with offline (public-key-only) verification
-- Offline trust store: multi-key verification and key rotation with no CA
-- Decision log and evidence bundle export
-- Hub CLI and API for model inventory, runtime compatibility, rollout approval,
-  activation, and evidence export
-- Docker simulation with example ONNX models
+from temms import BestFeasibleSelector, Constraint, ModelRef, Operator, TEMMS
+from temms.adapters import InMemoryRuntime
 
-## Install
+small = ModelRef(id="small", digest="sha256:small", priority=10)
+large = ModelRef(
+    id="large",
+    digest="sha256:large",
+    priority=100,
+    constraints=(Constraint("battery", Operator.GTE, 40),),
+)
 
-```bash
-git clone https://github.com/LewisJor/temms.git
-cd temms
-pip install -e ".[dev,sim]"
+async def main() -> None:
+    runtime = InMemoryRuntime(
+        models={"vision": [large, small]},
+        handlers={large.digest: lambda x: x, small.digest: lambda x: x},
+    )
+    temms = TEMMS(runtime=runtime, selector=BestFeasibleSelector())
+    result = await temms.reconcile("vision", {"battery": 18})
+    inference = await temms.infer("vision", b"frame")
+    assert result.decision.selected_model == small
+    assert inference.model == small
+
+asyncio.run(main())
 ```
 
-Run the test suite:
+## Runtime contract
 
-```bash
-make test
+A runtime implements four asynchronous methods:
+
+```python
+class Runtime(Protocol[InputT, OutputT]):
+    async def models(self, slot: str) -> Sequence[ModelRef]: ...
+    async def state(self, slot: str) -> RuntimeState: ...
+    async def activate(self, slot: str, model: ModelRef) -> ActivationResult: ...
+    async def infer(self, slot: str, value: InputT) -> InferenceResult[OutputT]: ...
 ```
 
-## Quick Start
+The runtime is the source of truth. TEMMS never records or claims activation on
+its own. After `activate()`, it asks the runtime for state and fails if the
+reported active model identity does not match the selected model.
 
-Run the canonical control-loop demo:
+## Selection
 
-```bash
-make product-demo
-```
+`BestFeasibleSelector` evaluates hard constraints against caller context or
+runtime resources, excludes failures, then selects by:
 
-This builds and signs a demo package, catalogs it in Hub Lite, records runtime
-validation, assigns a per-device rollout, records rollout approval, applies it
-on a local edge runtime, simulates fog, low battery, model-load
-failure, offline inference serving, rollback, and operator override, then writes
-`temms-canonical-evidence.json` and ingests that evidence back into Hub Lite for
-central aggregation and mission replay.
+1. Higher explicit priority.
+2. Current model on a priority tie, avoiding unnecessary churn.
+3. Stable model ID and digest.
 
-Replay the evidence as an operator-readable summary:
-
-```bash
-temms evidence --input temms-canonical-evidence.json --summary
-temms evidence --input temms-canonical-evidence.json --replay
-```
-
-For a local product rehearsal with seeded models, rollout state, and evidence,
-follow [Functional Testing](docs/functional-testing.md).
-
-Start the Docker environment:
-
-```bash
-make docker-up
-```
-
-The local Docker daemon seeds Hub Lite with a signed, released example package,
-an online `edge-sim` target, and a demo signing key. That makes a first
-`temms hub` session open directly into a model deployment workflow instead of
-an empty catalog. Docker demo mode also publishes a stable simulated resource envelope
-for `edge-sim` so the first-open mission package path starts green; explicit
-heartbeat/resource-drift tests still exercise the same readiness blockers used
-for real constrained edges.
-
-Services:
-
-```text
-TEMMS API   http://localhost:8080/v1/health
-API docs    http://localhost:8080/docs
-MLflow UI   http://localhost:5001
-```
-
-When the Docker stack is running, verify that the live daemon is serving the
-current mission package contract, including explicit JSON and YAML-only mission
-package planning:
-
-```bash
-uv run python scripts/mission_package_smoke.py --hub-url http://localhost:8080
-```
-
-Run the mission package handoff from the CLI:
-
-```bash
-uv run temms hub mission-package-plan ./mission.yaml --hub-url http://localhost:8080 --json
-uv run temms hub mission-package-download ./mission.yaml --hub-url http://localhost:8080 \
-  --output /tmp/temms-edge-mission-package.json
-uv run temms hub mission-package-stage /tmp/temms-edge-mission-package.json \
-  --hub-url http://localhost:8080 --actor operator:cli-demo
-```
-
-The `temms hub` CLI and the `/v1/hub/*` API cover signed model inventory,
-targeted runtime selection, edge rollout status, DDIL readiness, and mission
-evidence. The operator path follows
-**Mission -> Model Plan -> Runtime Fit -> Sensor Handling -> Package Handoff ->
-Edge Deploy -> Field Ops**:
-define the mission spec or YAML, choose models, rank the target runtime, set
-sensor/model-switch handling, package the edge handoff, stage deployment, and
-operate through DDIL/evidence proof. Package planning separates the stable
-package identity hash from the exact downloaded payload hash, so repeated
-plan/download actions can be audited as the same mission/runtime package even
-when artifact timestamps differ. The deployment intent also carries
-mission-contract, runtime-capability-lock, and runtime-plan digests, and the
-package carries a verified edge-handoff digest for the operator runbook that
-staging preserves before creating the edge rollout. Staged rollouts retain a
-compact `mission_package_stage` binding so package provenance remains visible
-after staging. Runtime selection preserves the selected model as locked
-context, lets the operator choose the edge node and target runtime, ranks
-available runtime targets by fit, validation, benchmark, and live inventory
-state, and can generate a `temms-edge-runtime-proof/v1` payload through Hub and
-download the exact server-backed JSON proof for offline handoff. The same proof
-includes the canonical `temms-runtime-workbench/v1` contract used by the CLI,
-API, and DDIL replay checks to agree on selected target, best target,
-capability lock, benchmark, telemetry, and blocked-runtime reasons. When the
-daemon has a package signing key, that proof carries an attestation with the
-payload hash, signer, and key fingerprint, and the local `verify-edge-proof`
-command can fail closed with `--require-proof-signature`.
-
-Run a headless scenario:
-
-```bash
-make sim-headless
-```
-
-## How It Works
-
-TEMMS has two layers:
-
-- **TEMMS Hub** manages candidate models before they reach a device. It packages
-  models and policies, signs artifacts, and runs targeted container tests
-  against the runtimes or device profiles that will consume them.
-- **TEMMS Daemon** runs on the edge device. It imports signed packages, evaluates
-  local conditions and policies, switches models, falls back when needed, and
-  records decision evidence.
-
-The daemon has four main pieces:
-
-- **Slots** are named inference endpoints, such as `vision` or `navigation`.
-- **Conditions** are local facts, such as battery level or visibility.
-- **Policies** map conditions to model choices.
-- **The controller** evaluates a slot, chooses a model, applies the switch, and
-  falls back if the selected model cannot load.
-
-The controller can run in the daemon loop or be invoked directly through the API:
-
-```bash
-curl -X POST http://localhost:8080/v1/control/slots/vision/evaluate \
-  -H "Content-Type: application/json" \
-  -d '{"apply": true}'
-```
-
-Use `{"apply": false}` to preview the decision without changing the active
-model.
-
-## Slots
-
-Create and inspect slots with the CLI:
-
-```bash
-temms slot create vision --required --default-model yolov8-daylight
-temms slot list
-temms slot status vision
-temms slot decisions --slot vision
-```
-
-Each slot tracks its active model, runtime state, candidates, optional operator
-override, and decision history.
-
-## Conditions
-
-Set or inspect local conditions:
-
-```bash
-temms condition set environmental.atmospheric.visibility_m 50
-temms condition set platform.power.battery_percent 18
-temms condition snapshot
-```
-
-Conditions have priorities. Higher-priority values override lower-priority
-values for the same path. Operator-provided values use high priority by default.
-
-## Policies
-
-Policies are slot-scoped YAML files.
-
-```yaml
-apiVersion: temms/v1
-kind: SlotPolicy
-metadata:
-  name: weather-adaptive-vision
-spec:
-  slot: vision
-  default_model: yolov8-daylight
-
-  rules:
-    - name: fog-conditions
-      priority: 80
-      conditions:
-        any:
-          - metric: environmental.atmospheric.visibility_m
-            operator: lte
-            value: 100
-      action:
-        switch_to: yolov8-lowlight
-
-  fallback_chain:
-    - yolov8-daylight
-    - yolov8-lowlight
-    - mobilenet-tiny
-```
-
-Load a policy:
-
-```bash
-temms policy load examples/policies/weather-adaptive.yaml
-```
-
-Rules are evaluated by priority. If the selected model fails to load, TEMMS tries
-the policy fallback chain in order.
-
-## API
-
-Common endpoints:
-
-```text
-GET    /v1/health
-GET    /v1/status
-GET    /v1/evidence?slot=vision
-
-GET    /v1/slots/{slot}/status
-POST   /v1/slots/{slot}/infer
-
-POST   /v1/control/slots/{slot}/evaluate
-POST   /v1/control/slots/{slot}/model
-
-POST   /v1/control/conditions
-DELETE /v1/control/conditions/overrides
-
-POST   /v1/control/offline
-POST   /v1/control/online
-POST   /v1/control/sync
-POST   /v1/control/deploy
-```
-
-Inject a condition:
-
-```bash
-curl -X POST http://localhost:8080/v1/control/conditions \
-  -H "Content-Type: application/json" \
-  -d '{"conditions": {"environmental.atmospheric.visibility_m": 50}}'
-```
-
-Export evidence:
-
-```bash
-curl http://localhost:8080/v1/evidence?slot=vision | python -m json.tool
-curl "http://localhost:8080/v1/evidence?summary=true&summary_limit=20" | python -m json.tool
-curl "http://localhost:8080/v1/evidence?replay=true&replay_limit=50" | python -m json.tool
-```
-
-## CLI
-
-Local setup:
-
-```bash
-temms init --config ./local.temms.yaml --data-dir ./local-data
-temms daemon start --foreground --config ./local.temms.yaml
-```
-
-Package import:
-
-```bash
-temms import ./examples/package-example --config ./local.temms.yaml
-```
-
-Slots:
-
-```bash
-temms slot create vision --required --default-model yolov8-daylight --config ./local.temms.yaml
-temms slot list --config ./local.temms.yaml
-temms slot status vision --config ./local.temms.yaml
-temms slot set vision yolov8-lowlight --reason "operator override" --config ./local.temms.yaml
-temms slot decisions --slot vision --config ./local.temms.yaml
-```
-
-Conditions:
-
-```bash
-temms condition set environmental.atmospheric.visibility_m 50 --config ./local.temms.yaml
-temms condition list --config ./local.temms.yaml
-temms condition snapshot --config ./local.temms.yaml
-temms condition clear-overrides --config ./local.temms.yaml
-```
-
-Policies and evidence:
-
-```bash
-temms policy load examples/policies/weather-adaptive.yaml --config ./local.temms.yaml
-temms policy list --config ./local.temms.yaml
-temms evidence --slot vision --output evidence.json --config ./local.temms.yaml
-temms evidence --input evidence.json --summary
-```
-
-## Offline Mode
-
-Offline mode keeps local control working while buffering operations for later
-sync.
-
-```bash
-curl -X POST http://localhost:8080/v1/control/offline
-curl -X POST http://localhost:8080/v1/control/online
-curl -X POST http://localhost:8080/v1/control/sync
-```
-
-Condition updates and operator overrides still apply locally while offline.
-
-## Evidence Bundles
-
-Evidence bundles are JSON documents with recent slot decisions, condition
-snapshots, model metadata, package manifests, loaded policies, offline state,
-pending operations, and a bundle SHA256.
-
-```bash
-temms evidence --slot vision --output evidence.json
-```
-
-Schema version:
-
-```text
-temms-evidence-bundle/v1
-```
-
-## Package Format
-
-TEMMS imports model packages from local directories. Those packages can be
-created by TEMMS Hub, a registry export, CI job, or air-gap transfer workflow.
-Hub is intended to give individuals and agents a repeatable path from candidate
-models to signed, tested packages that the daemon can consume.
-
-```text
-my-package/
-├── manifest.json
-├── models/
-│   ├── yolov8-daylight.onnx
-│   ├── yolov8-lowlight.onnx
-│   └── mobilenet-tiny.onnx
-└── policies/
-    └── weather-adaptive.yaml
-```
-
-Generate example model files:
-
-```bash
-python scripts/generate_real_models.py
-temms import ./examples/package-example
-```
-
-## Project Layout
-
-```text
-src/temms/
-├── controller.py       # Adaptive model selection and fallback
-├── daemon/             # Async daemon loops and deployment state
-├── inference/          # FastAPI app and runtime model loading
-├── policy/             # YAML policy schema and evaluator
-├── conditions/         # Condition store and collectors
-├── slots/              # Slot state and decision log
-├── core/               # Model cache, package import, storage
-├── sim/                # Simulation helpers
-└── cli/                # Typer CLI
-```
+There is no fallback chain. When no model is feasible, the decision explicitly
+contains `selected_model=None`.
 
 ## Development
 
 ```bash
-pip install -e ".[dev,sim]"
-
-make test
-make test-sim
-make test-e2e
-
-make format
-make lint
+python -m pip install -e ".[dev]"
+pytest
+ruff check src tests examples
 ```
 
-Useful focused test command:
-
-```bash
-uv run pytest tests/unit/test_controller.py tests/integration/test_inference_flow.py -q
-```
+The core package has no runtime dependencies. A test-enforced complexity budget
+keeps core below 600 lines and blocks platform dependencies.
 
 ## Scope
 
-TEMMS is focused on local runtime control. It does not provide model training,
-labeling, experiment tracking, feature stores, fleet orchestration, or container
-scheduling.
+Current scope:
 
-## License
+- Injected runtime contract.
+- Runtime-owned model access and inference.
+- Pure best-feasible selection.
+- Runtime-verified activation.
+- Deterministic in-memory reference runtime.
 
-Apache 2.0
+Next adapter: a local ONNX Runtime implementation extracted from the previous
+TEMMS prototype without bringing back its database, daemon, server, Hub, or
+fleet machinery.

@@ -1,107 +1,35 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "temms"
-version = "0.1.0"
-description = "Mission-first edge MLOps, DDIL operations, and on-device runtime deployment control"
+version = "0.2.0a1"
+description = "Tiny runtime-independent adaptive model selection"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
-authors = [
-    {name = "TEMMS Team"}
-]
-keywords = [
-    "ml",
-    "mlops",
-    "edge",
-    "autonomous",
-    "offline",
-    "ddil",
-    "runtime-deployment",
-    "mission-packages",
-]
+authors = [{name = "TEMMS Contributors"}]
+keywords = ["machine-learning", "inference", "edge", "runtime", "model-selection"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Typing :: Typed",
 ]
-
-dependencies = [
-    "typer[all]>=0.9.0",
-    "rich>=13.0.0",
-    "pydantic>=2.0.0",
-    "pyyaml>=6.0",
-    "fastapi>=0.109.0",
-    "uvicorn[standard]>=0.24.0",
-    "python-multipart>=0.0.6",
-    "httpx>=0.25.0",
-    "numpy>=1.24.0",
-    "jinja2>=3.1.0",
-    "prometheus-client>=0.20.0",
-    "cryptography>=42.0.0",
-]
+dependencies = []
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "pytest-asyncio>=0.21.0",
-    "black>=23.0.0",
-    "ruff>=0.1.0",
-    "mypy>=1.0.0",
+  "pytest>=8",
+  "pytest-asyncio>=0.24",
+  "ruff>=0.9",
+  "build>=1.2",
 ]
-
-docs = [
-    "sphinx>=8.0.0",
-    "furo>=2024.8.6",
-    "myst-parser>=4.0.0",
-]
-
-# MLflow for local model registry
-mlflow = [
-    "mlflow>=2.8.0",
-    "psycopg2-binary>=2.9.0",  # For PostgreSQL backend
-]
-
-# ML runtime dependencies (optional, install what you need)
-onnx = ["onnxruntime>=1.16.0"]
-tflite = ["tensorflow>=2.14.0"]
-torch = ["torch>=2.1.0"]
-all-runtimes = [
-    "onnxruntime>=1.16.0",
-    "tensorflow>=2.14.0",
-    "torch>=2.1.0",
-]
-
-# Image processing for inference preprocessing
-image = ["pillow>=10.0.0"]
-
-# Full inference stack
-inference = [
-    "onnxruntime>=1.16.0",
-    "pillow>=10.0.0",
-]
-
-# Simulation environment (headless scenario runner)
-sim = [
-    "onnx>=1.15.0",
-    "onnxruntime>=1.16.0",
-    "pillow>=10.0.0",
-    "mlflow>=2.8.0",
-    "psycopg2-binary>=2.9.0",
-]
-
-[project.scripts]
-temms = "temms.__main__:app"
 
 [project.urls]
-Homepage = "https://github.com/LewisJor/temms"
-Documentation = "https://lewisjor.github.io/temms/"
 Repository = "https://github.com/LewisJor/temms"
 Issues = "https://github.com/LewisJor/temms/issues"
 
@@ -109,71 +37,19 @@ Issues = "https://github.com/LewisJor/temms/issues"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"temms.ui" = [
-    "templates/*.html",
-    "static/hub/index.html",
-    "static/hub/.vite/*.json",
-    "static/hub/assets/*",
-]
+temms = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-python_files = "test_*.py"
-python_classes = "Test*"
-python_functions = "test_*"
-addopts = "-v --cov=temms --cov-report=term-missing"
-markers = [
-    "slow: spawns subprocesses or sleeps; deselect with -m 'not slow'",
-]
-
-[tool.black]
-line-length = 100
-target-version = ["py311", "py312"]
+asyncio_mode = "auto"
+addopts = "-q"
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP", "C901"]
-ignore = [
-    # Long lines are usually help text, URLs, or table rows where wrapping hurts
-    # readability more than it helps. Everything else is enforced.
-    "E501",
-    # Deliberate lazy imports inside functions (optional deps, import cost).
-    "E402",
-]
-
-[tool.ruff.lint.per-file-ignores]
-# Deliberate conventions, scoped so the rule still protects new code elsewhere.
-# apiVersion mirrors the YAML key it parses (Kubernetes-style manifests).
-"src/temms/core/mission_spec.py" = ["N815"]
-"src/temms/policy/schema.py" = ["N815"]
-# `class X(str, Enum)` is load-bearing: members must compare and serialise as
-# plain strings across JSON, SQLite, and the API. StrEnum changes that contract.
-"src/temms/core/cache.py" = ["UP042"]
-"src/temms/core/loader.py" = ["UP042", "N806"]
-"src/temms/daemon/deployment_state.py" = ["UP042"]
-"src/temms/slots/manager.py" = ["UP042"]
-# Exception names read as conditions rather than errors at the call site
-# (`except ActivationPreflightBlocked`), which is the clearer reading.
-"src/temms/controller.py" = ["N818"]
-"src/temms/daemon/service.py" = ["N818"]
-"src/temms/hub_lite.py" = ["N818"]
-"scripts/mission_package_smoke.py" = ["N818"]
-# X/Y are the conventional names for a coordinate meshgrid.
-"src/temms/sim/weather.py" = ["N806"]
-# MockPath names a patched class, not a variable.
-"tests/unit/test_collectors.py" = ["N806"]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "C901"]
 
 [tool.ruff.lint.mccabe]
-# The real bar. Existing offenders carry an explicit `# noqa: C901 (tracked in
-# #54)` marker rather than hiding behind a permissive global threshold, so the
-# debt is greppable and finite and new code cannot add to it unnoticed.
-max-complexity = 10
-
-[tool.mypy]
-python_version = "3.11"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = false
+max-complexity = 8
