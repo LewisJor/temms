@@ -5,6 +5,7 @@ from temms.errors import (
     ModelUnavailableError,
     NoActiveModelError,
     RuntimeContractError,
+    RuntimeDependencyError,
     TEMMSError,
 )
 from temms.runtime import Runtime
@@ -15,6 +16,7 @@ from temms.types import (
     Constraint,
     Decision,
     InferenceResult,
+    ModelPolicy,
     ModelRef,
     Operator,
     ReconcileResult,
@@ -30,6 +32,7 @@ __all__ = [
     "Constraint",
     "Decision",
     "InferenceResult",
+    "ModelPolicy",
     "ModelRef",
     "ModelUnavailableError",
     "NoActiveModelError",
@@ -37,6 +40,7 @@ __all__ = [
     "ReconcileResult",
     "Runtime",
     "RuntimeContractError",
+    "RuntimeDependencyError",
     "RuntimeState",
     "Scalar",
     "Selector",

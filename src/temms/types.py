@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Generic, TypeVar
 
-InputT = TypeVar("InputT")
 OutputT = TypeVar("OutputT")
 Scalar = bool | int | float | str
 
@@ -44,13 +43,20 @@ class Constraint:
 
 @dataclass(frozen=True, slots=True)
 class ModelRef:
-    """A runtime-addressable model plus its selection contract."""
+    """Stable identity for a model an injected runtime can execute."""
 
     id: str
     digest: str
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class ModelPolicy:
+    """Selection policy for one runtime-addressable model."""
+
+    model: ModelRef
     priority: int = 0
     constraints: tuple[Constraint, ...] = ()
-    metadata: Mapping[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,9 +86,10 @@ class InferenceResult(Generic[OutputT]):
 
 @dataclass(frozen=True, slots=True)
 class CandidateEvaluation:
-    """Feasibility result for one model candidate."""
+    """Feasibility result for one configured model policy."""
 
     model: ModelRef
+    priority: int
     feasible: bool
     failures: tuple[str, ...] = ()
 

@@ -10,6 +10,7 @@ from temms.types import (
     CandidateEvaluation,
     Constraint,
     Decision,
+    ModelPolicy,
     ModelRef,
     Operator,
     RuntimeState,
@@ -42,7 +43,13 @@ class Selector(Protocol):
 
 
 class BestFeasibleSelector:
-    """Choose the highest-priority model whose hard constraints pass."""
+    """Choose the highest-priority available model whose constraints pass."""
+
+    def __init__(self, policies: Sequence[ModelPolicy]) -> None:
+        self._policies = tuple(policies)
+        identities = [_identity(policy.model) for policy in self._policies]
+        if len(identities) != len(set(identities)):
+            raise ValueError("model policies must have unique model identities")
 
     def select(
         self,
@@ -52,12 +59,17 @@ class BestFeasibleSelector:
         runtime: RuntimeState,
         context: Mapping[str, Scalar],
     ) -> Decision:
+        available = {_identity(model): model for model in models}
         evaluations = tuple(
-            self._evaluate(model, context=context, resources=runtime.resources)
-            for model in models
+            self._evaluate(
+                policy,
+                available.get(_identity(policy.model)),
+                context=context,
+                resources=runtime.resources,
+            )
+            for policy in self._policies
         )
-        feasible = [item.model for item in evaluations if item.feasible]
-        selected = self._rank(feasible, runtime.active_model)
+        selected = self._rank(evaluations, runtime.active_model)
         return Decision(
             slot=slot,
             selected_model=selected,
@@ -68,32 +80,49 @@ class BestFeasibleSelector:
 
     @staticmethod
     def _evaluate(
-        model: ModelRef,
+        policy: ModelPolicy,
+        model: ModelRef | None,
         *,
         context: Mapping[str, Scalar],
         resources: Mapping[str, Scalar],
     ) -> CandidateEvaluation:
+        if model is None:
+            return CandidateEvaluation(
+                model=policy.model,
+                priority=policy.priority,
+                feasible=False,
+                failures=("model is unavailable from the runtime",),
+            )
         failures = tuple(
             failure
-            for constraint in model.constraints
+            for constraint in policy.constraints
             if (failure := _constraint_failure(constraint, context, resources)) is not None
         )
-        return CandidateEvaluation(model=model, feasible=not failures, failures=failures)
+        return CandidateEvaluation(
+            model=model,
+            priority=policy.priority,
+            feasible=not failures,
+            failures=failures,
+        )
 
     @staticmethod
-    def _rank(models: Sequence[ModelRef], current: ModelRef | None) -> ModelRef | None:
-        if not models:
+    def _rank(
+        evaluations: Sequence[CandidateEvaluation],
+        current: ModelRef | None,
+    ) -> ModelRef | None:
+        feasible = [item for item in evaluations if item.feasible]
+        if not feasible:
             return None
-        current_identity = (current.id, current.digest) if current else None
+        current_identity = _identity(current) if current else None
         return min(
-            models,
-            key=lambda model: (
-                -model.priority,
-                (model.id, model.digest) != current_identity,
-                model.id,
-                model.digest,
+            feasible,
+            key=lambda item: (
+                -item.priority,
+                _identity(item.model) != current_identity,
+                item.model.id,
+                item.model.digest,
             ),
-        )
+        ).model
 
     @staticmethod
     def _reason(
@@ -102,12 +131,16 @@ class BestFeasibleSelector:
         evaluations: Sequence[CandidateEvaluation],
     ) -> str:
         if not evaluations:
-            return "runtime exposed no models for the slot"
+            return "selector has no configured model policies"
         if selected is None:
             return "no feasible model"
-        if current and (current.id, current.digest) == (selected.id, selected.digest):
+        if current and _identity(current) == _identity(selected):
             return "current model remains the best feasible model"
         return "selected the highest-priority feasible model"
+
+
+def _identity(model: ModelRef) -> tuple[str, str]:
+    return model.id, model.digest
 
 
 def _constraint_failure(

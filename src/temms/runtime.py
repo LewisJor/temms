@@ -27,5 +27,5 @@ class Runtime(Protocol[InputT, OutputT]):
         ...
 
     async def infer(self, slot: str, value: InputT) -> InferenceResult[OutputT]:
-        """Run inference and identify the model that served the request."""
+        """Run inference, pinned to and attributed to one model instance."""
         ...

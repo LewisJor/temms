@@ -5,30 +5,29 @@ best feasible model under changing operating conditions.
 
 > Inject a runtime. Supply context. TEMMS selects the model.
 
-TEMMS does not own a model registry, HTTP server, daemon, database, fleet
-manager, UI, or condition-collection framework. The injected runtime owns model
-access, actual active state, activation, and inference.
+The runtime owns model access, actual state, activation, and inference. The
+selector owns policy. TEMMS connects them and verifies the runtime after a
+change. It has no database, daemon, server, registry, fleet manager, UI, or
+condition-collection framework.
 
 ```python
 import asyncio
-
-from temms import BestFeasibleSelector, Constraint, ModelRef, Operator, TEMMS
+from temms import TEMMS, BestFeasibleSelector, Constraint, ModelPolicy, ModelRef, Operator
 from temms.adapters import InMemoryRuntime
 
-small = ModelRef(id="small", digest="sha256:small", priority=10)
-large = ModelRef(
-    id="large",
-    digest="sha256:large",
-    priority=100,
-    constraints=(Constraint("battery", Operator.GTE, 40),),
-)
+small = ModelRef(id="small", digest="sha256:small")
+large = ModelRef(id="large", digest="sha256:large")
+selector = BestFeasibleSelector([
+    ModelPolicy(large, priority=100, constraints=(Constraint("battery", Operator.GTE, 40),)),
+    ModelPolicy(small, priority=10),
+])
 
 async def main() -> None:
     runtime = InMemoryRuntime(
         models={"vision": [large, small]},
         handlers={large.digest: lambda x: x, small.digest: lambda x: x},
     )
-    temms = TEMMS(runtime=runtime, selector=BestFeasibleSelector())
+    temms = TEMMS(runtime=runtime, selector=selector)
     result = await temms.reconcile("vision", {"battery": 18})
     inference = await temms.infer("vision", b"frame")
     assert result.decision.selected_model == small
@@ -49,43 +48,52 @@ class Runtime(Protocol[InputT, OutputT]):
     async def infer(self, slot: str, value: InputT) -> InferenceResult[OutputT]: ...
 ```
 
-The runtime is the source of truth. TEMMS never records or claims activation on
-its own. After `activate()`, it asks the runtime for state and fails if the
-reported active model identity does not match the selected model.
+The runtime is the source of truth. After activation, TEMMS reads runtime state
+and fails if the active model identity does not match the decision.
 
-## Selection
+Inference is pinned to one model instance. A request admitted before a swap must
+finish on and be attributed to the old model; a later request uses the new one.
 
-`BestFeasibleSelector` evaluates hard constraints against caller context or
-runtime resources, excludes failures, then selects by:
+One `TEMMS` instance is the reconciliation owner for each slot it controls.
+Reconciliation calls for the same slot are serialized; different processes must
+not independently control the same runtime slot.
 
-1. Higher explicit priority.
-2. Current model on a priority tie, avoiding unnecessary churn.
-3. Stable model ID and digest.
+## Policy is separate from model identity
 
-There is no fallback chain. When no model is feasible, the decision explicitly
-contains `selected_model=None`.
+`ModelRef` identifies a runtime-accessible artifact. `ModelPolicy` defines its
+priority and constraints. A runtime inventory cannot silently create selection
+policy, and a policy can explicitly report a configured model as unavailable.
+
+There is no fallback chain. When no configured model is available and feasible,
+the decision contains `selected_model=None`.
+
+## Local ONNX Runtime adapter
+
+Install the optional adapter dependencies:
+
+```bash
+python -m pip install -e ".[onnx]"
+```
+
+```python
+from pathlib import Path
+from temms.adapters import OnnxModel, OnnxRuntime
+
+runtime = OnnxRuntime(models={
+    "vision": [OnnxModel(model_ref, Path("models/model.onnx"), warmup=warmup_inputs)]
+})
+```
+
+`OnnxRuntime` loads and optionally warms a new session before atomically replacing
+the active session. In-flight inference retains its original session reference.
 
 ## Development
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,onnx]"
 pytest
 ruff check src tests examples
 ```
 
-The core package has no runtime dependencies. A test-enforced complexity budget
-keeps core below 600 lines and blocks platform dependencies.
-
-## Scope
-
-Current scope:
-
-- Injected runtime contract.
-- Runtime-owned model access and inference.
-- Pure best-feasible selection.
-- Runtime-verified activation.
-- Deterministic in-memory reference runtime.
-
-Next adapter: a local ONNX Runtime implementation extracted from the previous
-TEMMS prototype without bringing back its database, daemon, server, Hub, or
-fleet machinery.
+The core package has zero required runtime dependencies. Tests automatically
+enforce module, line, protocol, dependency, subpackage, and example-size budgets.
