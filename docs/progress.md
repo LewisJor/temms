@@ -32,7 +32,31 @@ result and identity after the new model has already served. No production runtim
 change was needed. Regression tests also cover wrong inputs/models/digests, malformed
 or nonfinite tensors, ambiguous references and permanent failure after one bad frame.
 
-## Current local verification
+## Hosted qualification of this change
+
+Published commit [`38e4a374`](https://github.com/LewisJor/temms/commit/38e4a374ecf893168f3945f5a5b81bbf6f45cce0)
+passed [Ubuntu qualification](https://github.com/LewisJor/temms/actions/runs/38810391287),
+[general CI](https://github.com/LewisJor/temms/actions/runs/38810391312), the
+[core installation check](https://github.com/LewisJor/temms/actions/runs/38810391251)
+and [documentation deployment](https://github.com/LewisJor/temms/actions/runs/38810391376).
+The Ubuntu run recorded **224 tests, zero skipped**, including all three native cases,
+on Ubuntu **24.04.5 x86_64 / Python 3.12.15** with the declared pinned dependencies.
+
+Independent artifact inspection matched all nine installed Python modules to the
+wheel and commit. The direct-IP probe and replay shared a distinct network namespace
+under UID 1001, with only loopback, no routes and `ENETUNREACH` (101). All seven
+scenes passed: **84 attempts, 69 served, three waiting, 12 abstained**. Every served
+score vector and admission identity matched: **zero mismatches, 20/20 inputs and
+35/40 model/input pairs checked**. Expected-class correctness was **59/69**,
+descriptive only. Ordered raw records independently established the scene witnesses.
+
+The artifact `ubuntu24-qualification-38810391287-1` retains the wheel, environment,
+tests, network probe, pinned manifests, full reference/output vectors and logs for
+30 days on GitHub. A downloaded copy is preserved locally under
+`.demo-assets/live-swap/integrity-20261015/ubuntu24-ci-38810391287/`.
+These are the recorded results for that exact revision, not a promise about later runs.
+
+## Local verification
 
 On macOS ARM64, the current source passed **224 tests, zero skipped**, strict mypy
 (**10 files**) and scoped Ruff under Python 3.11.8. The built wheel passed the same

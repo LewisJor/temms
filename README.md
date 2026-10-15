@@ -217,10 +217,10 @@ defines the score tolerance, coverage and independently auditable JSONL records.
 Pillow is optional and used only for image preprocessing.
 The [Ubuntu 24.04 qualification workflow](examples/live_swap/README.md#ubuntu-2404-qualification-in-github-actions)
 runs the example against an installed wheel with external networking disabled.
-See [progress](docs/progress.md) for the exact verified revision and environment;
-the [earlier 2026-10-15 pass](https://github.com/LewisJor/temms/actions/runs/38754444278)
-at `58936d5` used the previous single-photo replay and did not include these new
-numerical and input-coverage checks.
+[Qualification passed at `38e4a374`](https://github.com/LewisJor/temms/actions/runs/38810391287):
+224 tests without skips, all seven scenes and twenty inputs covered, and zero output
+or attribution mismatches. See [progress](docs/progress.md) for the exact environment,
+raw evidence and earlier single-photo results.
 
 For fixed-small, fixed-large, blocking-adaptive, and background-adaptive comparisons
 on a pinned 20-image test workload:

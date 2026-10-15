@@ -230,6 +230,13 @@ published qualification runs provide downloadable evidence through GitHub Action
 
 ## Ubuntu 24.04 qualification in GitHub Actions
 
+The twenty-input replay passed [qualification run 38810391287](https://github.com/LewisJor/temms/actions/runs/38810391287)
+at [`38e4a374`](https://github.com/LewisJor/temms/commit/38e4a374ecf893168f3945f5a5b81bbf6f45cce0)
+on 2026-10-15: **224 tests, zero skips; 69 served outputs checked with zero mismatches;
+20/20 inputs and 35/40 model/input pairs covered**. All seven scenes passed under
+verified network isolation. The [progress record](../../docs/progress.md) retains
+the full environment, counts and artifact location.
+
 The maintained [qualification workflow](../../.github/workflows/ubuntu24.yml)
 targets **Ubuntu 24.04 x86_64, CPython 3.12.15, ONNX Runtime 1.24.1, NumPy 2.4.2
 and Pillow 12.1.0**, with ONNX 1.21.0 for native test fixtures. It builds and installs
