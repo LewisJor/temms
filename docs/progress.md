@@ -8,29 +8,40 @@ No server, registry, fleet service or additional inference engine was introduced
 
 ## Current verification
 
-Hosted results are tied to a commit. Inspect the latest completed run for `main`:
+Published commit [`58936d50756b1ed96fbc8d46f716f74194ee5ce5`](https://github.com/LewisJor/temms/commit/58936d50756b1ed96fbc8d46f716f74194ee5ce5)
+passed all three hosted workflows on **2026-10-15**:
 
-- [General CI](https://github.com/LewisJor/temms/actions/workflows/ci.yml): Python
-  3.11/3.12 lint, strict typing, tests and package builds on Ubuntu 24.04.
-- [Installed core package](https://github.com/LewisJor/temms/actions/workflows/package.yml):
-  fresh dependency-free wheel installation, imports and the tiny example.
-- [Ubuntu CPU qualification](https://github.com/LewisJor/temms/actions/workflows/ubuntu24.yml):
-  installed-wheel tests and the real seven-scene replay with external networking
-  unavailable. A configured workflow or uploaded diagnostic artifact alone is not
-  a passing qualification. Check the run conclusion and its commit together.
+- [General CI, run 38754444328](https://github.com/LewisJor/temms/actions/runs/38754444328):
+  Python 3.11/3.12 lint, strict typing, tests and package builds on Ubuntu 24.04.
+- [Installed core package, run 38754443960](https://github.com/LewisJor/temms/actions/runs/38754443960):
+  fresh core-only wheel installation, imports and the tiny example.
+- [Ubuntu CPU qualification, run 38754444278](https://github.com/LewisJor/temms/actions/runs/38754444278):
+  **196 tests passed, zero skipped**, including both real ONNX cases; the installed
+  wheel completed all seven replay scenes with external networking unavailable.
 
-The qualification profile is Ubuntu 24.04 x86_64, CPython 3.12.15, ONNX Runtime
-1.24.1, NumPy 2.4.2 and Pillow 12.1.0; ONNX 1.21.0 builds test fixtures. It requires
-zero skipped tests and both named native cases. Preparation verifies pinned model
-assets online, then a direct-IP probe and replay share a new network namespace
-under the ordinary runner UID. There is no connected fallback.
+The qualification recorded Ubuntu **24.04.5 LTS x86_64**, CPython **3.12.15**, ONNX
+Runtime **1.24.1**, NumPy **2.4.2** and Pillow **12.1.0**; ONNX **1.21.0** built test
+fixtures. Independent artifact inspection matched the wheel's nine Python modules
+to the published commit. The direct-IP probe and replay shared a new network
+namespace under UID 1001, with only loopback and no routes; the probe returned
+Linux `ENETUNREACH` (101). There was no connected fallback.
 
-Pacing is declared as 12 attempts per phase at 0.5-second intervals, 84 attempts
-across seven scenes. A single complete replay is required. Runner/OS/CPU details,
-source and workflow revisions, wheel/module hashes, dependency versions, test
-reports, network evidence and replay records are retained for 30 days. Preserve
-accepted evidence before expiry. See the
+The declared 12 attempts per phase at 0.5-second intervals produced **84 attempts:
+69 predictions, three waiting frames and 12 abstentions**. Ordered raw records
+independently confirmed all seven scene witnesses, including post-failure continuity
+and recovery. This one-photo replay does not measure classification quality.
+
+The qualification artifact, `ubuntu24-qualification-38754444278-1`, contains
+runner/OS/CPU details, source and workflow revisions, wheel/module hashes, dependency
+versions, test reports, network evidence and replay records. GitHub retention is
+30 days. A downloaded copy is preserved locally under the ignored
+`.demo-assets/live-swap/ubuntu24-ci-38754444278/`; it is not included in a clone.
+Check each later run's conclusion and commit together. See the
 [qualification runbook](../examples/live_swap/README.md#ubuntu-2404-qualification-in-github-actions).
+
+An automated first-use smoke check also passed from a fresh HTTPS clone of the
+published commit, following the README installation and tiny-example commands.
+The owner's unaided first-use trial remains outstanding.
 
 ## Publication review
 
@@ -54,10 +65,21 @@ or videos are included in a clone.
 
 Final workflow review reproduced a real clean-environment collection failure with
 console `pytest`: it did not expose the checkout's `examples` namespace. CI now
-uses `python -m pytest -ra`, matching the verified development command. All Actions
-references use verified commit SHAs, read-only repository permissions and checkout
-without persisted credentials. The library's production behavior did not change
+uses `python -m pytest -ra`, matching the verified development command. Actions
+references use verified commit SHAs; build jobs have read-only repository access,
+and checkout does not persist credentials. Only the Pages deployment job receives
+`pages: write` and `id-token: write`. The library's production behavior did not change
 in this publication cleanup.
+
+The documentation publication path now builds the same eight maintained Markdown
+files into one Sphinx site, covering installation, architecture, the demo and
+comparisons, progress, contribution rules, the next action and agent instructions.
+Its pinned tools live separately in `docs/requirements.txt`; core dependencies are
+unchanged. A local build with warnings treated as errors passed. This update adds
+the [Documentation workflow](../.github/workflows/docs.yml) to publish verified
+builds from `main`. Check the [deployment runs](https://github.com/LewisJor/temms/actions/workflows/docs.yml)
+and [live site](https://lewisjor.github.io/temms/) together: a local build alone does
+not establish publication.
 
 ## Local evidence and scope
 
@@ -80,14 +102,15 @@ inconclusive wrapper overhead and the rejected CPU-arena experiment. Raw histori
 records remain in ignored development directories and are not public release assets.
 Performance experiments were not rerun for this publication.
 
-A green hosted run establishes functional compatibility and prepared offline
+The successful hosted run establishes functional compatibility and prepared offline
 operation for its recorded profile. It does not qualify physical-device latency,
 peak memory, quality thresholds or endurance. Private security reporting, stable
 compatibility commitments and customer support terms remain separate release gates
 in [CONTRIBUTING.md](../CONTRIBUTING.md#release-and-support-criteria).
 
-**Exactly one next action:** perform the owner's clean-clone first-use trial using
-README.md and the demo runbook, recording the commit, environment and any friction.
+**Exactly one next action:** perform the owner's unaided clean-clone first-use trial
+using [README.md](../README.md) and the [demo runbook](../examples/live_swap/README.md),
+recording the commit, environment and any friction.
 
 Read `TEMMS.reconcile` in `src/temms/engine.py`, `OnnxRuntime.infer` in
 `src/temms/adapters/onnx.py`, and `observe_scene` in `examples/live_swap/run.py`.

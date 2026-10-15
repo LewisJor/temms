@@ -5,6 +5,10 @@ best feasible model under changing operating conditions.
 
 > Inject a runtime. Supply context. TEMMS selects the model.
 
+[Documentation](https://lewisjor.github.io/temms/) ·
+[Real-model demo](examples/live_swap/README.md) ·
+[Verified runs](docs/progress.md)
+
 The runtime owns model access, actual state, activation, and inference. The
 selector owns policy. TEMMS connects them and verifies the runtime after a
 change. It has no database, daemon, server, registry, fleet manager, UI, or
@@ -207,8 +211,10 @@ an incomplete demonstration lists missing scenes and exits with status 1.
 Pillow is optional and used only for the demo's image preprocessing.
 The [Ubuntu 24.04 qualification workflow](examples/live_swap/README.md#ubuntu-2404-qualification-in-github-actions)
 runs this example against an installed wheel with a declared Python/CPU runtime
-profile and external networking disabled. Its configuration and local checks do not
-establish a hosted pass; see [progress](docs/progress.md) for execution status.
+profile and external networking disabled. [Hosted qualification passed on
+2026-10-15](https://github.com/LewisJor/temms/actions/runs/38754444278) for commit
+`58936d5`. This covers that tested configuration; see [progress](docs/progress.md)
+for retained evidence and remaining device-specific limits.
 
 For fixed-small, fixed-large, blocking-adaptive, and background-adaptive comparisons
 on a pinned 20-image test workload:

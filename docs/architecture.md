@@ -132,9 +132,11 @@ Runtime-specific dependencies live only in adapters.
 
 Reviewed against primary documentation on **2026-10-13**. The assumed customer is
 a developer embedding inference in a single-device Python application, initially
-on a Linux edge computer or robot. Actual local execution evidence is macOS ARM64;
-the target device has not been qualified. This comparison concerns architecture and
-integration cost, not measured performance across engines.
+on a Linux edge computer or robot. Execution evidence includes macOS ARM64 and the
+[Ubuntu 24.04 x86_64 hosted CPU qualification](https://github.com/LewisJor/temms/actions/runs/38754444278)
+completed on **2026-10-15**. A physical edge device has not been qualified. This
+comparison concerns architecture and integration cost, not measured performance
+across engines.
 
 **Decision: retain the small library and the existing ONNX Runtime adapter.**
 The durable boundary is application-owned context and admission, pure selection,

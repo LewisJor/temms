@@ -14,6 +14,21 @@ the reported timings and small quality differences are not acceptance targets.
 A separate [fresh-image validation](#fresh-image-validation-protocol--declared-2026-10-12)
 uses 140 previously unused images with the same policy and trace timing.
 
+## Hosted functional qualification — 2026-10-15
+
+[Ubuntu qualification run 38754444278](https://github.com/LewisJor/temms/actions/runs/38754444278)
+passed for published commit
+[`58936d50756b1ed96fbc8d46f716f74194ee5ce5`](https://github.com/LewisJor/temms/commit/58936d50756b1ed96fbc8d46f716f74194ee5ce5):
+196 tests passed without skips, and the installed-wheel terminal replay completed
+all seven scenes across 84 attempts with external networking unavailable. The
+[runbook](README.md#ubuntu-2404-qualification-in-github-actions) records its Linux
+environment, pacing and independently checked witnesses.
+
+That run used the single-photo functional demo. It did **not** rerun the comparison,
+wrapper-overhead, churn or CPU-arena experiments. Every numerical result below
+remains evidence from its dated local Mac experiment; none is a Linux performance,
+accuracy, memory or endurance qualification.
+
 ## Prepare and run
 
 From the repository root with the `onnx,demo` extras installed:
@@ -441,9 +456,9 @@ source snapshots, and asset hashes; this is still a short serial experiment.
 
 This establishes wrapper retirement for the measured paths. It does **not** locate
 the retained native/process memory or distinguish allocator caching from a native
-leak. A matched direct-ONNX load/drop control is needed before attributing that
-retention to TEMMS. No lifecycle API, allocator tuning, or core change was justified
-by the result. Background OS activity remained uncontrolled.
+leak. This result motivated the matched direct-ONNX load/drop control below to
+examine whether the growth requires TEMMS. No lifecycle API, allocator tuning, or
+core change was justified by the result. Background OS activity remained uncontrolled.
 
 Raw records, per-process summaries, frozen protocol/order, isolation note, and exact
 premeasurement source archive are retained in `.demo-assets/live-swap/churn-20261012/`.
@@ -452,8 +467,8 @@ Frozen runner SHA-256:
 
 ### Matched direct-ONNX control — declared 2026-10-12
 
-The earlier RSS increase does not show where allocations remain. The next experiment
-compares **TEMMS plus its ONNX adapter** against direct ONNX construction/inference.
+The earlier RSS increase does not show where allocations remain. This predeclared
+experiment compares **TEMMS plus its ONNX adapter** against direct ONNX construction/inference.
 The runner now accepts `--backend temms|direct`; the default remains `temms`.
 Both use the same 31-step fixed-small/fixed-large/swapping schedules, models, input,
 warmup, output lifetime, executor and native thread settings, and sampling boundaries.
@@ -545,9 +560,9 @@ value. This comparison does not distinguish allocator reuse, fragmentation, page
 residency changes, native references, or leakage. No native-memory bound or portable
 ranking follows from thirty swaps per process.
 
-No core, adapter, lifecycle, or default allocator change was made. Further memory
-work should test the documented CPU-arena option over a predeclared longer horizon,
-including latency and unchanged-output checks, before offering an opt-in recipe.
+No core, adapter, lifecycle, or default allocator change was made. This result
+motivated the CPU-arena experiment below, which tested the documented option over
+a predeclared longer horizon with latency and unchanged-output checks.
 Raw records, frozen order, sources and audits are retained under
 `.demo-assets/live-swap/direct-control-20261012/`. Frozen runner SHA-256:
 `7f39da0de7917abd43155fd1a6c7da71edb7cd4dda8380352a7ce12022f65ded`.

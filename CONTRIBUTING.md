@@ -43,8 +43,10 @@ installed wheel, CPython 3.12.15 and explicitly pinned inference dependencies. I
 requires the full suite with zero skips and both named native integration cases,
 then runs the real seven-scene example inside a verified network namespace. The
 [runbook](examples/live_swap/README.md#ubuntu-2404-qualification-in-github-actions)
-defines acceptance and evidence retention. Its configured profile is not a claim
-of successful hosted execution or performance on a physical edge device.
+defines acceptance and evidence retention. The [2026-10-15 hosted
+run](https://github.com/LewisJor/temms/actions/runs/38754444278) passed for commit
+`58936d5`. Rerun qualification when code or dependencies change; a hosted pass does
+not establish performance on a physical edge device.
 
 For distribution changes, check the wheel after the build above in a fresh
 environment outside the source tree:
@@ -83,6 +85,28 @@ tests, and record the hypothesis, actual checks, complexity change, and one next
 action in `docs/progress.md`. A shared conformance helper is useful only where the
 existing runtimes have genuinely overlapping contracts. No new testing framework
 or production abstraction is needed merely to make their tests look alike.
+
+## Documentation
+
+The [public documentation](https://lewisjor.github.io/temms/) is built directly from
+the maintained Markdown files listed in `docs/conf.py`; `index.rst` supplies the
+site navigation. Edit those source files rather than generated HTML. The
+[documentation workflow](.github/workflows/docs.yml) builds on pull requests and
+publishes successful builds from `main`. Warnings and unresolved document links
+fail the build.
+
+Documentation tools require Python 3.12 or newer and are separate from the library's
+dependencies. To build and preview from the repository root on macOS/Linux:
+
+```bash
+python3.12 -m venv .venv-docs
+.venv-docs/bin/python -m pip install -r docs/requirements.txt
+.venv-docs/bin/python -m sphinx -W --keep-going -b html -c docs . build/docs
+.venv-docs/bin/python -m http.server --directory build/docs 8000
+```
+
+Open `http://localhost:8000` and check installation instructions, navigation and
+links before publishing. `build/docs` is generated and ignored by Git.
 
 ## Release and support criteria
 

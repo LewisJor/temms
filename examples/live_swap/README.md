@@ -69,6 +69,8 @@ is missing or an asset fails validation, follow the reported preparation command
 On the development Mac, the full replay passed inside an OS sandbox denying all
 network operations, after an outbound TCP probe was confirmed denied. This verifies
 that prepared assets suffice for this run; it is not a claim about another device.
+The [hosted Ubuntu qualification](#ubuntu-2404-qualification-in-github-actions)
+also passed under its separately recorded profile and pacing.
 
 The defaults are six frame attempts per phase, with a 0.4-second interval. Very
 short runs can finish their attempts before a new model publishes; use the defaults
@@ -195,15 +197,40 @@ published qualification runs provide downloadable evidence through GitHub Action
 
 ## Ubuntu 24.04 qualification in GitHub Actions
 
-The maintained [qualification workflow](../../.github/workflows/ubuntu24.yml)
-targets **Ubuntu 24.04 x86_64, CPython 3.12.15, ONNX Runtime 1.24.1,
-NumPy 2.4.2 and Pillow 12.1.0**, using the CPU provider. ONNX 1.21.0 supplies the
-synthetic native test fixtures. These versions are a declared qualification profile,
-not a claim that a hosted run has passed. See the latest
-[progress record](../../docs/progress.md) for execution status.
+On **2026-10-15**, [qualification run 38754444278](https://github.com/LewisJor/temms/actions/runs/38754444278)
+passed for published commit
+[`58936d50756b1ed96fbc8d46f716f74194ee5ce5`](https://github.com/LewisJor/temms/commit/58936d50756b1ed96fbc8d46f716f74194ee5ce5).
+It recorded **Ubuntu 24.04.5 LTS x86_64, CPython 3.12.15, ONNX Runtime 1.24.1,
+NumPy 2.4.2 and Pillow 12.1.0**, using the CPU provider. ONNX 1.21.0 supplied the
+synthetic native test fixtures. All **196 tests passed with zero skips**, including
+both real ONNX tests. Independent inspection matched the installed wheel's nine
+Python modules to that commit. The [progress record](../../docs/progress.md) also
+links the successful general CI and core-only package runs.
 
-On a push or pull request containing the workflow, GitHub builds a wheel and installs
-it into a fresh environment. The full test suite runs against that installed package;
+The hosted replay recorded **84 frame attempts: 69 predictions, three waiting
+frames and 12 abstentions**, with all seven scenes complete. Independent inspection
+of ordered raw events and admission state identified these witnesses:
+
+| Phase | Predictions | Waiting | Abstentions | Witness request ID |
+| --- | ---: | ---: | ---: | ---: |
+| Start | 11 | 1 | 0 | 2 |
+| Switch | 12 | 0 | 0 | 14 |
+| Return | 11 | 1 | 0 | 26 |
+| Failed switch | 12 | 0 | 0 | 38 |
+| Retry | 12 | 0 | 0 | 50 |
+| Abstain | 0 | 0 | 12 | 61 |
+| Recover | 11 | 1 | 0 | 74 |
+
+Predictions during replacement can still belong to the previous feasible model.
+Successful-switch witnesses were admitted after publication; the failed-switch
+witness was admitted after failure and served the preserved MobileNetV2 session.
+The replay and direct-IP probe shared a new network namespace as UID 1001, with
+only loopback and no routes. The probe returned `ENETUNREACH` (101). Asset hashes
+were unchanged after the replay.
+
+The maintained [qualification workflow](../../.github/workflows/ubuntu24.yml)
+builds a wheel on a push or pull request and installs it into a fresh environment.
+The full test suite runs against that installed package;
 missing native coverage or any skipped test fails qualification. Preparation downloads
 and verifies the same pinned assets used above. The replay then runs as the runner
 user inside a new Linux network namespace, with no external interface. A direct-IP
@@ -223,8 +250,9 @@ The artifact contains the wheel, its SHA-256, installed-module hashes, runner/OS
 details, resolved dependency versions, test report, preparation log, network probe,
 raw replay records and terminal output. Upload is attempted after failed steps;
 hard cancellation or runner loss can prevent it. An uploaded artifact alone is not
-a pass. Retention is 30 days, so preserve accepted
-run evidence with your release records. Manual dispatch is also available after the
+a pass. The verified run's artifact is `ubuntu24-qualification-38754444278-1`.
+Retention is 30 days, so preserve accepted run evidence with your release records.
+Manual dispatch is also available after the
 workflow exists on the default branch.
 
 Top-level inference versions and Action revisions are pinned; the hosted image,
@@ -233,11 +261,13 @@ recorded for each run. Do not describe this profile as a fully locked or bit-ide
 build. The workflow checks installed imports explicitly; the live-swap script needs
 its adjacent `assets` module, so it must not be invoked with Python's `-I` flag.
 
-All three repository workflows explicitly use `ubuntu-24.04`, including general CI
-and the core-only package check. The qualification workflow also verifies the OS
+General CI, the core-only package check and Ubuntu qualification explicitly use
+`ubuntu-24.04`. The qualification workflow also verifies the OS
 release at execution time. GitHub updates the image behind that label, so its actual
 image version is recorded with each run; the target does not silently follow
 `ubuntu-latest`. See [GitHub's Ubuntu 24.04 image](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md).
+
+## Local memory probes
 
 To inspect session retirement and memory across thirty consecutive replacements:
 
@@ -262,8 +292,8 @@ python examples/live_swap/churn.py --strategy swapping --cpu-arena off --steps 3
 
 These options belong to `churn.py`; the terminal replay keeps its existing settings.
 Defaults remain 31 steps and arena on. The runner records construction, warmup,
-reconciliation, inference and full-step durations alongside memory. Our three paired
-TEMMS repetitions showed lower peaks with arena off, but one had higher final RSS;
-the predeclared improvement criterion failed. See the
+reconciliation, inference and full-step durations alongside memory. The three paired
+local TEMMS repetitions on 2026-10-12 showed lower peaks with arena off, but one had
+higher final RSS; the predeclared improvement criterion failed. See the
 [arena protocol and results](COMPARISON.md#cpu-arena-result--2026-10-12) before interpreting
 these service durations or using this native option in an application.
