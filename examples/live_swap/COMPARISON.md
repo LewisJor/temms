@@ -14,6 +14,12 @@ the reported timings and small quality differences are not acceptance targets.
 A separate [fresh-image validation](#fresh-image-validation-protocol--declared-2026-10-12)
 uses 140 previously unused images with the same policy and trace timing.
 
+The current [terminal replay](README.md) reuses the twenty-image workload for
+per-request direct-ONNX score and attribution checks. Those functional checks and
+its first-workload-image warmup are separate from these experiments: comparison
+still warms on Chelsea, and overhead/churn use Chelsea throughout. The historical
+protocols, datasets, timings and results below are unchanged.
+
 ## Hosted functional qualification — 2026-10-15
 
 [Ubuntu qualification run 38754444278](https://github.com/LewisJor/temms/actions/runs/38754444278)
@@ -22,9 +28,10 @@ passed for published commit
 196 tests passed without skips, and the installed-wheel terminal replay completed
 all seven scenes across 84 attempts with external networking unavailable. The
 [runbook](README.md#ubuntu-2404-qualification-in-github-actions) records its Linux
-environment, pacing and independently checked witnesses.
+environment and the limits of that historical result.
 
-That run used the single-photo functional demo. It did **not** rerun the comparison,
+That run used the previous single-photo functional demo, before the twenty-input
+replay and its full-score checks. It did **not** rerun the comparison,
 wrapper-overhead, churn or CPU-arena experiments. Every numerical result below
 remains evidence from its dated local Mac experiment; none is a Linux performance,
 accuracy, memory or endurance qualification.
@@ -62,8 +69,8 @@ silently changing the experiment. Already verified files need no network.
 - Twenty Oxford-IIIT Pet **test** images: the first two test rows for each of ten
   predeclared dog breeds with exact ImageNet synset equivalents. The pinned
   workload manifest records the selection rule, annotations, and hashes. Chelsea,
-  the existing demo image, is used only for warmup. No thresholds or labels are
-  tuned on evaluation predictions. Images were selected before the initial
+  the historical demo image, is used only for comparison warmup. No thresholds or
+  labels are tuned on evaluation predictions. Images were selected before the initial
   evaluation, excluded from warmup, and reused in this follow-up. Overlap with
   the pretrained models' training data is unknown.
 - Seven phases from the terminal demonstration, each receiving every evaluation

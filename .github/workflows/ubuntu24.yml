@@ -101,14 +101,17 @@ jobs:
           native = {case.get('name') for case in cases
                     if case.get('classname', '').endswith('test_onnx_runtime_integration')}
           required = {'test_real_onnx_runtime_inference',
-                      'test_corrupt_artifact_preserves_real_session_and_recovers'}
-          assert required <= native, 'both real ONNX integration cases must execute'
+                      'test_corrupt_artifact_preserves_real_session_and_recovers',
+                      'test_real_onnx_in_flight_output_remains_pinned_across_publication'}
+          assert required <= native, 'all three real ONNX integration cases must execute'
           print(f'{len(cases)} tests passed, zero skips; {len(native)} native ONNX cases')
           PY
-      - name: Prepare and verify the pinned models online
+      - name: Prepare and verify the pinned models and inputs online
         run: |
           python examples/live_swap/assets.py --assets "$ASSETS" 2>&1 | tee "$EVIDENCE/preparation.log"
+          python examples/live_swap/workload.py --assets "$ASSETS" 2>&1 | tee "$EVIDENCE/workload-preparation.log"
           cp examples/live_swap/assets.json "$EVIDENCE/assets.json"
+          cp examples/live_swap/workload.json "$EVIDENCE/workload.json"
       - name: Run all seven scenes without external networking
         run: |
           sudo -n unshare --net --setgid "$(id -g)" --setuid "$(id -u)" -- \
@@ -146,28 +149,163 @@ jobs:
               '--assets', assets, '--records', str(Path(evidence, 'replay.jsonl')),
               '--frames', '12', '--interval', '0.5'])
           PY
-      - name: Require complete evidence and unchanged prepared assets
+      - name: Verify raw output integrity, scene evidence and unchanged assets
         run: |
           python - <<'PY'
           import json
           import os
           from pathlib import Path
+
+          import numpy as np
+
           from examples.live_swap.assets import verify_assets
           from examples.live_swap.run import SCENARIO
+          from examples.live_swap.workload import verify_workload
 
-          verify_assets(Path(os.environ['ASSETS']))
+          directory = Path(os.environ['ASSETS'])
+          assets = verify_assets(directory)
+          workload = verify_workload(directory)
+          inputs = workload['files']
+          assert len(inputs) == len({item['name'] for item in inputs}) == 20
+          assert len({item['sha256'] for item in inputs}) == 20
+          labels = [line.split(' ', 1)[1]
+                    for line in (directory / 'labels.txt').read_text().splitlines()]
+          assert len(labels) == 1000
           log = Path(os.environ['EVIDENCE'], 'replay.jsonl')
           records = [json.loads(line) for line in log.read_text().splitlines()]
+          headers = [record for record in records if record['event'] == 'run']
           summaries = [record for record in records if record['event'] == 'summary']
+          assert len(headers) == 1 and records[0] == headers[0]
           assert len(summaries) == 1 and records[-1] == summaries[0]
-          summary = summaries[0]
+          header, summary = headers[0], summaries[0]
+          assert header['manifest'] == assets and header['workload'] == workload
+          tolerance = {'rtol': 1e-5, 'atol': 1e-6}
+          assert header['score_tolerance'] == tolerance
+          digests = {item['name']: item['sha256'] for item in assets['files']}
+          models = {(item['id'], 'sha256:' + digests[item['file']]) for item in assets['models']}
+          assert len(models) == 2
+          expected_keys = {(model, digest, item['name'], item['sha256'])
+                           for model, digest in models for item in inputs}
+          references = {}
+          for reference in header['references']:
+              model, image = reference['model'], reference['image']
+              key = (model['id'], model['digest'], image['name'], image['sha256'])
+              scores = np.asarray(reference['scores'], dtype=float)
+              assert scores.shape == (1000,) and np.isfinite(scores).all(), key
+              assert key in expected_keys and key not in references, key
+              assert not any(np.allclose(scores, prior, **tolerance)
+                             for prior in references.values()), key
+              references[key] = scores
+          assert set(references) == expected_keys and len(references) == 40
+
+          stages = [stage for stage, _, _ in SCENARIO]
+          assert [record['stage'] for record in records if record['event'] == 'stage'] == stages
+          frames = [record for record in records if record['event'] == 'frame']
+          per_stage = header['frames_per_stage']
+          assert type(per_stage) is int and per_stage > 0
+          assert len(frames) == len(stages) * per_stage
+          counts = dict(offered=len(frames), served=0, waiting=0, abstained=0, correct=0)
+          served_inputs, served_pairs = set(), set()
+          for request, frame in enumerate(frames, 1):
+              item = inputs[(request - 1) % len(inputs)]
+              assert frame['request'] == request
+              assert frame['stage'] == stages[(request - 1) // per_stage]
+              assert frame['image'] == {key: item[key] for key in ('name', 'sha256')}
+              expected = {'index': item['expected_index'], 'label': labels[item['expected_index']]}
+              assert frame['expected'] == expected
+              outcome = frame['outcome']
+              assert outcome in {'ok', 'waiting', 'abstained'}, outcome
+              if outcome != 'ok':
+                  counts[outcome] += 1
+                  assert frame['serving'] is None
+                  continue
+              serving = frame['serving']
+              key = (serving['id'], serving['digest'], item['name'], item['sha256'])
+              scores = np.asarray(frame['scores'], dtype=float)
+              assert scores.shape == (1000,) and np.isfinite(scores).all(), request
+              assert np.allclose(scores, references[key], **tolerance), request
+              assert frame['admitted'] == serving, request
+              assert frame['reference_match'] is True and frame['identity_match'] is True
+              predicted = int(scores.argmax())
+              assert frame['prediction'] == {'index': predicted, 'label': labels[predicted]}
+              correct = predicted == expected['index']
+              assert frame['correct'] is correct
+              assert np.isfinite(frame['infer_ms']) and frame['infer_ms'] >= 0
+              counts['served'] += 1
+              counts['correct'] += correct
+              served_inputs.add(item['name'])
+              served_pairs.add(key)
+
+          assert summary['requests'] == counts
+          assert summary['integrity'] == {
+              'checked': counts['served'], 'output_mismatches': 0, 'identity_mismatches': 0,
+          }
+          missing_inputs = [item['name'] for item in inputs if item['name'] not in served_inputs]
+          assert summary['inputs'] == {
+              'total': 20, 'checked': len(served_inputs), 'missing': missing_inputs,
+          }
+          assert len(served_inputs) == 20 and not missing_inputs
+          assert summary['model_input_pairs'] == {'total': 40, 'checked': len(served_pairs)}
+
+          # Derive scene witnesses from ordered raw events, independently of replay helpers.
+          starts = [index for index, record in enumerate(records) if record['event'] == 'stage']
+          model_refs = {name: {'id': name, 'digest': digest} for name, digest in models}
+          observed = {}
+          for index, (stage, battery, fault) in enumerate(SCENARIO):
+              end = starts[index + 1] if index + 1 < len(starts) else len(records) - 1
+              phase = records[starts[index]:end]
+              previous, selected = phase[0]['active'], phase[0]['selected']
+              expected = (model_refs['resnet18'] if battery >= 40 else
+                          model_refs['mobilenetv2'] if battery >= 10 else None)
+              assert selected == expected
+              if index:
+                  assert previous == last_active
+              assert all(row['stage'] == stage and row['selected'] == selected for row in phase)
+              activations = [(offset, row) for offset, row in enumerate(phase)
+                             if row['event'] == 'activation']
+              assert len(activations) == 1, stage
+              offset, activation = activations[0]
+              last_active = activation['active']
+              phase_frames = [row for row in phase if row['event'] == 'frame']
+              following = [row for row in phase[offset + 1:]
+                           if row['event'] == 'frame' and row['outcome'] == 'ok']
+              if selected is None:
+                  assert activation['activation'] == 'unchanged'
+                  assert activation['decision_selected'] is None and last_active == previous
+                  observed[stage] = bool(phase_frames) and all(
+                      row['outcome'] == 'abstained' and row['serving'] is None
+                      and row['active'] == previous for row in phase_frames)
+              elif fault:
+                  assert previous is not None and previous != selected
+                  assert activation['activation'] == 'failed' and last_active == previous
+                  assert all(row['active'] == previous and
+                             (row['outcome'] != 'ok' or row['serving'] == previous)
+                             for row in phase_frames)
+                  observed[stage] = any(
+                      row['activation_at_admission'] == 'failed'
+                      and row['admitted'] == row['serving'] == previous for row in following)
+              else:
+                  allowed = {'published', 'unchanged'} if index == 0 else {'published'}
+                  assert activation['activation'] in allowed
+                  assert activation['decision_selected'] == last_active == selected
+                  if activation['activation'] == 'unchanged':
+                      assert previous == selected
+                  observed[stage] = any(
+                      row['activation_at_admission'] in allowed
+                      and row['admitted'] == row['serving'] == selected for row in following)
+          assert all(observed.values()), observed
+          assert summary['scenes'] == observed
           assert summary['complete'] is True and summary['missing'] == [], summary
-          assert set(summary['scenes']) == {stage for stage, _, _ in SCENARIO}, summary
+          assert set(summary['scenes']) == set(stages), summary
           assert len(summary['scenes']) == 7, summary
           assert all(value is True for value in summary['scenes'].values()), summary
           with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as output:
               output.write('Ubuntu 24.04 x86_64 / Python 3.12.15: installed-wheel tests passed without skips; '
                            'all seven real-model scenes passed with external networking unavailable.\n\n'
+                           f"Verified {counts['served']} served score vectors and identities across "
+                           f"20 inputs and {len(served_pairs)}/40 model/input pairs. "
+                           f"Classification labels: {counts['correct']}/{counts['served']} correct "
+                           '(descriptive only, not a general accuracy claim or pass criterion).\n\n'
                            'Functional compatibility only; no device latency, memory or endurance guarantee.\n')
           PY
       - name: Retain qualification evidence and failure diagnostics

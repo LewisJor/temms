@@ -77,6 +77,12 @@ async def test_inference_failure_settles_transition_and_restores_private_artifac
         ModelPolicy(refs[0], 10, (Constraint("battery", Operator.GTE, 10),)),
         ModelPolicy(refs[1], 20, (Constraint("battery", Operator.GTE, 40),)),
     ])
+    samples = [{
+        "image": {"name": "request.jpg", "sha256": "request-digest"},
+        "expected": {"index": 0, "label": "label"},
+        "feed": {"data": "request"},
+        "references": {(ref.id, ref.digest): run.np.zeros((1, 1000)) for ref in refs},
+    }]
     executor = ThreadPoolExecutor(max_workers=2)
     asyncio.get_running_loop().set_default_executor(executor)
     try:
@@ -84,7 +90,7 @@ async def test_inference_failure_settles_transition_and_restores_private_artifac
         with pytest.raises(RuntimeError) as caught:
             # Direct await keeps the settlement assertion in the same caller turn.
             async with asyncio.timeout(3):
-                await run.replay(runtime, selector, {"data": "request"}, ["label"] * 1000,
+                await run.replay(runtime, selector, samples, ["label"] * 1000,
                                  paths[1], emit, frames=2, interval=0)
         assert caught.value is failure
         assert len(transitions) == 1 and transitions[0].done()

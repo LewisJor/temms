@@ -7,6 +7,7 @@ import platform
 import shutil
 import tempfile
 import time
+from collections import Counter
 from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
@@ -19,9 +20,13 @@ from temms.adapters import OnnxModel, OnnxRuntime
 from temms.errors import ModelUnavailableError
 
 if __package__:
+    from . import workload
     from .assets import preprocess, verify_assets
 else:
+    import workload
     from assets import preprocess, verify_assets
+
+SCORE_TOLERANCE = {"rtol": 1e-5, "atol": 1e-6}
 
 SCENARIO = (
     ("start-small", 20, False),
@@ -56,12 +61,60 @@ def cpu_session(path, providers, *, cpu_arena=True):
     return session
 
 
-def prediction(output, labels):
+def classifier_scores(output):
+    if len(output) != 1:
+        raise ValueError("expected exactly one classifier output")
     scores = np.asarray(output[0])
     if scores.shape != (1, 1000) or not np.isfinite(scores).all():
         raise ValueError("expected finite classifier scores with shape (1, 1000)")
+    return scores
+
+
+def prediction(output, labels):
+    scores = classifier_scores(output)
     index = int(scores[0].argmax())
     return {"index": index, "label": labels[index]}
+
+
+def prepare_inputs(directory, manifest, refs, labels):
+    if not manifest["files"]:
+        raise ValueError("replay requires prepared inputs")
+    samples = []
+    for item in manifest["files"]:
+        feed = preprocess(directory / item["name"])
+        for value in feed.values():
+            value.setflags(write=False)
+        samples.append({
+            "image": {key: item[key] for key in ("name", "sha256")},
+            "expected": {"index": item["expected_index"], "label": labels[item["expected_index"]]},
+            "feed": feed, "references": {},
+        })
+    seen = []
+    for ref in refs:
+        session = cpu_session(str(directory / f"{ref.id}.onnx"), ("CPUExecutionProvider",))
+        for sample in samples:
+            scores = classifier_scores(session.run(None, sample["feed"])).copy()
+            if any(np.allclose(scores, previous, **SCORE_TOLERANCE) for previous in seen):
+                raise ValueError("reference outputs are indistinguishable; cannot verify routing")
+            scores.setflags(write=False)
+            sample["references"][(ref.id, ref.digest)] = scores
+            seen.append(scores)
+        del session
+    return samples
+
+
+def check_output(result, sample, admitted, labels):
+    scores = classifier_scores(result.output)
+    reference = sample["references"].get((result.model.id, result.model.digest))
+    predicted = prediction(result.output, labels)
+    return {
+        "prediction": predicted, "scores": scores[0].tolist(),
+        "reference_match": reference is not None and bool(
+            np.allclose(scores, reference, **SCORE_TOLERANCE)
+        ),
+        "identity_match": identity(result.model) == identity(admitted),
+        "correct": predicted["index"] == sample["expected"]["index"],
+    }
 
 
 async def transition(temms, runtime, context, fault, report, status):
@@ -126,7 +179,8 @@ def scene_observed(record, previous):
             and record["selected"] is None
             and record["serving"] is None
         )
-    if record["outcome"] != "ok":
+    if (record["outcome"] != "ok" or not record["reference_match"]
+            or not record["identity_match"]):
         return False
     admission = record["activation_at_admission"]
     if record["stage"] == "injected-missing-artifact":
@@ -152,12 +206,18 @@ def observe_scene(record, previous, evidence):
             evidence["activation"] or record["stage"] == "no-feasible-model"
         )
         evidence["invalid"] |= record["stage"] == "no-feasible-model" and record["outcome"] == "ok"
+        evidence["invalid"] |= record["outcome"] == "ok" and not (
+            record["reference_match"] and record["identity_match"]
+        )
 
 
-async def replay(runtime, selector, feed, labels, large_path, emit, frames=6, interval=0.4):
+async def replay(runtime, selector, samples, labels, large_path, emit, frames=12, interval=0.4):
     temms = TEMMS(runtime=runtime, selector=selector)
     request = 0
     scenes = {}
+    counts = Counter(offered=0, served=0, waiting=0, abstained=0, correct=0)
+    integrity = Counter(checked=0, output_mismatches=0, identity_mismatches=0)
+    served_inputs, served_pairs = set(), set()
     for stage, battery, fault in SCENARIO:
         context = {"battery": battery}
         preview = selector.select(
@@ -199,28 +259,45 @@ async def replay(runtime, selector, feed, labels, large_path, emit, frames=6, in
         try:
             for _ in range(frames):
                 request += 1
+                sample = samples[(request - 1) % len(samples)]
+                offered = {"image": sample["image"], "expected": sample["expected"]}
+                counts["offered"] += 1
                 active = (await runtime.state("vision")).active_model
                 admitted = any(e.model == active and e.feasible for e in preview.evaluations)
                 if admitted:
                     started = time.perf_counter()
                     activation_at_admission = status["activation"]
-                    result = await temms.infer("vision", feed)
+                    result = await temms.infer("vision", sample["feed"])
+                    infer_ms = (time.perf_counter() - started) * 1000
+                    checked = check_output(result, sample, active, labels)
+                    counts["served"] += 1
+                    counts["correct"] += checked["correct"]
+                    integrity["checked"] += 1
+                    integrity["output_mismatches"] += not checked["reference_match"]
+                    integrity["identity_mismatches"] += not checked["identity_match"]
+                    if checked["reference_match"] and checked["identity_match"]:
+                        served_inputs.add(sample["image"]["name"])
+                        served_pairs.add((result.model.id, result.model.digest,
+                                          sample["image"]["name"]))
                     report(
                         {
+                            **offered, **checked,
                             "event": "frame",
                             "request": request,
                             "outcome": "ok",
                             "activation_at_admission": activation_at_admission,
                             "serving": identity(result.model),
+                            "admitted": identity(active),
                             "active": identity((await runtime.state("vision")).active_model),
-                            "prediction": prediction(result.output, labels),
-                            "infer_ms": (time.perf_counter() - started) * 1000,
+                            "infer_ms": infer_ms,
                         }
                     )
                 else:
                     outcome = "abstained" if preview.selected_model is None else "waiting"
+                    counts[outcome] += 1
                     report(
                         {
+                            **offered,
                             "event": "frame",
                             "request": request,
                             "outcome": outcome,
@@ -236,11 +313,17 @@ async def replay(runtime, selector, feed, labels, large_path, emit, frames=6, in
             if fault and hidden.exists():
                 hidden.rename(large_path)
         scenes[stage] = evidence["activation"] and evidence["frame"] and not evidence["invalid"]
+    missing_inputs = [s["image"]["name"] for s in samples
+                      if s["image"]["name"] not in served_inputs]
     summary = {
         "event": "summary",
-        "complete": all(scenes.values()),
+        "complete": all(scenes.values()) and not missing_inputs and integrity["checked"] > 0,
         "scenes": scenes,
         "missing": [stage for stage, observed in scenes.items() if not observed],
+        "requests": dict(counts), "integrity": dict(integrity),
+        "inputs": {"total": len(samples), "checked": len(served_inputs), "missing": missing_inputs},
+        "model_input_pairs": {"total": sum(len(s["references"]) for s in samples),
+                              "checked": len(served_pairs)},
     }
     emit(summary)
     return summary
@@ -267,32 +350,50 @@ def show(record):
         print(f"\nDemo {verdict}. Scene evidence:", flush=True)
         for stage, observed in record["scenes"].items():
             print(f"  {'PASS' if observed else 'MISSING':7} {stage}", flush=True)
+        requests, integrity = record["requests"], record["integrity"]
+        print(f"Requests: {requests['offered']} offered, {requests['served']} served, "
+              f"{requests['waiting']} waiting, {requests['abstained']} abstained")
+        print(f"Integrity: {integrity['checked']} checked, "
+              f"{integrity['output_mismatches']} output mismatches, "
+              f"{integrity['identity_mismatches']} attribution mismatches")
+        print(f"Coverage: {record['inputs']['checked']}/{record['inputs']['total']} inputs; "
+              f"{record['model_input_pairs']['checked']}/{record['model_input_pairs']['total']} "
+              "model/input pairs checked")
+        print(f"Expected labels: {requests['correct']}/{requests['served']} correct "
+              "(descriptive, not a pass criterion)", flush=True)
         if not record["complete"]:
             print(
-                "Increase --frames or --interval; defaults are --frames 6 --interval 0.4.",
+                "Inspect mismatches and missing evidence. More frames/time can address coverage "
+                "only; defaults are --frames 12 --interval 0.4.",
                 flush=True,
             )
     else:
-        label = record.get("prediction", {}).get("label", "—")
         print(
             f"  FRAME {record['request']:03} {record['outcome']:9}"
             f" serving={name(record['serving']):11} active={name(record['active']):11}"
-            f" | {label}",
+            f" input={record['image']['name']}",
             flush=True,
         )
+        if record["outcome"] == "ok":
+            print(f"    predicted={record['prediction']['label']}"
+                  f" | expected={record['expected']['label']}"
+                  f" | class={'correct' if record['correct'] else 'wrong'}"
+                  f" reference={'PASS' if record['reference_match'] else 'FAIL'}"
+                  f" identity={'PASS' if record['identity_match'] else 'FAIL'}"
+                  f" inference={record['infer_ms']:.2f}ms", flush=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--assets", type=Path, default=Path(".demo-assets/live-swap"))
     parser.add_argument("--records", type=Path)
-    parser.add_argument("--frames", type=int, default=6)
+    parser.add_argument("--frames", type=int, default=12)
     parser.add_argument("--interval", type=float, default=0.4)
     args = parser.parse_args()
     if args.frames < 1 or not 0 <= args.interval <= 10:
         parser.error("frames must be positive and interval must be between 0 and 10 seconds")
     manifest = verify_assets(args.assets)
-    feed = preprocess(args.assets / "chelsea.png")
+    data = workload.verify_workload(args.assets)
     labels = [
         line.split(" ", 1)[1] for line in (args.assets / "labels.txt").read_text().splitlines()
     ]
@@ -302,6 +403,9 @@ def main():
     refs = [
         ModelRef(name, "sha256:" + digests[name + ".onnx"]) for name in ("mobilenetv2", "resnet18")
     ]
+    print(f"Preparing direct ONNX references for {len(data['files'])} pinned inputs...", flush=True)
+    samples = prepare_inputs(args.assets, data, refs, labels)
+    warmup = samples[0]["feed"]
     selector = BestFeasibleSelector(
         [
             ModelPolicy(refs[0], 10, (Constraint("battery", Operator.GTE, 10),)),
@@ -317,9 +421,9 @@ def main():
             models={
                 "vision": [
                     OnnxModel(
-                        refs[0], args.assets / "mobilenetv2.onnx", ("CPUExecutionProvider",), feed
+                        refs[0], args.assets / "mobilenetv2.onnx", ("CPUExecutionProvider",), warmup
                     ),
-                    OnnxModel(refs[1], large, ("CPUExecutionProvider",), feed),
+                    OnnxModel(refs[1], large, ("CPUExecutionProvider",), warmup),
                 ]
             },
             session_factory=cpu_session,
@@ -335,7 +439,17 @@ def main():
                     "versions": {p: version(p) for p in ("onnxruntime", "numpy", "Pillow")},
                     "provider": "CPUExecutionProvider",
                     "threads": 1,
-                    "image": "chelsea.png",
+                    "workload": data,
+                    "score_tolerance": SCORE_TOLERANCE,
+                    "input_order": (
+                        "global request index modulo manifest length; advance on every attempt"
+                    ),
+                    "references": [
+                        {"model": {"id": model, "digest": digest},
+                         "image": sample["image"], "scores": scores[0].tolist()}
+                        for sample in samples
+                        for (model, digest), scores in sample["references"].items()
+                    ],
                     "frames_per_stage": args.frames,
                     "interval_seconds": args.interval,
                 }
@@ -348,10 +462,10 @@ def main():
             log.flush()
             show(record)
 
-        print("TEMMS LIVE SWAP | real classifiers | one photo replayed | simulated battery")
+        print("TEMMS LIVE SWAP | varied pinned inputs | direct-output checks | simulated battery")
         print(f"CPU, one inference thread per session. Records: {records}", flush=True)
         summary = asyncio.run(
-            replay(runtime, selector, feed, labels, large, emit, args.frames, args.interval)
+            replay(runtime, selector, samples, labels, large, emit, args.frames, args.interval)
         )
     return 0 if summary["complete"] else 1
 

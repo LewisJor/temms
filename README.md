@@ -198,23 +198,29 @@ For a terminal demo with two real trained Hugging Face classifiers:
 ```bash
 python -m pip install ".[onnx,demo]"
 python examples/live_swap/assets.py
+python examples/live_swap/workload.py
 python examples/live_swap/run.py
 ```
 
-Preparation explicitly downloads about 61 MB of pinned model weights plus labels
-and a CC0 cat photo. The run uses local assets, replays simulated battery changes,
-and shows MobileNetV2/ResNet18 predictions, successful swaps, a failed replacement
-with serving continuity, and application abstention. See the
-[manual demo runbook](examples/live_swap/README.md) for the seven scenes and JSONL records.
-The final summary confirms each scene from actual activation and serving records;
-an incomplete demonstration lists missing scenes and exits with status 1.
-Pillow is optional and used only for the demo's image preprocessing.
+Preparation downloads about 61 MB of shared model assets and 655 KB of pinned,
+labeled dog images. The offline replay cycles through twenty images while simulated
+battery changes trigger swaps, a failed replacement, continued serving and abstention.
+Each served request displays its input, expected class, prediction and inference time.
+Its full 1,000-score output must match direct ONNX execution for that input and model,
+and its model identity must match admission. These checks catch stale-image outputs
+and wrong-model attribution even when the predicted class stays the same.
+
+Completion requires all seven scenes, successful checked service of every input,
+and zero output or attribution mismatches. Classifier mistakes are displayed but
+do not fail this functional check. The [demo runbook](examples/live_swap/README.md)
+defines the score tolerance, coverage and independently auditable JSONL records.
+Pillow is optional and used only for image preprocessing.
 The [Ubuntu 24.04 qualification workflow](examples/live_swap/README.md#ubuntu-2404-qualification-in-github-actions)
-runs this example against an installed wheel with a declared Python/CPU runtime
-profile and external networking disabled. [Hosted qualification passed on
-2026-10-15](https://github.com/LewisJor/temms/actions/runs/38754444278) for commit
-`58936d5`. This covers that tested configuration; see [progress](docs/progress.md)
-for retained evidence and remaining device-specific limits.
+runs the example against an installed wheel with external networking disabled.
+See [progress](docs/progress.md) for the exact verified revision and environment;
+the [earlier 2026-10-15 pass](https://github.com/LewisJor/temms/actions/runs/38754444278)
+at `58936d5` used the previous single-photo replay and did not include these new
+numerical and input-coverage checks.
 
 For fixed-small, fixed-large, blocking-adaptive, and background-adaptive comparisons
 on a pinned 20-image test workload:
@@ -251,9 +257,13 @@ blocking swaps and 101 with fixed-small. Its process memory peak was highest.
 The benefit persisted on fresh images but remains small and specific to this task.
 Both workloads remain available; the default is `--workload small`.
 
-Real ONNX integration tests also use synthetic identity graphs. The interactive
-demo repeats one photo; the comparison uses a small dog-only test subset with
-unknown pretraining overlap. Neither establishes general model quality or benefit.
+Real ONNX integration tests use small synthetic graphs, including a controlled
+request spanning publication that checks both its numerical output and serving model.
+The terminal references share preprocessing and ONNX Runtime with the serving path;
+they check routing consistency, not independent engine correctness. Reference setup
+and the paced replay are not a latency benchmark. The demo and comparison use small
+dog-only subsets with unknown pretraining overlap, so they establish neither general
+model quality nor a general advantage from switching.
 Configured priority does not establish accuracy, and feasibility checks do not
 physically enforce memory, energy, or latency limits. Process/native failures and
 hard real-time guarantees are outside the contract.

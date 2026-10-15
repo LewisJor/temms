@@ -1,5 +1,4 @@
 import asyncio
-import importlib.util
 import json
 import sys
 import threading
@@ -14,17 +13,34 @@ from temms.adapters import OnnxModel, OnnxRuntime
 
 
 @pytest.fixture
-def demo(monkeypatch):
+def demo():
     pytest.importorskip("numpy")
     pytest.importorskip("onnxruntime")
-    from examples.live_swap import assets
+    from examples.live_swap import run
 
-    monkeypatch.setitem(sys.modules, "assets", assets)
-    path = Path(__file__).parents[1] / "examples/live_swap/run.py"
-    spec = importlib.util.spec_from_file_location("live_swap_demo", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return run
+
+
+def _scores(demo, model, image):
+    scores = demo.np.zeros((1, 1000), dtype=demo.np.float32)
+    scores[0, model] = 1
+    scores[0, 2] = (1 + model * 2 + image) / 10
+    return scores
+
+
+def _samples(demo, refs):
+    return [
+        {
+            "image": {"name": f"image-{image}.jpg", "sha256": f"image-digest-{image}"},
+            "expected": {"index": image, "label": f"class-{image}"},
+            "feed": {"data": image},
+            "references": {
+                (ref.id, ref.digest): _scores(demo, model, image)
+                for model, ref in enumerate(refs)
+            },
+        }
+        for image in range(3)
+    ]
 
 
 def _recorder(records, current, activation_done, published, large_path):
@@ -43,13 +59,23 @@ def _recorder(records, current, activation_done, published, large_path):
     return emit
 
 
+def _assert_activation_sequence(demo, activations, previous):
+    for activation in activations.values():
+        assert demo.activation_observed(activation, previous)
+        previous = activation["active"]
+
+
 @pytest.mark.asyncio
-async def test_replay_swaps_failures_abstention_and_serving_identity(demo, monkeypatch, tmp_path):
+@pytest.mark.parametrize("corrupt_first", [False, True], ids=["valid-outputs", "sticky-mismatch"])
+async def test_replay_swaps_failures_abstention_and_serving_identity(
+    demo, monkeypatch, tmp_path, corrupt_first,
+):
     refs = [ModelRef(name, f"sha256:{name}") for name in ("mobilenetv2", "resnet18")]
     paths = [tmp_path / f"{ref.id}.onnx" for ref in refs]
     for path in paths:
         path.write_bytes(b"injected classifier fixture")
     labels = [f"class-{index}" for index in range(1000)]
+    samples = _samples(demo, refs)
     activation_done, published = asyncio.Event(), threading.Event()
     records, calls, current = [], [], {}
 
@@ -61,8 +87,10 @@ async def test_replay_swaps_failures_abstention_and_serving_identity(demo, monke
             calls.append((current["stage"], refs[self.index].id))
             if current["stage"] == "more-capacity" and self.index == 0:
                 assert published.wait(5), "replacement did not publish while old inference waited"
-            scores = demo.np.zeros((1, 1000), dtype=demo.np.float32)
-            scores[0, self.index] = 1
+            scores = _scores(demo, self.index, input_feed["data"])
+            if corrupt_first and len(calls) == 1:
+                # Preserve argmax: checking only the displayed class must not pass.
+                scores[0, 2] += 0.125
             return [scores]
 
     runtime = OnnxRuntime(
@@ -86,7 +114,8 @@ async def test_replay_swaps_failures_abstention_and_serving_identity(demo, monke
     try:
         await runtime.activate("vision", refs[0])
         summary = await asyncio.wait_for(
-            demo.replay(runtime, selector, {"data": "frame"}, labels, paths[1], emit, frames=2), 10,
+            demo.replay(runtime, selector, samples, labels, paths[1], emit, frames=2),
+            10,
         )
     finally:
         published.set()
@@ -115,10 +144,29 @@ async def test_replay_swaps_failures_abstention_and_serving_identity(demo, monke
     assert all(stage != "no-feasible-model" for stage, _ in calls)
     assert paths[1].exists() and not paths[1].with_suffix(".unavailable").exists()
     assert activations["start-small"]["activation"] == "unchanged"
-    assert summary == records[-1] == {
-        "event": "summary", "complete": True,
-        "scenes": {stage: True for stage, _, _ in demo.SCENARIO}, "missing": [],
+    assert summary == records[-1]
+    assert summary["event"] == "summary" and summary["complete"] is (not corrupt_first)
+    assert summary["scenes"] == {
+        stage: not (corrupt_first and stage == "start-small") for stage, _, _ in demo.SCENARIO
     }
+    assert summary["missing"] == (["start-small"] if corrupt_first else [])
+    assert all(frame["image"] == samples[(frame["request"] - 1) % 3]["image"] for frame in frames)
+    assert all(
+        frame["expected"] == samples[(frame["request"] - 1) % 3]["expected"] for frame in frames
+    )
+    served = [frame for frame in frames if frame["outcome"] == "ok"]
+    assert summary["integrity"] == {
+        "checked": len(served), "output_mismatches": int(corrupt_first), "identity_mismatches": 0,
+    }
+    assert summary["inputs"] == {"total": 3, "checked": 3, "missing": []}
+    assert summary["requests"]["correct"] < summary["requests"]["served"] == len(served)
+    assert all(frame["reference_match"] for frame in served[1:])
+    assert served[0]["reference_match"] is (not corrupt_first)
+    assert served[0]["prediction"] == {"index": 0, "label": "class-0"}
+    assert all(frame["identity_match"] for frame in served)
+    _assert_activation_sequence(demo, activations, demo.identity(refs[0]))
+    later_start = next(frame for frame in frames if frame["request"] == 2)
+    assert later_start["reference_match"] and later_start["activation_at_admission"] == "unchanged"
 
 
 @pytest.mark.parametrize("shape,value", [
@@ -137,18 +185,24 @@ def terminal_demo(demo, tmp_path, monkeypatch):
         (tmp_path / f"{name}.onnx").write_bytes(b"injected classifier fixture")
     (tmp_path / "labels.txt").write_text("\n".join(f"n{i} class-{i}" for i in range(1000)))
     manifest = {"files": [{"name": f"{name}.onnx", "sha256": name} for name in names]}
+    workload = {"files": [
+        {"name": f"image-{image}.jpg", "sha256": f"image-digest-{image}",
+         "expected_index": image}
+        for image in range(2)
+    ]}
 
     class Session:
         def __init__(self, path):
             self.index = names.index(Path(path).stem)
 
         def run(self, names, feed):
-            scores = demo.np.zeros((1, 1000), dtype=demo.np.float32)
-            scores[0, self.index] = 1
-            return [scores]
+            return [_scores(demo, self.index, feed["data"])]
 
     monkeypatch.setattr(demo, "verify_assets", lambda directory: manifest)
-    monkeypatch.setattr(demo, "preprocess", lambda path: {"data": "fixture"})
+    monkeypatch.setattr(demo.workload, "verify_workload", lambda directory: workload)
+    monkeypatch.setattr(demo, "preprocess", lambda path: {
+        "data": demo.np.array(int(path.stem.split("-")[1])),
+    })
     monkeypatch.setattr(demo, "cpu_session", lambda path, providers: Session(path))
     records = tmp_path / "terminal.jsonl"
     monkeypatch.setattr(sys, "argv", [
@@ -192,10 +246,9 @@ def test_terminal_completion_requires_verified_scenes(demo, terminal_demo, monke
     monkeypatch.setattr(sys, "argv", sys.argv + ["--frames", "2"])
     assert demo.main() == 0
     records = [json.loads(line) for line in terminal_demo.read_text().splitlines()]
-    assert records[-1] == {
-        "event": "summary", "complete": True,
-        "scenes": {stage: True for stage, _, _ in demo.SCENARIO}, "missing": [],
-    }
+    assert records[-1]["event"] == "summary" and records[-1]["complete"] is True
+    assert records[-1]["scenes"] == {stage: True for stage, _, _ in demo.SCENARIO}
+    assert records[-1]["missing"] == []
     displayed = capsys.readouterr().out
     assert "Demo complete." in displayed and "  MISSING " not in displayed
 
@@ -207,7 +260,8 @@ def _scene_records():
               "activation": "published"}
     activation = common | {"event": "activation", "decision_selected": selected}
     frame = common | {"event": "frame", "outcome": "ok", "serving": selected,
-                      "activation_at_admission": "published"}
+                      "activation_at_admission": "published", "reference_match": True,
+                      "identity_match": True}
     return previous, activation, frame
 
 
