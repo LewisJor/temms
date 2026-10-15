@@ -1,0 +1,180 @@
+name: Ubuntu 24.04 CPU qualification
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ubuntu24-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONPATH: ""
+      PYTHONHOME: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.15"
+          architecture: x64
+      - name: Create an isolated installation
+        run: |
+          mkdir -p "$RUNNER_TEMP/temms-qualification"
+          echo "EVIDENCE=$RUNNER_TEMP/temms-qualification" >> "$GITHUB_ENV"
+          echo "ASSETS=$RUNNER_TEMP/temms-assets" >> "$GITHUB_ENV"
+          python -m venv "$RUNNER_TEMP/temms-env"
+          echo "$RUNNER_TEMP/temms-env/bin" >> "$GITHUB_PATH"
+      - name: Build and install the declared profile
+        run: |
+          python -m pip install build 'setuptools>=77.0.3' wheel
+          python -m build --no-isolation --wheel --outdir "$EVIDENCE/wheel" 2>&1 | tee "$EVIDENCE/build.log"
+          wheels=("$EVIDENCE"/wheel/*.whl)
+          test "${#wheels[@]}" -eq 1
+          python -m pip install "${wheels[0]}[dev,onnx,demo]" \
+            numpy==2.4.2 onnxruntime==1.24.1 Pillow==12.1.0 onnx==1.21.0
+          python -m pip check
+          python -m pip freeze --all > "$EVIDENCE/requirements.txt"
+      - name: Verify the target and installed source
+        run: |
+          lscpu > "$EVIDENCE/cpu.txt"
+          python - <<'PY'
+          import hashlib
+          import importlib
+          import json
+          import os
+          import platform
+          import sys
+          import sysconfig
+          from pathlib import Path
+
+          release = platform.freedesktop_os_release()
+          assert release['ID'] == 'ubuntu' and release['VERSION_ID'] == '24.04', release
+          assert platform.machine() == 'x86_64'
+          assert platform.python_version() == '3.12.15'
+          site = Path(sysconfig.get_path('purelib')).resolve()
+          installed = {}
+          for source in Path('src/temms').rglob('*.py'):
+              parts = list(source.relative_to('src').with_suffix('').parts)
+              name = '.'.join(parts[:-1] if parts[-1] == '__init__' else parts)
+              path = Path(importlib.import_module(name).__file__).resolve()
+              assert path.is_relative_to(site), path
+              assert path.read_bytes() == source.read_bytes(), path
+              installed[name] = {
+                  'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+              }
+          evidence = Path(os.environ['EVIDENCE'])
+          details = {
+              'os': release, 'platform': platform.platform(), 'python': sys.version,
+              'executable': sys.executable, 'installed': installed,
+              'workflow': {key: os.environ.get(key) for key in (
+                  'GITHUB_SHA', 'GITHUB_WORKFLOW_REF', 'GITHUB_WORKFLOW_SHA',
+                  'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT',
+                  'GITHUB_REPOSITORY', 'ImageOS', 'ImageVersion')},
+              'wheel_sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                               for p in (evidence / 'wheel').glob('*.whl')},
+          }
+          (evidence / 'environment.json').write_text(json.dumps(details, indent=2) + '\n')
+          PY
+      - name: Test the installed package including native ONNX
+        run: |
+          python -m pytest -ra --junitxml="$EVIDENCE/tests.xml" 2>&1 | tee "$EVIDENCE/tests.log"
+          python - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          root = ET.parse(Path(os.environ['EVIDENCE']) / 'tests.xml').getroot()
+          cases = root.findall('.//testcase')
+          assert cases and not any(root.findall('.//' + tag) for tag in ('skipped', 'failure', 'error'))
+          native = {case.get('name') for case in cases
+                    if case.get('classname', '').endswith('test_onnx_runtime_integration')}
+          required = {'test_real_onnx_runtime_inference',
+                      'test_corrupt_artifact_preserves_real_session_and_recovers'}
+          assert required <= native, 'both real ONNX integration cases must execute'
+          print(f'{len(cases)} tests passed, zero skips; {len(native)} native ONNX cases')
+          PY
+      - name: Prepare and verify the pinned models online
+        run: |
+          python examples/live_swap/assets.py --assets "$ASSETS" 2>&1 | tee "$EVIDENCE/preparation.log"
+          cp examples/live_swap/assets.json "$EVIDENCE/assets.json"
+      - name: Run all seven scenes without external networking
+        run: |
+          sudo -n unshare --net --setgid "$(id -g)" --setuid "$(id -u)" -- \
+            "$(command -v python)" - "$PWD" "$ASSETS" "$EVIDENCE" \
+            "$(readlink /proc/self/ns/net)" <<'PY' 2>&1 | tee "$EVIDENCE/offline.log"
+          import errno
+          import json
+          import os
+          import socket
+          import sys
+          from pathlib import Path
+
+          workspace, assets, evidence, host_namespace = sys.argv[1:]
+          probe = {
+              'host_namespace': host_namespace,
+              'namespace': os.readlink('/proc/self/ns/net'),
+              'interfaces': socket.if_nameindex(),
+              'routes': Path('/proc/net/route').read_text(),
+              'uid': os.getuid(),
+          }
+          with socket.socket() as connection:
+              connection.settimeout(2)
+              try:
+                  connection.connect(('192.0.2.1', 443))
+              except OSError as error:
+                  probe['connect_errno'] = error.errno
+              else:
+                  probe['connect_errno'] = None
+          Path(evidence, 'network.json').write_text(json.dumps(probe, indent=2) + '\n')
+          assert probe['namespace'] != host_namespace and probe['uid'] != 0, probe
+          assert all(name == 'lo' for _, name in probe['interfaces']), probe
+          assert probe['connect_errno'] == errno.ENETUNREACH, probe
+          print('Network isolation verified; starting the real replay.', flush=True)
+          os.execv(sys.executable, [sys.executable, str(Path(workspace, 'examples/live_swap/run.py')),
+              '--assets', assets, '--records', str(Path(evidence, 'replay.jsonl')),
+              '--frames', '12', '--interval', '0.5'])
+          PY
+      - name: Require complete evidence and unchanged prepared assets
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from examples.live_swap.assets import verify_assets
+          from examples.live_swap.run import SCENARIO
+
+          verify_assets(Path(os.environ['ASSETS']))
+          log = Path(os.environ['EVIDENCE'], 'replay.jsonl')
+          records = [json.loads(line) for line in log.read_text().splitlines()]
+          summaries = [record for record in records if record['event'] == 'summary']
+          assert len(summaries) == 1 and records[-1] == summaries[0]
+          summary = summaries[0]
+          assert summary['complete'] is True and summary['missing'] == [], summary
+          assert set(summary['scenes']) == {stage for stage, _, _ in SCENARIO}, summary
+          assert len(summary['scenes']) == 7, summary
+          assert all(value is True for value in summary['scenes'].values()), summary
+          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as output:
+              output.write('Ubuntu 24.04 x86_64 / Python 3.12.15: installed-wheel tests passed without skips; '
+                           'all seven real-model scenes passed with external networking unavailable.\n\n'
+                           'Functional compatibility only; no device latency, memory or endurance guarantee.\n')
+          PY
+      - name: Retain qualification evidence and failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ubuntu24-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/temms-qualification/
+          if-no-files-found: error
+          retention-days: 30

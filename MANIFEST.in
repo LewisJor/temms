@@ -1,0 +1,4 @@
+include AGENTS.md CONTRIBUTING.md NEXT_STEPS.md
+include docs/architecture.md docs/progress.md
+recursive-include .github/workflows *.yml
+recursive-include examples *.py *.json *.md

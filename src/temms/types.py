@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Generic, TypeVar
 
-OutputT = TypeVar("OutputT")
+OutputT = TypeVar("OutputT", covariant=True)
 Scalar = bool | int | float | str
 
 

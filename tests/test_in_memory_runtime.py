@@ -2,7 +2,17 @@ import asyncio
 
 import pytest
 
-from temms import ModelRef, ModelUnavailableError, NoActiveModelError
+from temms import (
+    TEMMS,
+    BestFeasibleSelector,
+    Constraint,
+    InferenceResult,
+    ModelPolicy,
+    ModelRef,
+    ModelUnavailableError,
+    NoActiveModelError,
+    Operator,
+)
 from temms.adapters import InMemoryRuntime
 
 
@@ -79,3 +89,42 @@ async def test_activate_rejects_models_not_exposed_by_runtime() -> None:
 
     with pytest.raises(ModelUnavailableError):
         await runtime.activate("slot", missing)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("initially_active", [False, True])
+async def test_missing_handler_rejects_activation_without_losing_service(initially_active) -> None:
+    healthy = ModelRef("healthy", "sha256:healthy")
+    unavailable = ModelRef("unavailable", "sha256:unavailable")
+    recovered = ModelRef("recovered", "sha256:recovered")
+    models = [healthy, unavailable, recovered]
+    runtime = InMemoryRuntime[str, str](
+        models={"slot": models},
+        handlers={
+            healthy.digest: lambda value: f"healthy:{value}",
+            recovered.digest: lambda value: f"recovered:{value}",
+        },
+        resources={"memory_mb": 256},
+    )
+    temms = TEMMS(runtime=runtime, selector=BestFeasibleSelector([
+        ModelPolicy(model, constraints=(Constraint("mode", Operator.EQ, model.id),))
+        for model in models
+    ]))
+    if initially_active:
+        await temms.reconcile("slot", {"mode": healthy.id})
+    before = await runtime.state("slot")
+
+    with pytest.raises(ModelUnavailableError, match="no inference handler.*sha256:unavailable"):
+        await temms.reconcile("slot", {"mode": unavailable.id})
+
+    assert await runtime.state("slot") == before
+    if initially_active:
+        assert await temms.infer("slot", "request") == InferenceResult(healthy, "healthy:request")
+    else:
+        with pytest.raises(NoActiveModelError, match="slot.*no active model"):
+            await temms.infer("slot", "request")
+
+    result = await asyncio.wait_for(temms.reconcile("slot", {"mode": recovered.id}), 2)
+    assert result.activation.active_model == recovered
+    assert result.activation.changed
+    assert await temms.infer("slot", "request") == InferenceResult(recovered, "recovered:request")

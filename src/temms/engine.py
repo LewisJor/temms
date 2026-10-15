@@ -35,31 +35,24 @@ class TEMMS(Generic[InputT, OutputT]):
     ) -> ReconcileResult:
         """Serialize one slot's selection and activation transaction."""
         async with self._lock_for(slot):
-            return await self._reconcile_once(slot, context)
+            models = tuple(await self._runtime.models(slot))
+            before = await self._runtime.state(slot)
+            decision = self._selector.select(
+                slot=slot,
+                models=models,
+                runtime=before,
+                context=context,
+            )
+            selected = decision.selected_model
+            if selected is None or _same_model(before.active_model, selected):
+                return ReconcileResult(decision=decision, activation=None)
 
-    async def _reconcile_once(
-        self,
-        slot: str,
-        context: Mapping[str, Scalar],
-    ) -> ReconcileResult:
-        models = tuple(await self._runtime.models(slot))
-        before = await self._runtime.state(slot)
-        decision = self._selector.select(
-            slot=slot,
-            models=models,
-            runtime=before,
-            context=context,
-        )
-        selected = decision.selected_model
-        if selected is None or _same_model(before.active_model, selected):
-            return ReconcileResult(decision=decision, activation=None)
+            activation = await self._runtime.activate(slot, selected)
+            self._assert_selected(selected, activation.active_model, "activate")
 
-        activation = await self._runtime.activate(slot, selected)
-        self._assert_selected(selected, activation.active_model, "activate")
-
-        after = await self._runtime.state(slot)
-        self._assert_selected(selected, after.active_model, "state")
-        return ReconcileResult(decision=decision, activation=activation)
+            after = await self._runtime.state(slot)
+            self._assert_selected(selected, after.active_model, "state")
+            return ReconcileResult(decision=decision, activation=activation)
 
     async def infer(self, slot: str, value: InputT) -> InferenceResult[OutputT]:
         """Delegate inference entirely to the injected runtime."""

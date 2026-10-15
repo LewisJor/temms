@@ -48,6 +48,10 @@ class InMemoryRuntime(Generic[InputT, OutputT]):
                 f"model {model.id!r} ({model.digest}) is unavailable for slot {slot!r}"
             )
         actual = available[key]
+        if actual.digest not in self._handlers:
+            raise ModelUnavailableError(
+                f"no inference handler is registered for model {actual.digest}"
+            )
         previous = self._active.get(slot)
         self._active[slot] = actual
         return ActivationResult(
@@ -70,7 +74,7 @@ class InMemoryRuntime(Generic[InputT, OutputT]):
         output = handler(value)
         if inspect.isawaitable(output):
             output = await cast(Awaitable[OutputT], output)
-        return InferenceResult(model=model, output=cast(OutputT, output))
+        return InferenceResult(model=model, output=output)
 
     def update_resources(self, **resources: Scalar) -> None:
         """Change the resource state exposed to the selector."""

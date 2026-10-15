@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import operator
-from collections.abc import Container, Mapping, Sequence
-from typing import Protocol
+from collections.abc import Callable, Container, Mapping, Sequence
+from typing import Any, Protocol
 
 from temms.types import (
     CandidateEvaluation,
@@ -18,7 +18,7 @@ from temms.types import (
     ValueSource,
 )
 
-_COMPARATORS = {
+_COMPARATORS: dict[Operator, Callable[[Any, Any], object]] = {
     Operator.EQ: operator.eq,
     Operator.NE: operator.ne,
     Operator.GT: operator.gt,

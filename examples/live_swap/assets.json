@@ -1,0 +1,62 @@
+{
+  "files": [
+    {
+      "name": "mobilenetv2.onnx",
+      "url": "https://huggingface.co/onnxmodelzoo/mobilenetv2-7/resolve/b055c14ebe95ca2df473547484e4d447867951ed/mobilenetv2-7.onnx",
+      "sha256": "c1c513582d56afceff8516c73804e484c81c6a830712ab6d682253f4a3cd042f",
+      "bytes": 14246826,
+      "license": "Apache-2.0",
+      "license_source": "https://huggingface.co/onnxmodelzoo/mobilenetv2-7/blob/b055c14ebe95ca2df473547484e4d447867951ed/README.md"
+    },
+    {
+      "name": "resnet18.onnx",
+      "url": "https://huggingface.co/onnxmodelzoo/resnet18-v1-7/resolve/e7cb849a949bdceba02356b8b923d53cc01108e1/resnet18-v1-7.onnx",
+      "sha256": "4e8f8653e7a2222b3904cc3fe8e304cd8b339ce1d05fd24688162f86fb6df52c",
+      "bytes": 46820737,
+      "license": "Apache-2.0",
+      "license_source": "https://huggingface.co/onnxmodelzoo/resnet18-v1-7/blob/e7cb849a949bdceba02356b8b923d53cc01108e1/README.md"
+    },
+    {
+      "name": "chelsea.png",
+      "url": "https://raw.githubusercontent.com/scikit-image/scikit-image/e8a42ba85aaf5fd9322ef9ca51bc21063b22fcae/skimage/data/chelsea.png",
+      "sha256": "596aa1e7cb875eb79f437e310381d26b338a81c2da23439704a73c4651e8c4bb",
+      "bytes": 240512,
+      "license": "CC0-1.0",
+      "license_source": "https://github.com/scikit-image/scikit-image/blob/e8a42ba85aaf5fd9322ef9ca51bc21063b22fcae/skimage/data/_fetchers.py",
+      "attribution": "Chelsea the cat, photographed by Stefan van der Walt; CC0."
+    },
+    {
+      "name": "labels.txt",
+      "url": "https://raw.githubusercontent.com/onnx/models/c5cae0f1942c8d7727372c7b1f6b485aa39e4421/validated/vision/classification/synset.txt",
+      "sha256": "acf75ef0abe89694b19056e0796401068b459c457baa30335f240c7692857355",
+      "bytes": 31675,
+      "license": "Apache-2.0",
+      "license_source": "https://github.com/onnx/models/blob/c5cae0f1942c8d7727372c7b1f6b485aa39e4421/LICENSE"
+    }
+  ],
+  "models": [
+    {
+      "id": "mobilenetv2",
+      "file": "mobilenetv2.onnx",
+      "output": "mobilenetv20_output_flatten0_reshape0"
+    },
+    {
+      "id": "resnet18",
+      "file": "resnet18.onnx",
+      "output": "resnetv15_dense0_fwd"
+    }
+  ],
+  "preprocessing": {
+    "source": "https://github.com/onnx/models/blob/c5cae0f1942c8d7727372c7b1f6b485aa39e4421/validated/vision/classification/imagenet_preprocess.py",
+    "input": "data",
+    "dtype": "float32",
+    "shape": [1, 3, 224, 224],
+    "color": "RGB",
+    "resize": "Shortest side 256, preserve aspect ratio, round other dimension, bilinear",
+    "crop": "Centered 224 by 224",
+    "scale": "Divide by 255",
+    "mean": [0.485, 0.456, 0.406],
+    "std": [0.229, 0.224, 0.225],
+    "labels": "labels.txt: 1000 lines in output-index order; initial token is the synset ID"
+  }
+}

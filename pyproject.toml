@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77.0.3", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -21,12 +21,14 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
+demo = ["Pillow>=10"]
 onnx = [
   "numpy>=1.26",
-  "onnx>=1.16",
   "onnxruntime>=1.16",
 ]
 dev = [
+  "mypy>=1.19.1",
+  "onnx>=1.16",
   "pytest>=8",
   "pytest-asyncio>=0.24",
   "ruff>=0.9",
@@ -47,6 +49,17 @@ temms = ["py.typed"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-q"
+
+# Run with `python -m mypy`; the consumer fixture checks the published interfaces.
+[tool.mypy]
+python_version = "3.11"
+files = ["src/temms", "tests/test_typing.py"]
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["onnxruntime"]
+# This optional native dependency does not publish typing metadata.
+ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100
