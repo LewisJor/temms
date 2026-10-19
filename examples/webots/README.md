@@ -34,7 +34,7 @@ the existing models and image workload:
 ```bash
 python3.12 -m venv .venv-webots
 source .venv-webots/bin/activate
-python -m pip install '.[onnx,demo]'
+python -m pip install '.[onnx,demo]' numpy==2.4.2 onnxruntime==1.24.1 Pillow==12.1.0
 python examples/live_swap/assets.py
 python examples/live_swap/workload.py
 ```

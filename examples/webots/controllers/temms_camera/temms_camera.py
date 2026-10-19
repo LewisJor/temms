@@ -232,7 +232,7 @@ def record_demo(supervisor, camera, assets, output, manifest, data, samples,
             overlay(supervisor, record)
 
         movie = output / "demo.mp4"
-        supervisor.movieStartRecording(str(movie), 960, 640, 0, 30, 1, False)
+        supervisor.movieStartRecording(str(movie), 960, 640, 0, 15, 1, False)
         try:
             summary = asyncio.run(replay_with_steps(
                 supervisor, runtime, selector, samples, labels, large, emit, capture=capture,

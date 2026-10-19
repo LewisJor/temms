@@ -180,7 +180,17 @@ jobs:
           import math
           import os
           from pathlib import Path
-          video = json.loads(Path(os.environ['EVIDENCE'], 'video.json').read_text())
+          evidence = Path(os.environ['EVIDENCE'])
+          environment = json.loads((evidence / 'environment.json').read_text())
+          with Path(os.environ['TEMMS_WEBOTS_OUTPUT'], 'events.jsonl').open() as records:
+              header = json.loads(records.readline())
+          assert header['webots'] == 'R2025a', header['webots']
+          assert header['python'] == '3.12.15', header['python']
+          assert header['versions'] == environment['profile'], header['versions']
+          assert header['executable'] == environment['executable'], header['executable']
+          assert header['temms_path'] == environment['installed']['temms']['path']
+          assert header['provider'] == 'CPUExecutionProvider' and header['threads'] == 1
+          video = json.loads((evidence / 'video.json').read_text())
           duration = float(video['format']['duration'])
           assert math.isfinite(duration) and duration > 0, video
           assert len(video['streams']) == 1, video

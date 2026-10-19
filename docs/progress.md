@@ -39,9 +39,11 @@ phase, cancellation settlement, early simulator shutdown, movie failures and exi
 
 ## Hosted Webots qualification
 
-The first implementation, [`39dc33d6`](https://github.com/LewisJor/temms/commit/39dc33d67ef75bd994e1985adda57cb807fb33f1),
-passed [Webots qualification](https://github.com/LewisJor/temms/actions/runs/39269572012)
-and the existing [Ubuntu qualification](https://github.com/LewisJor/temms/actions/runs/39269571691).
+The polished implementation, [`2e903a31`](https://github.com/LewisJor/temms/commit/2e903a318de24dc29df1ea0db951a025199cd367),
+passed [Webots qualification](https://github.com/LewisJor/temms/actions/runs/39270677739)
+and the [installed-wheel Ubuntu qualification](https://github.com/LewisJor/temms/actions/runs/39270677735),
+including **257 tests without skips**. The earlier implementation at `39dc33d6`
+also passed [its first native run](https://github.com/LewisJor/temms/actions/runs/39269572012).
 The camera run used **Ubuntu 24.04 x86_64, Python 3.12.15, Webots R2025a,
 ONNX Runtime 1.24.1, NumPy 2.4.2 and Pillow 12.1.0**. Mesa llvmpipe supplied software
 rendering under Xvfb. The installed wheel's modules were compared with source bytes.
@@ -54,14 +56,16 @@ available. The external direct-IP probe returned `ENETUNREACH` (101). Results:
 - **20/20 camera inputs** served with verified results; **35/40 model/input pairs** exercised.
 - Simulation time advanced between capture and completion for **all 69 served requests**.
 - **56/69 expected classes correct**, descriptive only; misclassifications remain visible.
-- Native H.264 movie: **960 × 640, 869 frames, 27.808 seconds**; FFmpeg decoded it completely.
+- Native H.264 movie: **960 × 640, 850 frames, 27.200 seconds**; FFmpeg decoded it completely.
 
-Artifact `webots-camera-39269572012-1` contains the movie, overview, twenty camera PNGs,
+Artifact `webots-camera-39270677739-1` contains the movie, overview, twenty camera PNGs,
 full records/references, wheel, environment, renderer and network evidence. GitHub
 retains artifacts for 30 days; a downloaded copy is preserved locally under
-`.demo-assets/webots/ci-39269572012/`, outside the repository. Camera images and the
+`.demo-assets/webots/ci-39270677739/`, outside the repository. Camera images and the
 scene overview were visually inspected. These results identify the tested revision;
-subsequent presentation and verifier refinements require a fresh hosted run.
+the workflow reruns on each push, and its conclusion and commit identify any later
+qualification. The retained video includes readable stage, activation and serving
+labels; the default camera overlay is hidden to prevent it obscuring those labels.
 
 ## Local checks and size
 

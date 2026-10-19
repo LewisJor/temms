@@ -223,6 +223,12 @@ runs the example against an installed wheel with external networking disabled.
 or attribution mismatches. See [progress](docs/progress.md) for the exact environment,
 raw evidence and earlier single-photo results.
 
+For a visual walkthrough, follow the [Webots camera tutorial](examples/webots/README.md).
+It classifies real camera captures of a changing photo exhibit, records the swaps
+as an MP4, and qualifies the seven scenes on Ubuntu 24.04 with external networking
+disabled. The simulator and graphics tools are example dependencies; the library
+remains unchanged.
+
 For fixed-small, fixed-large, blocking-adaptive, and background-adaptive comparisons
 on a pinned 20-image test workload:
 
