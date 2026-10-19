@@ -40,13 +40,15 @@ explicitly rather than claiming ONNX coverage. See
 
 The separate [Ubuntu 24.04 qualification](.github/workflows/ubuntu24.yml) uses an
 installed wheel, CPython 3.12.15 and explicitly pinned inference dependencies. It
-requires the full suite with zero skips and both named native integration cases,
+requires the full suite with zero skips and all three named native integration cases,
 then runs the real seven-scene example inside a verified network namespace. The
 [runbook](examples/live_swap/README.md#ubuntu-2404-qualification-in-github-actions)
-defines acceptance and evidence retention. The [2026-10-15 hosted
-run](https://github.com/LewisJor/temms/actions/runs/38754444278) passed for commit
-`58936d5`. Rerun qualification when code or dependencies change; a hosted pass does
-not establish performance on a physical edge device.
+defines acceptance and evidence retention. The [verification record](docs/progress.md)
+identifies completed runs and their exact revisions. Rerun qualification when code
+or dependencies change; a hosted pass does not establish performance on a physical
+edge device. The separate [Webots camera qualification](.github/workflows/webots.yml)
+checks rendered inputs, live swaps and native movie decoding on the declared Linux
+profile; follow its [tutorial](examples/webots/README.md) to reproduce it.
 
 For distribution changes, check the wheel after the build above in a fresh
 environment outside the source tree:

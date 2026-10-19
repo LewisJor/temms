@@ -1,0 +1,3 @@
+Webots Project File version R2025a
+consoles: Console:All:All
+renderingDevicePerspectives: TEMMS camera rig:camera;0;1;0;0

@@ -126,7 +126,13 @@ def overlay(supervisor, record):
         text = (f"{record['stage'].replace('-', ' ').upper()}\n"
                 f"Battery {record['battery']}% (simulated) | "
                 f"selected: {selected['id'] if selected else 'none'}")
-        supervisor.setLabel(1, text, 0.025, 0.09, 0.045, 0xFFFFFF)
+        supervisor.setLabel(1, text, 0.025, 0.09, 0.065, 0xFFFFFF)
+        supervisor.setLabel(3, "Reconciling selection...", 0.025, 0.20, 0.055, 0x8FE3D2)
+    elif event == "activation":
+        active = record["active"]
+        text = (f"Switch {record['activation'].upper()} | "
+                f"active: {active['id'] if active else 'none'}")
+        supervisor.setLabel(3, text, 0.025, 0.20, 0.055, 0x8FE3D2)
     elif event == "frame":
         serving = record["serving"]
         text = f"Frame {record['request']:02} | {record['outcome']}"
@@ -136,10 +142,12 @@ def overlay(supervisor, record):
                      f"\nExpected: {record['expected']['label']}"
                      f"\nOutput reference: {'PASS' if record['reference_match'] else 'FAIL'}"
                      f" | attribution: {'PASS' if record['identity_match'] else 'FAIL'}")
-        supervisor.setLabel(2, text, 0.025, 0.79, 0.04, 0x8FE3D2)
+        supervisor.setLabel(2, text, 0.025, 0.79, 0.065, 0x8FE3D2)
     elif event == "summary":
         text = "7 / 7 SCENES VERIFIED" if record["complete"] else "INCOMPLETE EVIDENCE"
-        supervisor.setLabel(1, text, 0.025, 0.09, 0.05, 0x8FE3D2)
+        supervisor.setLabel(1, text, 0.025, 0.09, 0.07, 0x8FE3D2)
+        supervisor.setLabel(3, "20 camera inputs | zero integrity mismatches",
+                            0.025, 0.20, 0.055, 0x8FE3D2)
 
 
 def run_header(manifest, data, samples):
@@ -175,9 +183,9 @@ def demonstrate(supervisor, assets, output):
             for name in ("mobilenetv2", "resnet18")]
     camera = supervisor.getDevice("camera")
     camera.enable(STEP)
-    supervisor.setLabel(0, "TEMMS | LIVE CAMERA CLASSIFICATION", 0.025, 0.025, 0.05, 0x8FE3D2)
+    supervisor.setLabel(0, "TEMMS | LIVE CAMERA CLASSIFICATION", 0.025, 0.025, 0.07, 0x8FE3D2)
     supervisor.setLabel(1, "Preparing 20 camera captures and 40 model references...",
-                        0.025, 0.09, 0.04, 0xFFFFFF)
+                        0.025, 0.09, 0.055, 0xFFFFFF)
     samples = prepare_camera(supervisor, camera, assets, output, data, refs, labels)
     selector = BestFeasibleSelector([
         ModelPolicy(refs[0], 10, (Constraint("battery", Operator.GTE, 10),)),
@@ -224,7 +232,7 @@ def record_demo(supervisor, camera, assets, output, manifest, data, samples,
             overlay(supervisor, record)
 
         movie = output / "demo.mp4"
-        supervisor.movieStartRecording(str(movie), 960, 640, 0, 85, 1, False)
+        supervisor.movieStartRecording(str(movie), 960, 640, 0, 30, 1, False)
         try:
             summary = asyncio.run(replay_with_steps(
                 supervisor, runtime, selector, samples, labels, large, emit, capture=capture,

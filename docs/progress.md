@@ -1,133 +1,123 @@
-# TEMMS progress — updated 2026-10-15
+# TEMMS progress — updated 2026-10-19
 
-TEMMS remains an alpha Python library for application-owned local inference.
-The baseline for this iteration is
-[`adf89b4429f72b14d8d9a5aa9744d47b4285228f`](https://github.com/LewisJor/temms/commit/adf89b4429f72b14d8d9a5aa9744d47b4285228f).
-The current work strengthens the practical assurance of the real-model demonstration;
-it does not change the core or adapters.
+TEMMS remains an alpha Python library for application-owned local inference. This
+iteration starts from [`9017ff86`](https://github.com/LewisJor/temms/commit/9017ff86518bc1ae4b2d2ddb1c8e9a9c54e31918)
+and adds one behavior: run the existing live-swap scenario on actual Webots camera
+captures, with a reproducible Linux qualification and a recorded visual tutorial.
+Core and adapters are unchanged.
 
-## Kept improvement: verify every served output
+## Kept improvement: a rendered camera path
 
-The old replay repeatedly classified Chelsea and accepted any finite 1,000-score
-output. Scene transitions could pass even if a runtime returned scores for the
-wrong image. Merely varying the displayed pictures would not close that gap.
+**Hypothesis and acceptance:** the existing numerical checks should also detect
+stale input or wrong-model output when a simulator supplies the image. A passing
+run must capture twenty distinct camera views, witness all seven transitions,
+check every served output and admitted identity, preserve the prepared assets,
+and produce a decodable native movie. Simulator and encoding failures must fail
+the run. A movie or a repeated top prediction alone is insufficient evidence.
 
-**Hypothesis and acceptance:** reusing the existing pinned twenty-image workload
-and checking every returned score against direct execution should expose stale
-inputs and wrong-model results, including substitutions with the same top-1 class.
-Completion requires all seven scenes, checked service of every input and zero output
-or admission-identity mismatches. One bad frame must remain a failure even if later
-frames look correct. This is one behavior-level change at the example boundary.
+The [Webots tutorial](../examples/webots/README.md) uses a stationary camera looking
+at twenty pinned dog photographs on a slightly turning card. Real MobileNetV2 and
+ResNet18 sessions classify the camera pixels. The application supplies simulated
+battery conditions; TEMMS selects and reconciles through the existing runtime.
+This demonstrates classification, swaps, failed replacement, retry, abstention and
+recovery. It does not demonstrate navigation or measured battery drain.
 
-`prepare_inputs` computes forty distinct model/input reference vectors before
-replay; `check_output` compares all scores with explicit tolerances. The terminal
-shows input, expected class, prediction and separate integrity verdicts. JSONL saves
-references and actual scores for independent recomputation. Classifier mistakes are
-reported separately and do not fail the integration check. The runbook includes the
-new preparation step, coverage requirements and interpretation limits.
+Preflight saves the twenty rendered camera images and forty direct ONNX reference
+vectors. Each subsequent capture copies Webots' BGRA buffer before another step,
+checks its RGB digest against preflight, and supplies a freshly preprocessed tensor
+to inference. Every successful output must match the full reference vector and the
+model captured at admission. A separate simulation task continues stepping while
+ONNX work is awaited. Records distinguish simulation time from wall time; this
+paced, software-rendered fixture is not a deadline or edge performance benchmark.
 
-The native integration suite now forces a request to span publication using distinct
-Identity and Negation graphs. The old request must return its original numerical
-result and identity after the new model has already served. No production runtime
-change was needed. Regression tests also cover wrong inputs/models/digests, malformed
-or nonfinite tensors, ambiguous references and permanent failure after one bad frame.
+The simulator, controller, evidence verifier and workflow stay outside the package.
+The existing file-based replay and camera replay share preprocessing, reference
+preparation and the same seven-scene protocol. No backend or public protocol was
+added. Regression tests cover camera-buffer ownership, malformed captures, input
+forwarding on every attempt, capture failure during a replacement or hidden-artifact
+phase, cancellation settlement, early simulator shutdown, movie failures and exit status.
 
-## Hosted qualification of this change
+## Hosted Webots qualification
 
-Published commit [`38e4a374`](https://github.com/LewisJor/temms/commit/38e4a374ecf893168f3945f5a5b81bbf6f45cce0)
+The first implementation, [`39dc33d6`](https://github.com/LewisJor/temms/commit/39dc33d67ef75bd994e1985adda57cb807fb33f1),
+passed [Webots qualification](https://github.com/LewisJor/temms/actions/runs/39269572012)
+and the existing [Ubuntu qualification](https://github.com/LewisJor/temms/actions/runs/39269571691).
+The camera run used **Ubuntu 24.04 x86_64, Python 3.12.15, Webots R2025a,
+ONNX Runtime 1.24.1, NumPy 2.4.2 and Pillow 12.1.0**. Mesa llvmpipe supplied software
+rendering under Xvfb. The installed wheel's modules were compared with source bytes.
+
+The replay ran as UID 1001 in a distinct network namespace with only loopback
+available. The external direct-IP probe returned `ENETUNREACH` (101). Results:
+
+- **Seven scenes passed; 84 attempts:** 69 served, three waiting, 12 abstained.
+- **69 full-score and admission checks:** zero output or identity mismatches.
+- **20/20 camera inputs** served with verified results; **35/40 model/input pairs** exercised.
+- Simulation time advanced between capture and completion for **all 69 served requests**.
+- **56/69 expected classes correct**, descriptive only; misclassifications remain visible.
+- Native H.264 movie: **960 × 640, 869 frames, 27.808 seconds**; FFmpeg decoded it completely.
+
+Artifact `webots-camera-39269572012-1` contains the movie, overview, twenty camera PNGs,
+full records/references, wheel, environment, renderer and network evidence. GitHub
+retains artifacts for 30 days; a downloaded copy is preserved locally under
+`.demo-assets/webots/ci-39269572012/`, outside the repository. Camera images and the
+scene overview were visually inspected. These results identify the tested revision;
+subsequent presentation and verifier refinements require a fresh hosted run.
+
+## Local checks and size
+
+The refined implementation passed **257 tests with zero skips or warnings**, strict
+mypy on ten files, scoped Ruff and the architecture budget on macOS ARM64. The source
+and wheel built with the installed build requirements (`--no-isolation`). Source
+distributions include the Webots world and controller configuration; the wheel
+contains only the library. The strict public-documentation build passed with
+Sphinx 9.1.0, MyST 5.1.0 and Furo 2025.12.19 in a fresh Python 3.13.3 environment.
+Webots itself has not been executed on this development Mac.
+
+Core remains **429 physical lines** across five modules, largest 178; exports 50,
+adapters 229 and the tiny example 37. Required runtime dependencies remain zero.
+The file replay gained a capture callback and extracted shared reference preparation;
+all simulator-specific work lives under `examples/webots` and its qualification job.
+The original 224-test baseline passed before this work. The independent verifier
+accepted the first hosted artifact and rejected **21 deliberately corrupted copies**,
+including wrong admission eligibility, reordered activation, stale camera hashes,
+non-argmax score damage and forged coverage summaries. The original artifact was
+preserved; sixteen focused verifier regressions are part of the 257-test suite.
+
+## Earlier evidence and limits
+
+The previous numerical-integrity change at
+[`38e4a374`](https://github.com/LewisJor/temms/commit/38e4a374ecf893168f3945f5a5b81bbf6f45cce0)
 passed [Ubuntu qualification](https://github.com/LewisJor/temms/actions/runs/38810391287),
 [general CI](https://github.com/LewisJor/temms/actions/runs/38810391312), the
 [core installation check](https://github.com/LewisJor/temms/actions/runs/38810391251)
 and [documentation deployment](https://github.com/LewisJor/temms/actions/runs/38810391376).
-The Ubuntu run recorded **224 tests, zero skipped**, including all three native cases,
-on Ubuntu **24.04.5 x86_64 / Python 3.12.15** with the declared pinned dependencies.
+It ran **224 tests without skips**, including all three native ONNX cases. The file
+replay checked 69 served outputs, 20/20 inputs and 35/40 pairs with no numerical or
+identity mismatch; 59/69 expected labels matched. Its input was the prepared JPEG,
+whereas this tutorial classifies the rendered camera view. Those descriptive counts
+are not a controlled accuracy comparison.
 
-Independent artifact inspection matched all nine installed Python modules to the
-wheel and commit. The direct-IP probe and replay shared a distinct network namespace
-under UID 1001, with only loopback, no routes and `ENETUNREACH` (101). All seven
-scenes passed: **84 attempts, 69 served, three waiting, 12 abstained**. Every served
-score vector and admission identity matched: **zero mismatches, 20/20 inputs and
-35/40 model/input pairs checked**. Expected-class correctness was **59/69**,
-descriptive only. Ordered raw records independently established the scene witnesses.
+The still earlier [single-photo Ubuntu run](https://github.com/LewisJor/temms/actions/runs/38754444278)
+at `58936d5` passed 196 tests and the two then-existing native cases. Its repeated
+Chelsea prediction did not establish varied-input routing correctness. Git history
+retains that implementation; the current tutorial does not use it as acceptance.
 
-The artifact `ubuntu24-qualification-38810391287-1` retains the wheel, environment,
-tests, network probe, pinned manifests, full reference/output vectors and logs for
-30 days on GitHub. A downloaded copy is preserved locally under
-`.demo-assets/live-swap/integrity-20261015/ubuntu24-ci-38810391287/`.
-These are the recorded results for that exact revision, not a promise about later runs.
-
-## Local verification
-
-On macOS ARM64, the current source passed **224 tests, zero skipped**, strict mypy
-(**10 files**) and scoped Ruff under Python 3.11.8. The built wheel passed the same
-**224 tests without skips** in the existing isolated Python 3.12.15 environment.
-Both wheel and source distribution built; a newly created core-only environment
-installed the wheel without dependencies and ran the README's tiny example.
-
-The real replay ran with `--frames 12 --interval 0.5`, ONNX Runtime **1.24.1**,
-NumPy **2.4.2** and Pillow **12.1.0**. A macOS sandbox denied network operations;
-a direct-IP connection failed with `EPERM` before the same sandboxed process started
-the replay. Results:
-
-- **84 attempts:** 69 served, three waiting, 12 abstained; all seven scenes passed.
-- **69 full-score and admission checks:** zero output or identity mismatches.
-- **20/20 inputs** served with verified outputs; **35/40 model/input pairs** exercised.
-- **59/69 expected labels correct**, descriptive only: repeated inputs and this small
-  dog-only subset do not establish model accuracy or comparative benefit.
-
-Raw records, the network probe and build/install evidence are retained locally in
-ignored `.demo-assets/live-swap/integrity-20261015/`, not included in a clone.
-The [Ubuntu workflow](../.github/workflows/ubuntu24.yml) independently checks raw
-vectors, identities, input order, scene witnesses and summary counts; it requires
-all three native cases and rejects skipped tests. Inspect the exact commit and
-conclusion in [qualification runs](https://github.com/LewisJor/temms/actions/workflows/ubuntu24.yml).
-Local Mac results do not substitute for hosted Linux evidence.
-
-The exact workflow validator accepted the local replay and rejected nine in-memory
-corruptions of scores, identities, hashes, activation order and scene witnesses.
-The original records were preserved. Workflow syntax and the Sphinx documentation
-build with warnings treated as errors also passed.
-
-Core remains **429 physical lines** across five modules, largest 178; exports 50,
-adapters 229 and the tiny example 37. Required runtime dependencies remain zero.
-Replay support grew from **363 to 477 lines** for reference preparation, validation
-and reporting. No backend, protocol, lifecycle store or platform component was added.
-
-## Historical hosted evidence and limits
-
-The [Ubuntu qualification at `58936d5`](https://github.com/LewisJor/temms/actions/runs/38754444278)
-passed on 2026-10-15 with **196 tests, zero skips**, including the two then-existing
-native cases. It recorded Ubuntu **24.04.5 LTS x86_64**, CPython **3.12.15**, ONNX
-Runtime **1.24.1**, NumPy **2.4.2**, Pillow **12.1.0** and ONNX **1.21.0**. The
-installed wheel completed seven scenes in a non-root network namespace with only
-loopback, no routes and a failed direct-IP probe (`ENETUNREACH`). Its 84 attempts
-produced 69 predictions, three waits and 12 abstentions. This was the **single-photo
-replay**, before the current numerical checks and input-coverage requirements.
-
-Its artifact `ubuntu24-qualification-38754444278-1` retains environment details,
-wheel/module hashes, tests, network evidence and raw records for 30 days on GitHub;
-a local copy is preserved under `.demo-assets/live-swap/ubuntu24-ci-38754444278/`.
-[General CI](https://github.com/LewisJor/temms/actions/runs/38754444328) and the
-[installed core check](https://github.com/LewisJor/temms/actions/runs/38754443960)
-also passed. The subsequent [documentation deployment](https://github.com/LewisJor/temms/actions/runs/38783174527)
-published the maintained Markdown through Sphinx at the
-[live site](https://lewisjor.github.io/temms/). Build tools stay separate from core.
-
-Direct references share preprocessing and ONNX Runtime with serving, so agreement
-checks integration consistency rather than independently validating either. Reference
-setup warms the process; the paced replay is not a performance benchmark. The
+Direct references share preprocessing and ONNX Runtime with serving; agreement
+checks integration consistency rather than independently validating either component.
+The same twenty photographs have already appeared in the terminal replay and
+comparison. They are not a fresh representative accuracy evaluation. The
 [comparison results](../examples/live_swap/COMPARISON.md), wrapper-overhead findings
-and rejected CPU-arena experiment remain dated historical measurements; they were
-not rerun for this change. Physical-device latency, memory, energy, quality and
-endurance remain unqualified. See [release/support criteria](../CONTRIBUTING.md#release-and-support-criteria).
+and rejected CPU-arena experiment remain dated measurements and were not rerun here.
+Physical-device latency, memory, energy and endurance remain unqualified. See the
+[release/support criteria](../CONTRIBUTING.md#release-and-support-criteria).
 
-**Exactly one next action:** perform the owner's unaided clean-clone first-use trial
-using [README.md](../README.md) and the [demo runbook](../examples/live_swap/README.md),
-recording the commit, environment and any friction.
+**Exactly one next action:** perform the owner's unaided clean-clone trial using
+[README.md](../README.md) and the [Webots tutorial](../examples/webots/README.md),
+recording the revision, environment and any friction.
 
-Read `TEMMS.reconcile` in `src/temms/engine.py`, `OnnxRuntime.infer` in
-`src/temms/adapters/onnx.py`, and `check_output` in `examples/live_swap/run.py`.
-The hardest invariant: activation changes future requests, but an admitted request
-must finish with its captured model's output and identity. Exercise without AI:
-extend the controlled in-flight test so the old native request fails after the new
-model publishes, and assert that the new model still serves afterward.
+Read `camera_image` in `examples/webots/controllers/temms_camera/temms_camera.py`,
+`replay` in `examples/live_swap/run.py`, and `OnnxRuntime.infer` in
+`src/temms/adapters/onnx.py`. The hardest invariant remains that a request finishes
+with its captured model's output and identity even after another model publishes.
+Exercise without AI: extend the controlled in-flight test so the old native request
+fails after publication, and assert that the new model still serves afterward.

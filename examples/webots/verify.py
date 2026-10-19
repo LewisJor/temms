@@ -67,26 +67,62 @@ def verify_references(header, inputs):
         require(image in [item["image"] for item in inputs], "unknown reference input")
         key = (model["id"], image["name"])
         require(key not in lookup, "duplicate reference pair")
-        lookup[key] = scores(record["scores"])
+        vector = scores(record["scores"])
+        require(not any(np.allclose(vector, other, rtol=1e-5, atol=1e-6)
+                        for other in lookup.values()), "indistinguishable reference vectors")
+        lookup[key] = vector
     require(len(lookup) == 40, "missing reference pairs")
     return models, lookup
 
 
+def eligible(model, battery):
+    return model is not None and battery >= {"mobilenetv2": 10, "resnet18": 40}[model["id"]]
+
+
+def verify_admission(frame, previous, active, activation, observed):
+    require(frame["active"] == (active if observed else previous), "active state drift")
+    require(frame["activation"] == (activation if observed else "pending"),
+            "activation status differs from event order")
+    if frame["selected"] is None:
+        require(frame["outcome"] == "abstained" and frame["serving"] is None,
+                "inference admitted without a feasible model")
+        return False
+    if frame["outcome"] == "waiting":
+        require(frame["serving"] is None and not eligible(frame["active"], frame["battery"]),
+                "waiting despite a feasible active model")
+        return False
+    require(frame["outcome"] == "ok", "abstention despite a selected model")
+    admission = frame["activation_at_admission"]
+    require(admission in ("pending", activation) and (admission == "pending" or observed),
+            "admission preceded its activation evidence")
+    require(frame["admitted"] == (previous if admission == "pending" else active),
+            "admitted identity differs from activation state")
+    require(eligible(frame["admitted"], frame["battery"]), "infeasible model admitted")
+    return observed and admission == activation and frame["serving"] == active
+
+
 def verify_scene(records, previous, model, activation):
+    require(records[0]["event"] == "stage" and records[0]["active"] == previous,
+            "scene did not begin with the previous active model")
     events = [record for record in records if record["event"] == "activation"]
     require(len(events) == 1 and events[0]["activation"] == activation,
             "missing activation evidence")
     active = previous if activation in ("failed", "unchanged") else model
     require(events[0]["active"] == active, "wrong published model")
+    if activation == "failed":
+        require(previous is not None and model != previous and bool(events[0].get("error")),
+                "missing failed replacement evidence")
+    else:
+        require(events[0]["decision_selected"] == model, "activation decision drift")
     frames = [record for record in records if record["event"] == "frame"]
     require(len(frames) == 12, "expected twelve attempts in each scene")
-    if model is None:
-        require(all(frame["outcome"] == "abstained" and frame["serving"] is None
-                    for frame in frames), "inference admitted without a feasible model")
-    else:
-        require(any(frame["outcome"] == "ok" and frame["serving"] == active
-                    and frame["activation_at_admission"] == activation for frame in frames),
-                "scene has no post-activation serving witness")
+    observed, witness = False, False
+    for record in records[1:]:
+        if record["event"] == "activation":
+            observed = True
+        elif record["event"] == "frame":
+            witness |= verify_admission(record, previous, active, activation, observed)
+    require(model is None or witness, "scene has no post-activation serving witness")
     return active
 
 
@@ -116,8 +152,8 @@ def verify_frames(frames, inputs, models, references):
         require(frame["prediction"]["index"] == int(vector.argmax()),
                 "prediction differs from scores")
         correct = int(vector.argmax()) == item["expected"]["index"]
-        require(frame["reference_match"] and frame["identity_match"]
-                and frame["correct"] == correct,
+        require(frame["reference_match"] is True and frame["identity_match"] is True
+                and frame["correct"] is correct,
                 "reported integrity differs from raw evidence")
         counts["served"] += 1
         counts["correct"] += correct
@@ -131,20 +167,21 @@ def verify_frames(frames, inputs, models, references):
 
 def verify(output):
     records = [json.loads(line) for line in (output / "events.jsonl").read_text().splitlines()]
+    require(len(records) == 100, "expected one header, seven complete scenes and one summary")
     header, summary = records[0], records[-1]
     require(header["event"] == "run" and header["fixture"] == "webots-camera", "wrong run header")
-    require(summary["event"] == "summary" and summary["complete"], "incomplete run")
+    require(summary["event"] == "summary" and summary["complete"] is True, "incomplete run")
     require(header["score_tolerance"] == {"rtol": 1e-5, "atol": 1e-6}, "changed score tolerance")
     inputs = verify_inputs(output, header)
     models, references = verify_references(header, inputs)
-    require([r["stage"] for r in records if r["event"] == "stage"] == [s[0] for s in STAGES],
-            "scene order drift")
     active = None
-    for stage, battery, model_id, activation in STAGES:
-        scene = [r for r in records if r.get("stage") == stage]
+    for index, (stage, battery, model_id, activation) in enumerate(STAGES):
+        scene = records[1 + index * 14:1 + (index + 1) * 14]
         model = models.get(model_id)
-        require(all(r["battery"] == battery and r["simulated"] and r["selected"] == model
-                    for r in scene), "changed policy scenario")
+        require(all(r["event"] in ("stage", "activation", "frame") and r["stage"] == stage
+                    for r in scene), "unknown or reordered scene event")
+        require(all(r["battery"] == battery and r["simulated"] is True
+                    and r["selected"] == model for r in scene), "changed policy scenario")
         active = verify_scene(scene, active, model, activation)
     frames = [r for r in records if r["event"] == "frame"]
     counts, pairs, advancing = verify_frames(frames, inputs, models, references)
@@ -153,6 +190,11 @@ def verify(output):
                                      "identity_mismatches": 0}, "summary integrity differs")
     require(summary["scenes"] == dict.fromkeys((s[0] for s in STAGES), True),
             "scene verdicts differ")
+    require(summary["missing"] == [] and summary["inputs"] == {
+        "total": 20, "checked": 20, "missing": [],
+    }, "summary input coverage differs")
+    require(summary["model_input_pairs"] == {"total": 40, "checked": pairs},
+            "summary model/input coverage differs")
     return {"verified": True, "scenes": 7, "camera_inputs": 20, "references": 40,
             "model_input_pairs": pairs, "requests": counts,
             "served_requests_with_simulation_progress": advancing}

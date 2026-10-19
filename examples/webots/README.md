@@ -7,8 +7,8 @@ signal drives seven stages: startup, two switches, a failed replacement, retry,
 abstention and recovery. The world keeps stepping while inference runs.
 
 The target environment is **Ubuntu 24.04 x86_64, Webots R2025a and Python 3.12**.
-Native qualification is pending; check the [verification record](../../docs/progress.md)
-for a completed run and its exact revision. The development Mac has not run this
+The first hosted run passed; check the [verification record](../../docs/progress.md)
+for its evidence and exact revision. The development Mac has not run this
 Webots demo. The existing [terminal replay](../live_swap/README.md) remains available
 without installing a simulator. Webots is an example dependency; TEMMS core is unchanged.
 
@@ -128,8 +128,8 @@ pass the extracted `run` directory to `verify.py` to inspect the saved result lo
 The artifact also contains environment, renderer, network and video-decoding logs;
 GitHub retains it for 30 days. Check the job conclusion and commit together: an uploaded artifact
 from an incomplete or failed run is diagnostic evidence, not a passing qualification.
-See [progress](../../docs/progress.md) for actual hosted results; no pass is claimed here
-until native execution and validation have completed.
+See [progress](../../docs/progress.md) for actual hosted results and the exact tested
+revision; a previous pass does not qualify subsequent changes.
 
 ## Troubleshooting
 
