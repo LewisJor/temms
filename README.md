@@ -7,6 +7,7 @@ best feasible model under changing operating conditions.
 
 [Documentation](https://lewisjor.github.io/temms/) ·
 [Real-model demo](examples/live_swap/README.md) ·
+[Visual Webots demo](examples/webots/README.md) ·
 [Verified runs](docs/progress.md)
 
 The runtime owns model access, actual state, activation, and inference. The

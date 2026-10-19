@@ -1,0 +1,218 @@
+name: Webots camera qualification
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: webots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  camera:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONPATH: ""
+      PYTHONHOME: ""
+      LIBGL_ALWAYS_SOFTWARE: "true"
+      WEBOTS_DISABLE_SAVE_SCREEN_PERSPECTIVE_ON_CLOSE: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.15"
+          architecture: x64
+      - name: Create the evidence directory and clean Python environment
+        run: |
+          mkdir "$RUNNER_TEMP/temms-webots-evidence"
+          echo "EVIDENCE=$RUNNER_TEMP/temms-webots-evidence" >> "$GITHUB_ENV"
+          echo "TEMMS_ASSETS=$RUNNER_TEMP/temms-webots-assets" >> "$GITHUB_ENV"
+          echo "TEMMS_WEBOTS_OUTPUT=$RUNNER_TEMP/temms-webots-evidence/run" >> "$GITHUB_ENV"
+          echo "TEMMS_WEBOTS_QUIT=1" >> "$GITHUB_ENV"
+          python -m venv "$RUNNER_TEMP/temms-webots-env"
+          echo "$RUNNER_TEMP/temms-webots-env/bin" >> "$GITHUB_PATH"
+      - name: Install the pinned simulator and software graphics tools
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/cyberbotics/webots/releases/download/R2025a/webots_2025a_amd64.deb \
+            --output "$RUNNER_TEMP/webots_2025a_amd64.deb"
+          echo "6253d58c9b625a83ed7b62cd85a640fd0542d441c48d633a60932208b40b0657  $RUNNER_TEMP/webots_2025a_amd64.deb" \
+            | sha256sum --check | tee "$EVIDENCE/webots-checksum.log"
+          sudo apt-get update
+          sudo apt-get install --yes "$RUNNER_TEMP/webots_2025a_amd64.deb" xvfb xauth mesa-utils ffmpeg
+          dpkg-query -W webots xvfb libgl1-mesa-dri ffmpeg > "$EVIDENCE/system-packages.txt"
+          xvfb-run --auto-servernum glxinfo -B > "$EVIDENCE/renderer.txt" 2>&1
+          grep -Ei 'llvmpipe|softpipe' "$EVIDENCE/renderer.txt"
+          timeout 20s xvfb-run --auto-servernum webots --version > "$EVIDENCE/webots-version.txt" 2>&1
+          lscpu > "$EVIDENCE/cpu.txt"
+      - name: Build and install the runtime profile
+        run: |
+          python -m pip install build 'setuptools>=77.0.3' wheel
+          python -m build --no-isolation --wheel --outdir "$EVIDENCE/wheel" 2>&1 | tee "$EVIDENCE/build.log"
+          wheels=("$EVIDENCE"/wheel/*.whl)
+          test "${#wheels[@]}" -eq 1
+          python -m pip install "${wheels[0]}[onnx,demo]" \
+            numpy==2.4.2 onnxruntime==1.24.1 Pillow==12.1.0
+          python -m pip check
+          python -m pip freeze --all > "$EVIDENCE/requirements.txt"
+      - name: Verify installed-package and host provenance
+        run: |
+          python - <<'PY'
+          import hashlib
+          import importlib
+          import importlib.metadata
+          import json
+          import os
+          import platform
+          import sys
+          import sysconfig
+          from pathlib import Path
+
+          release = platform.freedesktop_os_release()
+          assert release['ID'] == 'ubuntu' and release['VERSION_ID'] == '24.04', release
+          assert platform.machine() == 'x86_64'
+          assert platform.python_version() == '3.12.15'
+          expected = {'numpy': '2.4.2', 'onnxruntime': '1.24.1', 'Pillow': '12.1.0'}
+          assert {name: importlib.metadata.version(name) for name in expected} == expected
+          site = Path(sysconfig.get_path('purelib')).resolve()
+          installed = {}
+          for source in Path('src/temms').rglob('*.py'):
+              parts = list(source.relative_to('src').with_suffix('').parts)
+              name = '.'.join(parts[:-1] if parts[-1] == '__init__' else parts)
+              path = Path(importlib.import_module(name).__file__).resolve()
+              assert path.is_relative_to(site), path
+              assert path.read_bytes() == source.read_bytes(), path
+              installed[name] = {
+                  'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+              }
+          evidence = Path(os.environ['EVIDENCE'])
+          details = {
+              'os': release, 'platform': platform.platform(), 'python': sys.version,
+              'executable': sys.executable, 'installed': installed, 'profile': expected,
+              'workflow': {key: os.environ.get(key) for key in (
+                  'GITHUB_SHA', 'GITHUB_WORKFLOW_REF', 'GITHUB_WORKFLOW_SHA',
+                  'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'ImageOS', 'ImageVersion')},
+              'wheel_sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                               for p in (evidence / 'wheel').glob('*.whl')},
+          }
+          (evidence / 'environment.json').write_text(json.dumps(details, indent=2) + '\n')
+          PY
+      - name: Prepare verified models and photograph inputs online
+        run: |
+          python examples/live_swap/assets.py --assets "$TEMMS_ASSETS" 2>&1 | tee "$EVIDENCE/assets-preparation.log"
+          python examples/live_swap/workload.py --assets "$TEMMS_ASSETS" 2>&1 | tee "$EVIDENCE/workload-preparation.log"
+          cp examples/live_swap/assets.json "$EVIDENCE/assets.json"
+          cp examples/live_swap/workload.json "$EVIDENCE/workload.json"
+      - name: Render the camera demo without external networking
+        run: |
+          timeout --signal=TERM --kill-after=10s 240s \
+            sudo -n unshare --net -- "$(command -v python)" - \
+            "$(id -u)" "$(id -g)" "$PWD" "$TEMMS_ASSETS" "$EVIDENCE" \
+            "$TEMMS_WEBOTS_OUTPUT" "$(command -v webots)" "$(command -v ip)" \
+            "$(readlink /proc/self/ns/net)" <<'PY' 2>&1 | tee "$EVIDENCE/simulation.log"
+          import errno
+          import json
+          import os
+          import pwd
+          import socket
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          uid, gid, workspace, assets, evidence, output, webots, ip, host_namespace = sys.argv[1:]
+          # Webots and its controller communicate locally; only loopback is enabled.
+          subprocess.run([ip, 'link', 'set', 'dev', 'lo', 'up'], check=True)
+          os.setgroups([])
+          os.setgid(int(gid))
+          os.setuid(int(uid))
+          loopback = json.loads(subprocess.check_output([ip, '-json', 'link', 'show', 'dev', 'lo']))[0]
+          probe = {
+              'host_namespace': host_namespace, 'namespace': os.readlink('/proc/self/ns/net'),
+              'interfaces': socket.if_nameindex(), 'routes': Path('/proc/net/route').read_text(),
+              'uid': os.getuid(), 'loopback_up': 'UP' in loopback['flags'],
+          }
+          with socket.socket() as connection:
+              connection.settimeout(2)
+              try:
+                  connection.connect(('192.0.2.1', 443))
+              except OSError as error:
+                  probe['connect_errno'] = error.errno
+              else:
+                  probe['connect_errno'] = None
+          Path(evidence, 'network.json').write_text(json.dumps(probe, indent=2) + '\n')
+          assert probe['namespace'] != host_namespace and probe['uid'] == int(uid) != 0, probe
+          assert probe['loopback_up'] and all(name == 'lo' for _, name in probe['interfaces']), probe
+          assert probe['connect_errno'] == errno.ENETUNREACH, probe
+          user = pwd.getpwuid(int(uid))
+          os.environ.update({
+              'PATH': str(Path(sys.executable).parent) + os.pathsep + os.defpath,
+              'HOME': user.pw_dir, 'USER': user.pw_name, 'LOGNAME': user.pw_name,
+              'PYTHONPATH': '', 'PYTHONHOME': '', 'LIBGL_ALWAYS_SOFTWARE': 'true',
+              'WEBOTS_DISABLE_SAVE_SCREEN_PERSPECTIVE_ON_CLOSE': 'true',
+              'TEMMS_ASSETS': assets, 'TEMMS_WEBOTS_OUTPUT': output, 'TEMMS_WEBOTS_QUIT': '1',
+          })
+          os.chdir(workspace)
+          print('Only local loopback is available; starting Webots as the original user.', flush=True)
+          os.execv('/usr/bin/xvfb-run', [
+              'xvfb-run', '--auto-servernum', '--server-args=-screen 0 1280x800x24',
+              webots, '--batch', '--mode=fast', '--stdout', '--stderr',
+              str(Path(workspace, 'examples/webots/worlds/classification.wbt')),
+          ])
+          PY
+      - name: Verify rendered inference evidence and native movie
+        run: |
+          python examples/webots/verify.py "$TEMMS_WEBOTS_OUTPUT" 2>&1 | tee "$EVIDENCE/verification.log"
+          ffprobe -v error -select_streams v:0 \
+            -show_entries stream=codec_name,width,height,nb_frames:format=duration \
+            -of json "$TEMMS_WEBOTS_OUTPUT/demo.mp4" > "$EVIDENCE/video.json"
+          python - <<'PY'
+          import json
+          import math
+          import os
+          from pathlib import Path
+          video = json.loads(Path(os.environ['EVIDENCE'], 'video.json').read_text())
+          duration = float(video['format']['duration'])
+          assert math.isfinite(duration) and duration > 0, video
+          assert len(video['streams']) == 1, video
+          assert video['streams'][0]['width'] > 0 and video['streams'][0]['height'] > 0, video
+          PY
+          ffmpeg -v error -xerror -i "$TEMMS_WEBOTS_OUTPUT/demo.mp4" \
+            -map 0:v:0 -f null - 2>&1 | tee "$EVIDENCE/video-decode.log"
+      - name: Summarize qualification
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          status = os.environ['RESULT']
+          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as summary:
+              summary.write(f'Webots camera qualification: **{status}**.\n\n'
+                            'Profile: Ubuntu 24.04 x86_64, Webots R2025a, Python 3.12.15, '
+                            'ONNX Runtime 1.24.1, NumPy 2.4.2, Pillow 12.1.0; software graphics.\n\n')
+              if status == 'success':
+                  summary.write('Rendered-camera inference verification and native MP4 decoding passed '
+                                'with external networking unavailable.\n\n')
+              summary.write('The artifact contains records, camera images, the overview, video, '
+                            'environment details and failure diagnostics. This photograph-card fixture '
+                            'does not qualify robot navigation or deployment performance.\n')
+          PY
+      - name: Retain video and qualification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: webots-camera-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/temms-webots-evidence/
+          if-no-files-found: error
+          retention-days: 30

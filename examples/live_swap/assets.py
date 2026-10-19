@@ -79,11 +79,18 @@ def prepare(directory: Path, manifest: dict | None = None) -> dict:
 
 def preprocess(path: Path) -> dict:
     """Produce the shared ImageNet feed using the pinned ONNX Zoo preprocessing."""
-    import numpy as np
     from PIL import Image
 
     with Image.open(path) as source:
-        image = source.convert("RGB")
+        return preprocess_image(source)
+
+
+def preprocess_image(source) -> dict:
+    """Apply the same preprocessing to a file image or a captured camera image."""
+    import numpy as np
+    from PIL import Image
+
+    image = source.convert("RGB")
     width, height = image.size
     ratio = 256 / min(width, height)
     size = (round(width * ratio), 256) if width > height else (256, round(height * ratio))
