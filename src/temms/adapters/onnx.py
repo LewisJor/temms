@@ -55,7 +55,7 @@ class OnnxRuntime:
     ) -> None:
         self._models = {slot: tuple(items) for slot, items in models.items()}
         self._resources = dict(resources or {})
-        self._session_factory = session_factory or _create_session
+        self._session_factory = _create_session if session_factory is None else session_factory
         self._active: dict[str, _LoadedModel] = {}
         self._locks: dict[str, threading.RLock] = {}
         self._validate_inventory()

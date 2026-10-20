@@ -18,6 +18,40 @@ class FakeSession:
 
 
 @pytest.mark.asyncio
+async def test_falsey_session_factory_is_used_for_activation_and_inference(tmp_path, monkeypatch):
+    path = tmp_path / "injected.onnx"
+    path.write_bytes(b"injected session fixture")
+    model = ModelRef("injected", "test:injected")
+    session = FakeSession()
+    calls = []
+
+    class Factory:
+        def __bool__(self):
+            return False
+
+        def __call__(self, model_path, providers):
+            calls.append((model_path, providers))
+            return session
+
+    def unexpected_default(*args):
+        pytest.fail("an explicitly supplied callable must not use the default session factory")
+
+    monkeypatch.setattr("temms.adapters.onnx._create_session", unexpected_default)
+    runtime = OnnxRuntime(
+        models={"vision": [OnnxModel(model, path, ("CPUExecutionProvider",), {"x": "warm"})]},
+        session_factory=Factory(),
+    )
+
+    activation = await runtime.activate("vision", model)
+    result = await runtime.infer("vision", {"x": "request"})
+
+    assert activation.active_model == result.model == model
+    assert result.output == ("request",)
+    assert calls == [(str(path), ("CPUExecutionProvider",))]
+    assert session.calls == [{"x": "warm"}, {"x": "request"}]
+
+
+@pytest.mark.asyncio
 async def test_onnx_runtime_loads_warms_activates_and_infers(tmp_path: Path) -> None:
     path = tmp_path / "model.onnx"
     path.write_bytes(b"fixture")
