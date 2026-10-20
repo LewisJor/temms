@@ -848,7 +848,7 @@ The last column is the process/model's predeclared median decision threshold:
 | 4 | ResNet18 | −518.740 / −653.202 / 410.966 | 34.645 / 57.889 / 1119.622 | 49.587 / −27.005 / 1242.718 | 399.131 |
 | 4 | MobileNetV2 | −112.092 / −12.769 / 365.024 | 16.838 / 5.240 / 291.543 | −5.076 / 8.997 / 308.834 | 107.207 |
 
-Threaded-minus-native changes sign between processes. The adapter and TEMMS
+Threaded-minus-native changes sign between processes. The median adapter and TEMMS
 differences are below the decision threshold in every process; negative values
 are retained rather than interpreted as free execution. Balanced order does not
 remove variability: native position medians span 80–452 µs within MobileNet

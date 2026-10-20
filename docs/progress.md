@@ -47,8 +47,8 @@ maintained `src tests examples` paths, and strict mypy passes all ten configured
 files. The strict Sphinx documentation build passes. Source/wheel builds succeed
 with the installed backend. A clean core-only
 environment imports every library module and runs the maintained example from the
-installed wheel without optional ML dependencies. Final hosted qualification of
-the storage fix is pending; earlier green runs do not substitute for it.
+installed wheel without optional ML dependencies. The storage fix also passed
+the hosted qualification at `f28365ad`, as recorded below.
 
 Core remains **429 physical lines** across five modules, largest 178; exports 50,
 adapters **223** and the tiny example 37. Required runtime dependencies remain zero.
@@ -96,13 +96,31 @@ seven scenes. Downloaded records were independently reverified and remain under
 `.demo-assets/edge/ci-39496958193/` and `.demo-assets/edge/cpu-39496958438/`.
 The intervening failed runs remain part of the record.
 
-All five push workflows also passed at `d0e2f324`, before the later storage fix:
-[CI](https://github.com/LewisJor/temms/actions/runs/39500758344),
-[installed core](https://github.com/LewisJor/temms/actions/runs/39500758338),
-[documentation](https://github.com/LewisJor/temms/actions/runs/39500758367),
-[native matrix](https://github.com/LewisJor/temms/actions/runs/39500758332) and
-[Ubuntu replay](https://github.com/LewisJor/temms/actions/runs/39500758331).
-Each revision's measurements stand separately.
+## Qualification after the storage fix
+
+All five push workflows passed at `f28365ad`:
+[CI](https://github.com/LewisJor/temms/actions/runs/39502793613),
+[installed core](https://github.com/LewisJor/temms/actions/runs/39502793629),
+[documentation](https://github.com/LewisJor/temms/actions/runs/39502793600),
+[native matrix](https://github.com/LewisJor/temms/actions/runs/39502793672) and
+[Ubuntu replay](https://github.com/LewisJor/temms/actions/runs/39502793645).
+Both architectures ran **314 installed-wheel tests with zero skips**, including
+all three native ONNX cases. Four fresh constrained workers again checked **452
+served outputs**, all forty model/image pairs per worker, with zero OOM events.
+
+| Architecture | Served across two workers | Peak cgroup memory, workers 1 / 2 |
+| --- | ---: | ---: |
+| x86_64 | 226 | 315.84 / 332.61 MiB |
+| ARM64 | 226 | 410.04 / 324.99 MiB |
+
+The downloaded records passed the maintained verifier again. Source-module hashes,
+test XML and container restrictions match the tested revision. The separate replay
+again checked 69 served outputs across twenty inputs and all seven scenes, with
+zero output/identity mismatches. Evidence remains under
+`.demo-assets/edge/ci-39502793672/` and `.demo-assets/edge/cpu-39502793645/`.
+These functional runs are not a controlled before/after memory comparison; each
+revision's measurements stand separately. Later documentation-only status updates
+do not change the qualified implementation.
 
 ## Limits and next action
 
