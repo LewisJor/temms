@@ -170,6 +170,48 @@ async def test_cancelled_inference_keeps_worker_session_alive_until_return(sessi
     assert sessions.references[1]() is not None
 
 
+@pytest.mark.asyncio
+async def test_cancelled_inference_snapshots_mapping_but_borrows_mutable_values(
+    sessions, monkeypatch,
+):
+    runtime, model = sessions.runtime, sessions.models[0]
+    await runtime.activate("vision", model)
+    entered, release, block = _block(sessions)
+    borrowed = [7]
+    feed = {"x": borrowed}
+    observed = []
+    session = sessions.references[0]()
+    original_run = session.run
+
+    def run(names, received):
+        if isinstance(received["x"], list):
+            block()
+            observed.append((received is feed, received["x"] is borrowed, tuple(received["x"])))
+        return original_run(names, received)
+
+    monkeypatch.setattr(session, "run", run)
+    pending = asyncio.create_task(runtime.infer("vision", feed))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(pending, 2)
+        assert not release.is_set() and observed == []
+        # Deliberate misuse demonstrates why cancellation does not permit buffer reuse.
+        feed["x"] = [123]
+        borrowed[0] = 99
+    finally:
+        release.set()
+        pending.cancel()
+        await asyncio.wait_for(asyncio.gather(pending, return_exceptions=True), 2)
+    await _collect()
+    assert pending.cancelled()
+    assert observed == [(False, True, (99,))]
+    assert (await runtime.state("vision")).active_model == model
+    result = await runtime.infer("vision", {"x": "progress"})
+    assert result.model == model and result.output == ("old:progress",)
+
+
 async def _capture_failure(runtime, model):
     try:
         await runtime.activate("vision", model)

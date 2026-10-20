@@ -94,6 +94,13 @@ coroutine does not terminate native work. The cancelled reconciliation releases 
 slot lock, allowing another reconciliation before that worker finishes. Cancellation
 after publication does not roll back a model already made active.
 
+ONNX inference takes a shallow snapshot of the input mapping; its values and tensor
+buffers remain borrowed from the caller. Do not mutate or reuse that storage until
+the native inference finishes, including after the awaiting caller is cancelled.
+Cancellation does not signal that the worker has stopped reading its inputs. Use
+request-owned buffers when worker completion cannot be observed; the worker retains
+references to those values while it runs.
+
 The ONNX adapter keeps no retired-session cache. Admitted inference and unfinished
 workers retain their captured sessions until they finish. Successful result objects
 do not themselves retain the Python session wrapper in the tested adapter path;
