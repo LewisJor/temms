@@ -22,6 +22,7 @@ include_patterns = [
     "docs/progress.md",
     "examples/live_swap/README.md",
     "examples/live_swap/COMPARISON.md",
+    "examples/edge/README.md",
     "examples/webots/README.md",
 ]
 myst_heading_anchors = 6

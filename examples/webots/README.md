@@ -1,5 +1,8 @@
 # Watch model swaps through a Webots camera
 
+This is an optional visual example. For headless validation under enforced CPU,
+memory and network limits, use the [edge qualification](../edge/README.md).
+
 This demo places twenty pinned dog photographs on a slightly turning card in a
 Webots scene. A stationary 256 × 256 camera captures the exhibit, and real
 MobileNetV2 and ResNet18 sessions classify those camera pixels. A simulated battery
@@ -116,8 +119,9 @@ not establish deadlines or performance on a physical device.
 ## Run or download it in GitHub Actions
 
 Open the repository's **Actions** tab and select **Webots camera qualification**. Use
-**Run workflow** when available, or inspect a completed run for the revision you
-want to evaluate. The [workflow](../../.github/workflows/webots.yml) targets Ubuntu
+**Run workflow**, or inspect a completed run for the revision you want to evaluate.
+This optional workflow is dispatched manually; it does not run on every push.
+The [workflow](../../.github/workflows/webots.yml) targets Ubuntu
 24.04 with the pinned Debian package, a virtual display (Xvfb) and software OpenGL.
 It is configured to prepare the assets, run the simulator in a network namespace
 with external networking denied, validate the records and upload the media and

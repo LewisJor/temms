@@ -1,0 +1,11 @@
+# Only the installed distribution and qualification code belong in this build context.
+**
+!dist/
+!dist/temms-0.2.0a1-py3-none-any.whl
+!examples/
+!examples/live_swap/
+!examples/live_swap/*.py
+!examples/live_swap/*.json
+!examples/edge/
+!examples/edge/*.py
+!examples/edge/Dockerfile

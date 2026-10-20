@@ -1,0 +1,154 @@
+name: Constrained native Linux qualification
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edge-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            architecture: x64
+            machine: x86_64
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+            machine: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONPATH: ""
+      PYTHONHOME: ""
+      EXPECTED_MACHINE: ${{ matrix.machine }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.15"
+          architecture: ${{ matrix.architecture }}
+      - name: Create a clean installed-package environment
+        run: |
+          mkdir "$RUNNER_TEMP/temms-edge-evidence"
+          echo "EVIDENCE=$RUNNER_TEMP/temms-edge-evidence" >> "$GITHUB_ENV"
+          echo "ASSETS=$RUNNER_TEMP/temms-edge-assets" >> "$GITHUB_ENV"
+          python -m venv "$RUNNER_TEMP/temms-edge-env"
+          echo "$RUNNER_TEMP/temms-edge-env/bin" >> "$GITHUB_PATH"
+      - name: Build and install the wheel with native test dependencies
+        run: |
+          python -m pip install build 'setuptools>=77.0.3' wheel
+          python -m build --no-isolation --wheel --outdir dist 2>&1 | tee "$EVIDENCE/build.log"
+          python -m pip install 'dist/temms-0.2.0a1-py3-none-any.whl[dev,onnx,demo]' \
+            numpy==2.4.2 onnxruntime==1.24.1 Pillow==12.1.0 onnx==1.21.0
+          python -m pip check
+          python -m pip freeze --all > "$EVIDENCE/test-requirements.txt"
+      - name: Verify native host and installed-module provenance
+        run: |
+          lscpu > "$EVIDENCE/cpu.txt"
+          python - <<'PY'
+          import hashlib
+          import importlib
+          import json
+          import os
+          import platform
+          import sys
+          import sysconfig
+          from pathlib import Path
+
+          release = platform.freedesktop_os_release()
+          assert release['ID'] == 'ubuntu' and release['VERSION_ID'] == '24.04', release
+          assert platform.machine() == os.environ['EXPECTED_MACHINE']
+          assert platform.python_version() == '3.12.15'
+          site = Path(sysconfig.get_path('purelib')).resolve()
+          installed = {}
+          for source in Path('src/temms').rglob('*.py'):
+              parts = list(source.relative_to('src').with_suffix('').parts)
+              name = '.'.join(parts[:-1] if parts[-1] == '__init__' else parts)
+              path = Path(importlib.import_module(name).__file__).resolve()
+              assert path.is_relative_to(site) and path.read_bytes() == source.read_bytes(), path
+              installed[name] = {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+          wheel = Path('dist/temms-0.2.0a1-py3-none-any.whl')
+          details = {
+              'os': release, 'machine': platform.machine(), 'python': sys.version,
+              'executable': sys.executable, 'installed': installed,
+              'wheel_sha256': hashlib.sha256(wheel.read_bytes()).hexdigest(),
+              'workflow': {key: os.environ.get(key) for key in (
+                  'GITHUB_SHA', 'GITHUB_WORKFLOW_REF', 'GITHUB_WORKFLOW_SHA',
+                  'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'ImageOS', 'ImageVersion')},
+          }
+          Path(os.environ['EVIDENCE'], 'test-environment.json').write_text(json.dumps(details, indent=2) + '\n')
+          PY
+      - name: Test the installed package with no skipped native cases
+        run: |
+          python -m pytest -ra --junitxml="$EVIDENCE/tests.xml" 2>&1 | tee "$EVIDENCE/tests.log"
+          python - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          root = ET.parse(Path(os.environ['EVIDENCE'], 'tests.xml')).getroot()
+          cases = root.findall('.//testcase')
+          assert cases and not any(root.findall('.//' + tag) for tag in ('skipped', 'failure', 'error'))
+          native = {case.get('name') for case in cases
+                    if case.get('classname', '').endswith('test_onnx_runtime_integration')}
+          required = {'test_real_onnx_runtime_inference',
+                      'test_corrupt_artifact_preserves_real_session_and_recovers',
+                      'test_real_onnx_in_flight_output_remains_pinned_across_publication'}
+          assert required <= native, native
+          print(f'{len(cases)} tests passed, zero skips; all three native ONNX cases executed')
+          PY
+      - name: Prepare pinned models and inputs online
+        run: |
+          python examples/live_swap/assets.py --assets "$ASSETS" 2>&1 | tee "$EVIDENCE/assets-preparation.log"
+          python examples/live_swap/workload.py --assets "$ASSETS" 2>&1 | tee "$EVIDENCE/workload-preparation.log"
+          cp examples/live_swap/assets.json "$EVIDENCE/assets.json"
+          cp examples/live_swap/workload.json "$EVIDENCE/workload.json"
+      - name: Build the native Ubuntu runtime image
+        run: |
+          docker build --pull --file examples/edge/Dockerfile --tag temms-edge:qualification . \
+            2>&1 | tee "$EVIDENCE/image-build.log"
+      - name: Qualify two fresh constrained containers and verify the records
+        run: |
+          examples/edge/qualify.sh temms-edge:qualification "$ASSETS" "$EVIDENCE/qualification" \
+            2>&1 | tee "$EVIDENCE/qualification.log"
+      - name: Summarize this architecture
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as summary:
+              summary.write(f"Native {os.environ['EXPECTED_MACHINE']} qualification: **{os.environ['RESULT']}**.\n\n"
+                            'Target: one aggregate CPU, 512 MiB memory, no swap, no external networking, '
+                            'read-only root and model/input assets. The runtime image uses Ubuntu 24.04 '
+                            'system Python 3.12; its actual patch and dependencies are recorded.\n\n')
+              if os.environ['RESULT'] == 'success':
+                  summary.write('The installed-wheel suite had no skips, both fresh constrained runs '
+                                'completed, and independent record verification passed.\n\n')
+              summary.write('Download the artifact for raw events, summaries, container limits and exit '
+                            'status, CPU and memory counters, environment and failure diagnostics. '
+                            'This qualifies constrained hosted CPUs, not a physical edge board.\n')
+          PY
+      - name: Retain architecture-specific evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: edge-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/temms-edge-evidence/
+          if-no-files-found: error
+          retention-days: 30

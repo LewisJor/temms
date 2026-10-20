@@ -6,14 +6,20 @@ best feasible model under changing operating conditions.
 > Inject a runtime. Supply context. TEMMS selects the model.
 
 [Documentation](https://lewisjor.github.io/temms/) ·
+[Edge CPU qualification](examples/edge/README.md) ·
 [Real-model demo](examples/live_swap/README.md) ·
-[Visual Webots demo](examples/webots/README.md) ·
 [Verified runs](docs/progress.md)
 
 The runtime owns model access, actual state, activation, and inference. The
 selector owns policy. TEMMS connects them and verifies the runtime after a
 change. It has no database, daemon, server, registry, fleet manager, UI, or
 condition-collection framework.
+
+The [headless edge qualification](examples/edge/README.md) exercises real classifiers
+under a Linux-enforced one-CPU, 512 MiB budget with no external networking. Its
+native x86_64 and ARM64 scenarios cover contention, corrupt replacements, recovery
+and fresh-container restart. See the [verification record](docs/progress.md) for
+completed runs; the configured qualification is not itself evidence of a pass.
 
 ## Install and try
 
@@ -188,6 +194,11 @@ publication; it does not stop the worker thread. See the
 
 ## Evidence and limitations
 
+Start with the [edge CPU qualification runbook](examples/edge/README.md) to test
+real model swaps under enforced resource limits. It explains preparation, two fresh
+container runs, output-integrity checks and the evidence to inspect. Docker and
+the qualification scripts remain outside the library.
+
 The tiny [adaptive example](examples/adaptive_vision.py) uses in-memory handlers:
 
 ```bash
@@ -223,11 +234,8 @@ runs the example against an installed wheel with external networking disabled.
 or attribution mismatches. See [progress](docs/progress.md) for the exact environment,
 raw evidence and earlier single-photo results.
 
-For a visual walkthrough, follow the [Webots camera tutorial](examples/webots/README.md).
-It classifies real camera captures of a changing photo exhibit, records the swaps
-as an MP4, and qualifies the seven scenes on Ubuntu 24.04 with external networking
-disabled. The simulator and graphics tools are example dependencies; the library
-remains unchanged.
+The earlier [Webots camera tutorial](examples/webots/README.md) remains available
+as an optional visual walkthrough of a photo exhibit.
 
 For fixed-small, fixed-large, blocking-adaptive, and background-adaptive comparisons
 on a pinned 20-image test workload:

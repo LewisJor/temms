@@ -3,4 +3,5 @@ include docs/architecture.md docs/progress.md
 include index.rst docs/conf.py docs/requirements.txt
 recursive-include .github/workflows *.yml
 recursive-include examples *.py *.json *.md *.wbt *.ini
+include .dockerignore examples/edge/Dockerfile examples/edge/qualify.sh
 include examples/webots/worlds/.classification.wbproj

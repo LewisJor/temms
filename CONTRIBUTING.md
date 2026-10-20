@@ -46,9 +46,17 @@ then runs the real seven-scene example inside a verified network namespace. The
 defines acceptance and evidence retention. The [verification record](docs/progress.md)
 identifies completed runs and their exact revisions. Rerun qualification when code
 or dependencies change; a hosted pass does not establish performance on a physical
-edge device. The separate [Webots camera qualification](.github/workflows/webots.yml)
-checks rendered inputs, live swaps and native movie decoding on the declared Linux
-profile; follow its [tutorial](examples/webots/README.md) to reproduce it.
+edge device.
+
+The [edge CPU qualification](examples/edge/README.md) adds native Ubuntu 24.04
+x86_64 and ARM64 container runs with an enforced one-CPU, 512 MiB budget, no swap
+and no external networking. Its acceptance includes actual cgroup readback,
+contention evidence, corrupt-artifact recovery, full-score attribution checks and
+two fresh workers per architecture. Container Python comes from Ubuntu's 3.12
+package and its exact patch is recorded separately from the host test interpreter.
+Keep the declared limits and failure criteria intact when reproducing it; see
+[progress](docs/progress.md) for completed runs. The earlier
+[Webots tutorial](examples/webots/README.md) remains an optional visual example.
 
 For distribution changes, check the wheel after the build above in a fresh
 environment outside the source tree:

@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 .venv-docs/
 .venv-webots/
+.venv-edge/
 dist/
 build/
 *.egg-info/

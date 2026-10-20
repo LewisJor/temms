@@ -4,9 +4,9 @@ TEMMS documentation
 TEMMS is a small Python library for application-owned model selection,
 activation and inference. Version |release| is an alpha API.
 
-Start with the :doc:`installation and minimal example <README>`, then run the
-:doc:`real-model terminal demo <examples/live_swap/README>`.
-For a rendered camera scene, follow the :doc:`Webots tutorial <examples/webots/README>`.
+Start with the :doc:`installation and minimal example <README>`, then follow the
+:doc:`headless edge CPU qualification <examples/edge/README>`.
+The :doc:`terminal demo <examples/live_swap/README>` provides an interactive replay.
 The :doc:`verification record <docs/progress>` identifies tested commits,
 environments and remaining limits.
 
@@ -18,10 +18,11 @@ in Git history.
 
    Install and API <README>
    Architecture <docs/architecture>
+   Edge CPU qualification <examples/edge/README>
    Real-model demo <examples/live_swap/README>
-   Visual Webots demo <examples/webots/README>
    Comparison protocols and results <examples/live_swap/COMPARISON>
    Verification and progress <docs/progress>
    Contributing <CONTRIBUTING>
    Next action <NEXT_STEPS>
    Agent implementation rules <AGENTS>
+   Optional Webots photo exhibit <examples/webots/README>

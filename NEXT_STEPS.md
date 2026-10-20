@@ -5,8 +5,9 @@ The current verification record, remaining limitations and next action live in
 a configured workflow is not evidence of a successful run.
 
 Start with the [installation example](README.md#install-and-try), then try the
-[real-model terminal demo](examples/live_swap/README.md) or the
-[visual Webots tutorial](examples/webots/README.md). Contributors should read
+[headless edge CPU qualification](examples/edge/README.md). The
+[real-model terminal demo](examples/live_swap/README.md) provides an interactive
+view of decisions and predictions. Contributors should read
 [CONTRIBUTING.md](CONTRIBUTING.md), [AGENTS.md](AGENTS.md) and
 [the architecture](docs/architecture.md).
 
