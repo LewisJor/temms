@@ -24,7 +24,7 @@ dependencies = []
 demo = ["Pillow>=10"]
 onnx = [
   "numpy>=1.26",
-  "onnxruntime>=1.16",
+  "onnxruntime>=1.19",
 ]
 dev = [
   "mypy>=1.19.1",

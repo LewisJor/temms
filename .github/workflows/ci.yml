@@ -33,3 +33,87 @@ jobs:
         run: |
           python -m pip install "setuptools==77.0.3" wheel
           python -m build --no-isolation --outdir /tmp/temms-minimum-dist
+
+  dependency-compatibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+        numpy-version: ["1.26.0", "2.4.2"]
+    env:
+      NUMPY_VERSION: ${{ matrix.numpy-version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Verify installed-wheel dependency compatibility
+        shell: bash
+        run: |
+          export EVIDENCE="$RUNNER_TEMP/temms-compatibility-evidence"
+          mkdir -p "$EVIDENCE"
+          python -m pip install build
+          python -m build --wheel --outdir "$EVIDENCE/wheel" 2>&1 | tee "$EVIDENCE/build.log"
+          python -m venv "$RUNNER_TEMP/temms-compatibility"
+          source "$RUNNER_TEMP/temms-compatibility/bin/activate"
+          wheels=("$EVIDENCE"/wheel/*.whl)
+          test "${#wheels[@]}" -eq 1
+          python -m pip install "${wheels[0]}[dev,onnx]" "numpy==$NUMPY_VERSION" \
+            onnxruntime==1.19.0 onnx==1.16.0 2>&1 | tee "$EVIDENCE/install.log"
+          python -m pip check | tee "$EVIDENCE/pip-check.log"
+          python -m pip freeze --all > "$EVIDENCE/requirements.txt"
+          python -I - <<'PY' 2>&1 | tee "$EVIDENCE/environment.log"
+          import hashlib, importlib, json, os, platform, sys, sysconfig
+          from importlib.metadata import distribution
+          from pathlib import Path
+          from packaging.requirements import Requirement
+          from packaging.specifiers import SpecifierSet
+          system = platform.freedesktop_os_release()
+          assert (system['ID'], system['VERSION_ID']) == ('ubuntu', '24.04'), system
+          versions = {name: importlib.import_module(name).__version__
+                      for name in ('numpy', 'onnx', 'onnxruntime')}
+          assert versions == {'numpy': os.environ['NUMPY_VERSION'], 'onnx': '1.16.0',
+                              'onnxruntime': '1.19.0'}, versions
+          requirements = [Requirement(value) for value in distribution('temms').requires or []]
+          runtime = next(req for req in requirements if req.name == 'onnxruntime'
+                         and req.marker and req.marker.evaluate({'extra': 'onnx'}))
+          assert runtime.specifier == SpecifierSet('>=1.19'), runtime
+          site, installed = Path(sysconfig.get_path('purelib')).resolve(), {}
+          for source in Path('src/temms').rglob('*.py'):
+              parts = list(source.relative_to('src').with_suffix('').parts)
+              name = '.'.join(parts[:-1] if parts[-1] == '__init__' else parts)
+              path = Path(importlib.import_module(name).__file__).resolve()
+              assert path.is_relative_to(site) and path.read_bytes() == source.read_bytes(), path
+              installed[name] = {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+          evidence = Path(os.environ['EVIDENCE'])
+          wheel = next((evidence / 'wheel').glob('*.whl'))
+          report = {'python': sys.version, 'platform': platform.platform(), 'os_release': system,
+                    'versions': versions,
+                    'commit': os.environ.get('GITHUB_SHA'), 'installed': installed,
+                    'wheel_sha256': hashlib.sha256(wheel.read_bytes()).hexdigest()}
+          (evidence / 'environment.json').write_text(json.dumps(report, indent=2) + '\n')
+          PY
+          python -I -m pytest --import-mode=importlib -ra tests/test_onnx_runtime_integration.py \
+            --junitxml="$EVIDENCE/tests.xml" 2>&1 | tee "$EVIDENCE/tests.log"
+          python - <<'PY'
+          import os, xml.etree.ElementTree as ET
+          root = ET.parse(os.path.join(os.environ['EVIDENCE'], 'tests.xml')).getroot()
+          cases = root.findall('.//testcase')
+          assert cases and not any(root.findall('.//' + tag) for tag in ('skipped', 'failure', 'error'))
+          names = {case.get('name') for case in cases}
+          assert {'test_real_onnx_runtime_inference',
+                  'test_corrupt_artifact_preserves_real_session_and_recovers',
+                  'test_real_onnx_in_flight_output_remains_pinned_across_publication'} <= names
+          print(f'{len(cases)} native ONNX tests passed, zero skips')
+          PY
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: compatibility-py${{ matrix.python-version }}-numpy${{ matrix.numpy-version }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/temms-compatibility-evidence/
+          if-no-files-found: error
+          retention-days: 30

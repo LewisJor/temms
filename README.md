@@ -145,6 +145,11 @@ python -m pip install ".[onnx]"
 The `onnx` extra installs NumPy and ONNX Runtime for inference. The separate
 `onnx` Python package builds the test models and belongs to the `dev` extra;
 it is not needed to serve prepared models on a device.
+The extra requires ONNX Runtime 1.19 or newer, whose
+[NumPy 2 support](https://github.com/microsoft/onnxruntime/releases/tag/v1.19.0)
+avoids the native import failure possible with older releases. NumPy 1.26 remains
+the minimum. The deployment qualification uses its separately pinned versions;
+see [compatibility checks](CONTRIBUTING.md#development-dependency-compatibility).
 
 Configure a local artifact (replace the example path and identity with your own):
 

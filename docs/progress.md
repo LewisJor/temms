@@ -1,146 +1,136 @@
 # TEMMS progress — updated 2026-10-20
 
-TEMMS remains an alpha Python library for application-owned local inference. This
-pass started at `fe6a079e`, whose 275-test baseline passed. Three bounded iterations
-addressed measurement quality, input-buffer ownership and adapter storage. Core
-policy, public protocols and application scheduling are unchanged.
+TEMMS remains an alpha Python library for application-owned local inference.
+This pass starts at `20a0bd36`: all five hosted workflows and the local **314-test
+suite with zero skips** passed. Review found a dependency-resolution defect worth
+fixing; no further adapter behavior change was justified.
 
-## Kept changes and evidence
+## Optional native dependency compatibility
 
-The [four-path dispatch study](../examples/live_swap/COMPARISON.md#four-path-dispatch-result--2026-10-20)
-tested native execution, thread dispatch, the ONNX adapter and TEMMS on the same
-warmed session. Its repetition count, balanced order and decision threshold were
-fixed before collection. Source `d0e2f324` completed
-[one Ubuntu run](https://github.com/LewisJor/temms/actions/runs/39501140290): four fresh
-processes, 1,920 blocks and **7,680 checked timed calls**, with no retries. Independent
-recomputation verified raw summaries, recorded output hashes, model identities,
-network isolation and installed-source provenance. No layer met the predeclared
-threshold across all four processes for either model. **Retain inference dispatch**;
-no speedup or zero-overhead claim follows. Probe support grows by 85 lines and its
-tests by 259 lines, outside the installed library. Raw records and the frozen source
-remain under `.demo-assets/live-swap/dispatch-20261020/` and in the linked workflow.
+**Hypothesis:** the independently declared floors `onnxruntime>=1.16` and
+`numpy>=1.26` permit an installation that cannot import the native runtime. Acceptance
+requires reproducing that failure, rejecting the broken combination through package
+metadata, and checking the corrected runtime floor against both NumPy 1.x and 2.x.
 
-The ownership characterization at `53d02fe5` adds 42 test lines and seven architecture
-lines: inference snapshots its mapping but borrows mutable values, including after
-caller cancellation. A controlled worker observes a later mutation to the original
-buffer, while replacement of the caller's mapping entry does not change its input.
-Applications must preserve buffers until native work finishes. No deep copy,
-executor or new lifecycle API was introduced.
+The baseline wheel was built from archived `20a0bd36`. On macOS 26.6.2 ARM64 /
+Python 3.11.8, a fresh environment with **ONNX Runtime 1.18.0 and NumPy 2.4.2**
+installed successfully and passed `pip check`. Its explicit native import exited 1
+with `_ARRAY_API not found` and `ImportError`. No inference was attempted in that
+broken environment. This is an observed binary-compatibility failure, not a missing
+wheel or an inferred failure from a version number.
 
-The storage fix at `a8230850` replaces the ONNX adapter's growing per-slot lock map
-with one lock protecting only brief active-state capture/publication. Previously,
-1,000 unknown-slot reads retained 1,000 locks. Weak-reference regressions fail on
-that implementation and pass after the fix. Native construction, warmup and
-inference remain outside the lock. Existing progress tests now also exercise a
-separate calling thread; deliberately holding the lock across loading makes both
-new cases fail at bounded timeouts with clean teardown. The fix removes **six
-adapter lines** and adds a net 43 test lines. TEMMS reconciliation locks remain per
-slot; this bounds adapter synchronization storage, not every library allocation.
-The dispatch study predates this fix and is not its speed comparison.
+The optional runtime minimum is now **1.19**, whose
+[upstream release added NumPy 2 support](https://github.com/microsoft/onnxruntime/releases/tag/v1.19.0).
+NumPy's 1.26 floor remains unchanged. Normal pip resolution of the corrected wheel
+rejects the formerly allowed 1.18.0/2.4.2 combination with `ResolutionImpossible`
+before installation. Two separate fresh environments using the unchanged baseline
+library code passed native import and all three existing native integration tests:
 
-## Verification and size
+| ONNX Runtime | NumPy | Import | Native tests |
+| --- | --- | --- | --- |
+| 1.19.0 | 1.26.0 | Passed, empty stderr | 3 passed, zero skips |
+| 1.19.0 | 2.4.2 | Passed, empty stderr | 3 passed, zero skips |
 
-The final local suite passes **314 tests with zero skips** on macOS ARM64,
-Python 3.11.8, ONNX Runtime 1.24.1, NumPy 2.4.2 and Pillow 12.1.0. The focused adapter,
-lifetime, conformance and architecture checks pass 37 tests. Ruff passes on the
-maintained `src tests examples` paths, and strict mypy passes all ten configured
-files. The strict Sphinx documentation build passes. Source/wheel builds succeed
-with the installed backend. A clean core-only
-environment imports every library module and runs the maintained example from the
-installed wheel without optional ML dependencies. The storage fix also passed
-the hosted qualification at `f28365ad`, as recorded below.
+Those local positives used ONNX 1.21.0, pytest 9.1.1 and pytest-asyncio 1.4.0.
+All three environments were created independently and executed once. Commands,
+resolver reports, versions, stdout/stderr, JUnit, source archive and wheel hashes
+remain in `.demo-assets/compatibility-20261020/`. Local evidence is not an Ubuntu run.
 
-Core remains **429 physical lines** across five modules, largest 178; exports 50,
-adapters **223** and the tiny example 37. Required runtime dependencies remain zero.
-The locally built library wheel is **20,048 bytes**, including metadata and license.
-The experiment added no installed dependency, public abstraction or execution
-framework. No constrained Docker workload ran on this development Mac.
+The existing CI now adds four installed-wheel compatibility profiles on Ubuntu
+24.04: Python 3.11/3.12, each with NumPy 1.26.0/2.4.2, ONNX Runtime 1.19.0 and
+ONNX 1.16.0. Explicit imports, installed-source checks, built metadata and named
+native-test/no-skip gates prevent a broken optional dependency from appearing as a
+passing skipped suite. Hosted execution of these new profiles is pending.
+The existing current-dependency, packaging and deployment checks are preserved.
+See [compatibility scope](../CONTRIBUTING.md#development-dependency-compatibility).
 
-## Previous qualification and preparation repair
+## Other review decisions
 
-At `8caf55ac`, [native architecture jobs](https://github.com/LewisJor/temms/actions/runs/39492290202)
-and the [Ubuntu replay](https://github.com/LewisJor/temms/actions/runs/39492290128)
-failed before inference: Hugging Face dataset-viewer metadata returned HTTP 502.
-The ordinary twenty inputs now ship as **654,484 bytes** of pinned example JPEGs
-with [attribution and CC BY-SA 4.0 terms](../examples/live_swap/inputs/README.md).
-Their bytes and frozen workload manifest did not change. Fresh offline preparation,
-corrupt/missing-source rejection, atomic destination preservation and prepared-cache
-reuse passed. The source distribution includes them; the library wheel does not.
-The optional 140-image validation preparation still depends on upstream metadata;
-model acquisition and image builds still need networking before offline execution.
+Retain the core's per-slot reconciliation lock cache for the fixed-slot target.
+A controlled probe reproduced retention of 1,000 unavailable slot names. A weak-value
+substitution released them and preserved tested holder/waiter/cancellation ordering,
+but created 100 locks for 100 sequential fixed-slot calls instead of one. Fixed-slot
+storage is already bounded; no speed benefit or real dynamic-slot consumer was
+established. The retained probe is in the same evidence directory. No core lifecycle
+mechanism or new public abstraction was added.
 
-The same pass removed about 1,400 lines of graphical-simulator support. The maintained
-path is the [headless Ubuntu qualification](../examples/edge/README.md). A separate
-regression corrected falsey injected session factories: the adapter chooses its
-default only when the supplied factory is `None`.
+The independent adapter audit found no remaining demonstrated defect in load/warmup
+failure recovery, cancellation before publication, session lifetime or borrowed
+input ownership. Its focused suite passed 32 tests. Thread-pool saturation, native
+termination and caller mutation remain documented application/runtime boundaries.
 
-The repaired source `a0c8beca` passed the
-[native matrix](https://github.com/LewisJor/temms/actions/runs/39496958193) and
-[Ubuntu replay](https://github.com/LewisJor/temms/actions/runs/39496958438).
-Both native architectures ran 275 installed-wheel tests without skips, including
-all three real ONNX integration tests, and two fresh constrained containers each.
-The fixed profile is one CPU quota, 512 MiB, no swap, no external network, non-root
-execution and read-only original assets. No QEMU was used.
+## Local verification and complexity
 
-| Architecture | Served across two workers | Peak cgroup memory, workers 1 / 2 |
-| --- | ---: | ---: |
-| x86_64 | 226 | 348.77 / 373.07 MiB |
-| ARM64 | 226 | 346.41 / 330.95 MiB |
+After the metadata change, **314 tests passed with zero skips**, Ruff passed on
+`src tests examples`, strict mypy passed all ten configured files, and the strict
+Sphinx documentation build passed. The wheel
+build succeeds; the corrected local wheel is **20,210 bytes**, including metadata
+and license. Core and adapter source did not change. Core remains **429 physical
+lines** across five modules, largest 178; exports 50, adapters **223**, tiny example
+37, and required runtime dependencies **zero**. The new support cost is 84 lines
+for one compatibility job in the existing CI workflow; there is no new test framework.
 
-All **452 served score vectors and identities matched** direct references; every
-worker checked 20/20 images and 40/40 model/image pairs, with zero OOM events. All
-completed corrupt-artifact recovery, twelve alternating swaps and missing-context
-abstention/resume. Helpers consumed CPU and cgroup counters witnessed throttling.
-The separate offline replay checked 69 served outputs, all twenty inputs and all
-seven scenes. Downloaded records were independently reverified and remain under
-`.demo-assets/edge/ci-39496958193/` and `.demo-assets/edge/cpu-39496958438/`.
-The intervening failed runs remain part of the record.
+## Existing runtime and performance evidence
 
-## Qualification after the storage fix
-
-All five push workflows passed at `f28365ad`:
+The latest independently audited implementation at `f28365ad` passed
 [CI](https://github.com/LewisJor/temms/actions/runs/39502793613),
 [installed core](https://github.com/LewisJor/temms/actions/runs/39502793629),
 [documentation](https://github.com/LewisJor/temms/actions/runs/39502793600),
-[native matrix](https://github.com/LewisJor/temms/actions/runs/39502793672) and
+[native qualification](https://github.com/LewisJor/temms/actions/runs/39502793672) and
 [Ubuntu replay](https://github.com/LewisJor/temms/actions/runs/39502793645).
-Both architectures ran **314 installed-wheel tests with zero skips**, including
-all three native ONNX cases. Four fresh constrained workers again checked **452
-served outputs**, all forty model/image pairs per worker, with zero OOM events.
+Both native architectures ran 314 installed-wheel tests without skips. Four fresh
+workers checked **452 served score vectors and model identities**, forty model/image
+pairs per worker, with zero OOM events. The enforced profile is one CPU quota,
+512 MiB, no swap, no external network, non-root execution and read-only assets.
 
 | Architecture | Served across two workers | Peak cgroup memory, workers 1 / 2 |
 | --- | ---: | ---: |
 | x86_64 | 226 | 315.84 / 332.61 MiB |
 | ARM64 | 226 | 410.04 / 324.99 MiB |
 
-The downloaded records passed the maintained verifier again. Source-module hashes,
-test XML and container restrictions match the tested revision. The separate replay
-again checked 69 served outputs across twenty inputs and all seven scenes, with
-zero output/identity mismatches. Evidence remains under
+All workers completed corrupt-artifact recovery, twelve alternating swaps and
+missing-context abstention/resume; CPU helpers and throttling were observed. The
+separate replay checked 69 served outputs, twenty inputs and all seven scenes.
+Downloaded records and independent audits remain under
 `.demo-assets/edge/ci-39502793672/` and `.demo-assets/edge/cpu-39502793645/`.
-These functional runs are not a controlled before/after memory comparison; each
-revision's measurements stand separately. Later documentation-only status updates
-do not change the qualified implementation.
+These are functional qualifications, not controlled before/after memory comparisons.
 
-## Limits and next action
+The [dispatch study](../examples/live_swap/COMPARISON.md#four-path-dispatch-result--2026-10-20)
+at `d0e2f324` independently verified four fresh processes, 1,920 balanced blocks
+and **7,680 timed calls**. No layer met its predeclared optimization threshold across
+all four processes for either model. Inference dispatch was retained. The later
+adapter storage fix at `a8230850` removed six lines and eliminated retained locks
+for unknown-slot reads; that study is not a speed comparison for the fix.
 
-The existing [task comparison and memory studies](../examples/live_swap/COMPARISON.md)
-remain narrow measurements. Background adaptation produced 102 timely correct
-responses versus 101 for fixed-small on the 140-image validation workload, while
-using substantially more memory. Direct ONNX controls also reproduced memory growth.
-No general speed advantage, leak-freedom or unique hot-swapping capability is established.
+On the separate 140-image task validation, background adaptation produced 102 timely
+correct responses versus 101 for fixed-small, while using substantially more memory.
+Direct ONNX controls also reproduced memory growth. The
+[comparison and memory studies](../examples/live_swap/COMPARISON.md) establish no
+general speed advantage, leak-freedom or unique hot-swapping capability.
 
-The constrained trace uses scripted application context. Its direct references
-share preprocessing and ONNX Runtime with serving, checking integration consistency
-rather than independent engine correctness. Reused inputs and warmed caches do not
-measure cold-device startup. Whole-container memory includes native allocations,
-helpers and charged cache. Recoverable artifact rejection is not hard-OOM survival,
-a deadline guarantee or a power measurement.
+## Earlier repair and remaining limits
+
+The graphical simulator's workflow and support were removed. At `8caf55ac`,
+[native qualification](https://github.com/LewisJor/temms/actions/runs/39492290202) and
+[Ubuntu replay](https://github.com/LewisJor/temms/actions/runs/39492290128) failed before
+inference on dataset-viewer HTTP 502 responses. The ordinary twenty unchanged,
+pinned inputs now ship as 654,484 bytes of
+[attributed example fixtures](../examples/live_swap/inputs/README.md). Fresh offline
+preparation and corrupt-source handling passed, followed by
+[native qualification at `a0c8beca`](https://github.com/LewisJor/temms/actions/runs/39496958193).
+Those failures remain part of the record. The optional 140-image preparation still
+uses upstream metadata; model acquisition and image builds require networking
+before disconnected execution.
+
+The qualification uses scripted application context and direct references sharing
+preprocessing and ONNX Runtime with serving. It checks integration consistency,
+not independent engine correctness or cold-device startup. Recoverable artifact
+rejection is not hard-OOM survival, a deadline guarantee or a power measurement.
 
 The mounted-device target is **Raspberry Pi 5 (4 GB), running 64-bit Ubuntu Server
 24.04 LTS**. Its [setup guide](../examples/edge/README.md#set-up-the-reference-device)
-uses the same profile. No physical Pi execution has been established; hosted ARM64
-evidence does not establish device latency, thermal behavior, battery life or sensor
+uses the same profile. No physical Pi execution has been established. Hosted ARM64
+evidence does not establish board latency, thermal behavior, battery life or sensor
 integration. See the [release/support criteria](../CONTRIBUTING.md#release-and-support-criteria).
 
 **Exactly one next action:** run the unchanged constrained qualification on that

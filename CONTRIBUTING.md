@@ -95,6 +95,28 @@ action in `docs/progress.md`. A shared conformance helper is useful only where t
 existing runtimes have genuinely overlapping contracts. No new testing framework
 or production abstraction is needed merely to make their tests look alike.
 
+## Development dependency compatibility
+
+The optional inference extra requires ONNX Runtime 1.19 or newer and NumPy 1.26
+or newer. Earlier metadata admitted ONNX Runtime 1.18 with NumPy 2: installation
+and `pip check` succeeded, but the native import failed. Raising the runtime floor
+excludes that broken combination without restricting serving to NumPy 1.x.
+
+The existing CI workflow checks the installed wheel on Ubuntu 24.04 with Python
+3.11 and 3.12, ONNX Runtime 1.19.0, and each of NumPy 1.26.0 and 2.4.2. The ONNX
+graph-building fixture dependency is pinned to 1.16.0 in these four profiles.
+Each requires successful native imports and all three existing native integration
+tests with zero skips; dependency resolution alone is insufficient. It retains
+source/wheel provenance, installed versions and test XML. Keep these profiles
+aligned with any future change to the declared floors.
+
+These checks cover the adapter's native API and failure/attribution contracts.
+The full suite also runs against currently resolved dependencies; the real-model
+and constrained native qualifications retain their separate pinned deployment
+versions. None of these checks promises that every provider, model, platform or
+future version allowed by an open-ended requirement has been tested. See
+[progress](docs/progress.md) for completed runs and exact revisions.
+
 ## Documentation
 
 The [public documentation](https://lewisjor.github.io/temms/) is built directly from
