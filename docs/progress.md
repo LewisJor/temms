@@ -46,8 +46,8 @@ The full suite passes **275 tests with zero skips** on macOS ARM64, Python 3.11.
 ONNX Runtime 1.24.1, NumPy 2.4.2 and Pillow 12.1.0. The lower count reflects removal
 of simulator-specific tests, with new preparation and injection regressions added.
 Ruff, strict mypy on ten files, the architecture budget and the strict Sphinx build
-pass. Fresh preparation
-tests permit only local fixture URLs and reject metadata access. They also check
+pass. Fresh preparation tests permit only local fixture URLs and reject metadata
+access. They also check
 missing/corrupt sources, untouched prior destinations and cached offline reuse.
 
 Source and wheel builds succeed using the installed backend without isolation.
@@ -56,35 +56,51 @@ the wheel contains only the library. The Docker build context excludes the fixtu
 because preparation supplies the separate read-only asset mount. No constrained
 Docker workload was executed on this development Mac.
 
+An extracted source archive also prepared all twenty inputs into an empty directory
+with a verified socket-connection denial hook: zero connection attempts, all pinned
+bytes intact. Neither distribution contains simulator paths. The built library
+wheel is **20,078 bytes**, including standard distribution metadata and license.
+
 Core remains **429 physical lines** across five modules, largest 178; exports 50,
 adapters 229 and the tiny example 37. Required runtime dependencies remain zero.
 No executor, cache, registry, backend or new public abstraction was introduced.
 
 ## Hosted qualification
 
-The earlier implementation at
-[`827b7242`](https://github.com/LewisJor/temms/commit/827b7242fc318d6567f20f5f7715ab71d7d7c049)
-passed the [native matrix](https://github.com/LewisJor/temms/actions/runs/39485701787)
-and [Ubuntu replay](https://github.com/LewisJor/temms/actions/runs/39485701691).
-Each native architecture ran 286 installed-wheel tests without skips and two fresh
-constrained containers. Those images used Ubuntu 24.04, Python 3.12.3, ONNX Runtime
+The fix at
+[`a0c8beca`](https://github.com/LewisJor/temms/commit/a0c8becab54d169e156b34837ce4c4dbbf417e52)
+passed the [native matrix](https://github.com/LewisJor/temms/actions/runs/39496958193)
+and [Ubuntu replay](https://github.com/LewisJor/temms/actions/runs/39496958438).
+[CI](https://github.com/LewisJor/temms/actions/runs/39496958066),
+[installed core packaging](https://github.com/LewisJor/temms/actions/runs/39496958061)
+and [documentation publication](https://github.com/LewisJor/temms/actions/runs/39496958125)
+also passed. Each native architecture ran **275 installed-wheel tests without skips**
+and two fresh constrained containers. The images used Ubuntu 24.04, Python 3.12.3, ONNX Runtime
 1.24.1, NumPy 2.4.2 and Pillow 12.1.0; the host test interpreter was Python 3.12.15.
-No QEMU was used. These measurements identify that revision, not the present fix.
+No QEMU was used. These measurements identify that code revision; later
+documentation-only status updates do not change the tested implementation.
 
-| Architecture | Served across two workers | Peak cgroup memory, workers 1 / 2 | Throttled periods during contention, workers 1 / 2 |
-| --- | ---: | ---: | ---: |
-| x86_64 | 226 | 358.61 / 344.42 MiB | 4 / 5 |
-| ARM64 | 226 | 338.61 / 397.60 MiB | 18 / 18 |
+| Architecture | Served across two workers | Peak cgroup memory, workers 1 / 2 |
+| --- | ---: | ---: |
+| x86_64 | 226 | 348.77 / 373.07 MiB |
+| ARM64 | 226 | 346.41 / 330.95 MiB |
 
 All **452 served score vectors and identities matched** direct references, with
 20/20 images and 40/40 model/image pairs checked in each worker. All four completed
 corrupt-artifact recovery, twelve alternating swaps and missing-context abstention
 followed by recovery. They had zero OOM events and verified read-only assets.
-Independent record verification passed. Raw artifacts are retained by GitHub for
-30 days; downloaded copies remain under `.demo-assets/edge/ci-39485701787/`.
+Both contention helpers consumed CPU during each serving block and cgroup counters
+witnessed throttling. Independent verification passed again on both downloaded
+architecture records. Raw artifacts are retained by GitHub for 30 days; downloaded
+copies remain under `.demo-assets/edge/ci-39496958193/`.
 
-Qualification of the current preparation fix is pending a new hosted run. A past
-passing run does not establish the current checkout's status.
+The separate offline Ubuntu replay passed all seven scenes: **69 served outputs**,
+20/20 inputs and 35/40 model/input pairs, with zero score or identity mismatches.
+Its raw-record audit, network isolation and 275-test XML were checked again locally.
+Records remain under `.demo-assets/edge/cpu-39496958438/`. Earlier qualification
+[at `827b7242`](https://github.com/LewisJor/temms/actions/runs/39485701787) remains
+historical evidence; the intervening metadata failures above were not erased or
+treated as passing runs.
 
 ## Performance and evidence boundaries
 
