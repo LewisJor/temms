@@ -25,4 +25,3 @@ in Git history.
    Contributing <CONTRIBUTING>
    Next action <NEXT_STEPS>
    Agent implementation rules <AGENTS>
-   Optional Webots photo exhibit <examples/webots/README>

@@ -251,7 +251,6 @@ prepared files, so disconnected networking tests deployment independence rather
 than the effect of packet loss on inference.
 
 The [terminal replay](../live_swap/README.md) remains useful for inspecting decisions
-interactively. The earlier [Webots photo-exhibit tutorial](../webots/README.md) is an
-optional visual example. Model and image terms remain in the existing
+interactively. Model and image terms remain in the existing
 [provenance guide](../live_swap/README.md#model-and-image-provenance),
 [asset manifest](../live_swap/assets.json) and [workload manifest](../live_swap/workload.json).

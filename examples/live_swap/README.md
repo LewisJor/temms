@@ -7,9 +7,6 @@ successful switches, a failed replacement, continued serving and abstention.
 This verifies request/output consistency through the transitions; it is not an
 accuracy or performance benchmark.
 
-For a rendered scene with live camera inputs and a recorded video, follow the
-[Webots camera tutorial](../webots/README.md).
-
 ## Prepare once
 
 From the repository root, with Python 3.11+ and your virtual environment active:

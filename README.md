@@ -237,9 +237,6 @@ runs the example against an installed wheel with external networking disabled.
 or attribution mismatches. See [progress](docs/progress.md) for the exact environment,
 raw evidence and earlier single-photo results.
 
-The earlier [Webots camera tutorial](examples/webots/README.md) remains available
-as an optional visual walkthrough of a photo exhibit.
-
 For fixed-small, fixed-large, blocking-adaptive, and background-adaptive comparisons
 on a pinned 20-image test workload:
 

@@ -90,15 +90,12 @@ Core remains **429 physical lines** across five modules, largest 178; exports 50
 adapters 229 and the tiny example 37. Required runtime dependencies remain zero.
 The added qualification scripts, workflow, tests and documentation increase
 repository support code but do not change the installed library's architecture.
-The Webots workflow now runs only by manual dispatch; its earlier fixture remains
-available as an optional example rather than the primary validation path.
+The graphical simulator example, its workflow and its dedicated tests have been
+removed. The maintained qualification exercises native execution headlessly.
 
 ## Evidence boundaries
 
-The earlier [Webots qualification](https://github.com/LewisJor/temms/actions/runs/39271421225)
-passed at the baseline commit. That stationary photo exhibit tested a rendered
-camera integration; it did not establish edge-device suitability. The
-[comparison and memory studies](../examples/live_swap/COMPARISON.md) remain dated
+The [comparison and memory studies](../examples/live_swap/COMPARISON.md) remain dated
 measurements. They were not rerun or converted into claims for this new profile.
 
 Direct references share preprocessing and ONNX Runtime with serving. Agreement

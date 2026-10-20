@@ -55,8 +55,7 @@ contention evidence, corrupt-artifact recovery, full-score attribution checks an
 two fresh workers per architecture. Container Python comes from Ubuntu's 3.12
 package and its exact patch is recorded separately from the host test interpreter.
 Keep the declared limits and failure criteria intact when reproducing it; see
-[progress](docs/progress.md) for completed runs. The earlier
-[Webots tutorial](examples/webots/README.md) remains an optional visual example.
+[progress](docs/progress.md) for completed runs.
 
 For distribution changes, check the wheel after the build above in a fresh
 environment outside the source tree:

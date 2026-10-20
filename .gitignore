@@ -3,9 +3,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
-.venv-docs/
-.venv-webots/
-.venv-edge/
+.venv-*/
 dist/
 build/
 *.egg-info/

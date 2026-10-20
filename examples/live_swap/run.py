@@ -89,11 +89,6 @@ def prepare_inputs(directory, manifest, refs, labels):
             "expected": {"index": item["expected_index"], "label": labels[item["expected_index"]]},
             "feed": feed, "references": {},
         })
-    return reference_inputs(samples, directory, refs)
-
-
-def reference_inputs(samples, directory, refs):
-    """Freeze direct references for the file replay and Webots camera replay."""
     seen = []
     for ref in refs:
         session = cpu_session(str(directory / f"{ref.id}.onnx"), ("CPUExecutionProvider",))
@@ -216,8 +211,7 @@ def observe_scene(record, previous, evidence):
         )
 
 
-async def replay(runtime, selector, samples, labels, large_path, emit, frames=12, interval=0.4,
-                 capture=lambda sample, request: sample):
+async def replay(runtime, selector, samples, labels, large_path, emit, frames=12, interval=0.4):
     temms = TEMMS(runtime=runtime, selector=selector)
     request = 0
     scenes = {}
@@ -265,7 +259,7 @@ async def replay(runtime, selector, samples, labels, large_path, emit, frames=12
         try:
             for _ in range(frames):
                 request += 1
-                sample = capture(samples[(request - 1) % len(samples)], request)
+                sample = samples[(request - 1) % len(samples)]
                 offered = {"image": sample["image"], "expected": sample["expected"]}
                 counts["offered"] += 1
                 active = (await runtime.state("vision")).active_model
