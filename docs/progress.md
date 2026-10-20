@@ -114,6 +114,9 @@ and **7,680 timed calls**. No layer met its predeclared optimization threshold a
 all four processes for either model. Inference dispatch was retained. The later
 adapter storage fix at `a8230850` removed six lines and eliminated retained locks
 for unknown-slot reads; that study is not a speed comparison for the fix.
+Follow-up documentation review at `f6c8c0a7` corrected an outdated blanket statement
+that all measurements were local Mac results. The October 12 studies remain Mac
+evidence; the October 20 hosted Ubuntu study measures dispatch timing only.
 
 On the separate 140-image task validation, background adaptation produced 102 timely
 correct responses versus 101 for fixed-small, while using substantially more memory.

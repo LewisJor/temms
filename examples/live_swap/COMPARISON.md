@@ -6,9 +6,10 @@ the initial result exposed transition delays. Both use the same frozen workload,
 policy, arrival rate, and deadline. This is a small reproducible experiment, not
 evidence of general model quality or energy savings.
 
-The dated results below summarize local development experiments. Their ignored
-`.demo-assets` directories are not distributed with the repository. Use the commands
-and pinned manifests here to generate independent results on your own machine;
+The dated results below summarize local Mac experiments and a separate hosted
+Ubuntu dispatch study. Their ignored `.demo-assets` directories are not distributed
+with the repository. Use the commands and pinned manifests here to generate
+independent results on your own machine;
 the reported timings and small quality differences are not acceptance targets.
 
 A separate [fresh-image validation](#fresh-image-validation-protocol--declared-2026-10-12)
@@ -32,9 +33,11 @@ environment and the limits of that historical result.
 
 That run used the previous single-photo functional demo, before the twenty-input
 replay and its full-score checks. It did **not** rerun the comparison,
-wrapper-overhead, churn or CPU-arena experiments. Every numerical result below
-remains evidence from its dated local Mac experiment; none is a Linux performance,
-accuracy, memory or endurance qualification.
+wrapper-overhead, churn or CPU-arena experiments. The October 12 comparison,
+validation, churn and CPU-arena measurements remain local Mac evidence. The later
+[October 20 dispatch study](#four-path-dispatch-result--2026-10-20) separately
+measures inference-path timing on a hosted Ubuntu x86_64 CPU; it does not establish
+Linux task accuracy, memory efficiency, endurance or physical-device performance.
 
 ## Prepare and run
 
