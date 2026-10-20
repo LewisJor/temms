@@ -40,9 +40,22 @@ The existing CI now adds four installed-wheel compatibility profiles on Ubuntu
 24.04: Python 3.11/3.12, each with NumPy 1.26.0/2.4.2, ONNX Runtime 1.19.0 and
 ONNX 1.16.0. Explicit imports, installed-source checks, built metadata and named
 native-test/no-skip gates prevent a broken optional dependency from appearing as a
-passing skipped suite. Hosted execution of these new profiles is pending.
+passing skipped suite. All four profiles passed at `a626ad14` in
+[CI run 39507934190](https://github.com/LewisJor/temms/actions/runs/39507934190),
+with three native tests per profile and zero skips.
+An independent audit of the downloaded artifacts verified Ubuntu 24.04.5 x86_64,
+Python 3.11.17/3.12.15, exact native dependency versions, all nine installed module
+hashes against that revision, wheel contents/metadata and all twelve native cases.
+Raw artifacts and the audit remain in
+`.demo-assets/compatibility-20261020/ci-39507934190/`.
 The existing current-dependency, packaging and deployment checks are preserved.
 See [compatibility scope](../CONTRIBUTING.md#development-dependency-compatibility).
+
+All five workflows passed at that revision: the linked CI,
+[installed core](https://github.com/LewisJor/temms/actions/runs/39507934153),
+[documentation](https://github.com/LewisJor/temms/actions/runs/39507934187),
+[native qualification](https://github.com/LewisJor/temms/actions/runs/39507934148)
+and [Ubuntu replay](https://github.com/LewisJor/temms/actions/runs/39507934260).
 
 ## Other review decisions
 
