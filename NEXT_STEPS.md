@@ -5,7 +5,8 @@ The current verification record, remaining limitations and next action live in
 a configured workflow is not evidence of a successful run.
 
 Start with the [installation example](README.md#install-and-try), then try the
-[headless edge CPU qualification](examples/edge/README.md). The
+[headless edge CPU qualification](examples/edge/README.md). Its reference device is
+a Raspberry Pi 5 (4 GB) with 64-bit Ubuntu Server 24.04 LTS. The
 [real-model terminal demo](examples/live_swap/README.md) provides an interactive
 view of decisions and predictions. Contributors should read
 [CONTRIBUTING.md](CONTRIBUTING.md), [AGENTS.md](AGENTS.md) and

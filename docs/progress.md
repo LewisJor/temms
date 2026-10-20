@@ -115,8 +115,14 @@ survival test. Constrained hosted CPUs do not qualify a Raspberry Pi, Jetson,
 thermal limits, battery life or sensor behavior. See the
 [release/support criteria](../CONTRIBUTING.md#release-and-support-criteria).
 
-**Exactly one next action:** run the documented profile unchanged on the intended
-physical ARM64 edge device and retain its revision, environment and evidence.
+The selected mounted-device target is now **Raspberry Pi 5 (4 GB), running 64-bit
+Ubuntu Server 24.04 LTS**. Its [setup guide](../examples/edge/README.md#set-up-the-reference-device)
+uses the existing native ARM64 qualification without adding a runtime or changing
+acceptance limits. Host OS, kernel, board identity and source revision are retained
+with the result. No physical Pi execution has been established yet.
+
+**Exactly one next action:** run the documented profile unchanged on that Pi 5
+and retain its revision, host identity, environment and qualification evidence.
 
 Read `exercise` in `examples/edge/run.py`, `cpu_pressure` in
 `examples/edge/resources.py`, and `OnnxRuntime.infer` in `src/temms/adapters/onnx.py`.

@@ -1,4 +1,8 @@
-# Qualify TEMMS under an edge CPU budget
+# Qualify TEMMS on Ubuntu 24.04
+
+The reference device is a **Raspberry Pi 5 with 4 GB RAM, running 64-bit Ubuntu
+Server 24.04 LTS**. Use it as the computer mounted on a robot or in a fixed
+installation. The qualification runs headlessly over a terminal or SSH connection.
 
 This headless qualification runs real MobileNetV2 and ResNet18 classifiers through
 TEMMS under a Linux-enforced CPU and memory budget. It exercises startup, model
@@ -7,14 +11,51 @@ a fresh-container restart. The inputs are the existing twenty pinned Oxford-IIIT
 Pet photographs; every served output is checked against direct ONNX execution for
 that exact image and model.
 
-The target is **native Ubuntu 24.04 on x86_64 and ARM64**, using Docker and Python
-3.12 inside the image. Both architectures passed the
+The existing CI baseline is **native Ubuntu 24.04 on x86_64 and ARM64**, using
+Docker and Python 3.12 inside the image. Both architectures passed the
 [first hosted qualification](https://github.com/LewisJor/temms/actions/runs/39485701787)
 at `827b7242`. The
 [verification record](../../docs/progress.md) identifies completed runs and exact
 revisions; a workflow configuration alone is not a passing result. Docker is a
 qualification tool outside the library. TEMMS core still has zero required runtime
 dependencies.
+
+## Set up the reference device
+
+Install the **Ubuntu 24.04 LTS preinstalled Server ARM64 image for Raspberry Pi**
+from [Canonical's board guide](https://ubuntu.com/hardware/docs/boards/how-to/ubuntu_supported/raspberry-pi/).
+Select the 24.04/Noble image explicitly. Canonical supports this OS on Pi 5.
+Use active cooling and a suitable 5V/5A supply, following the
+[Pi 5 hardware guidance](https://www.raspberrypi.com/products/raspberry-pi-5/).
+The 4 GB board is the chosen reference configuration, not a measured TEMMS minimum.
+The inference worker still has the same one-CPU, 512 MiB limit.
+
+On the Pi, install the host prerequisites:
+
+```bash
+sudo apt update
+sudo apt install --yes git python3-venv
+```
+
+Install [Docker Engine for Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
+and follow its [ordinary-user access setup](https://docs.docker.com/engine/install/linux-postinstall/).
+Reconnect after changing group membership. Run the qualification from that ordinary
+account; the launcher deliberately rejects execution as root. Confirm the host:
+
+```bash
+cat /etc/os-release
+uname -m
+docker info --format '{{.OSType}} {{.Architecture}} {{.CgroupVersion}}'
+```
+
+Expect Ubuntu `24.04`, `aarch64`, and a Linux ARM64 Docker engine using cgroup `2`.
+Then clone TEMMS and follow the same preparation and run commands below on the Pi.
+This uses prepared image inputs; no camera, ROS installation or graphical simulator
+is required for these model-execution checks.
+
+**Physical-device status:** a Pi 5 run has not yet been recorded. The passing
+GitHub ARM64 jobs establish the hosted baseline; the actual Pi must produce its
+own evidence before it is qualified.
 
 ## Prepare and run
 
@@ -59,6 +100,20 @@ sequentially, then a separate verifier container, preserving evidence from each.
 Keep the entire output directory when reporting a result. Reusing an output
 directory would mix separate experiments;
 choose another name for the next run.
+
+For the Pi run, retain its host identity alongside the output. For the `first-run`
+directory above, execute these commands on the Pi after the launcher exits:
+
+```bash
+cat /etc/os-release > .demo-assets/edge/first-run/device-os-release.txt
+uname -srm > .demo-assets/edge/first-run/device-kernel.txt
+tr -d '\000' < /proc/device-tree/model > .demo-assets/edge/first-run/device-model.txt
+git rev-parse HEAD > .demo-assets/edge/first-run/source-commit.txt
+```
+
+Use a clean checkout and record the board's RAM, cooling and power configuration
+with the result. These host records identify the physical target; the existing
+verifier checks the worker trace and container restrictions.
 
 ## What the container enforces
 

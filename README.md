@@ -20,6 +20,9 @@ under a Linux-enforced one-CPU, 512 MiB budget with no external networking. Its
 native x86_64 and ARM64 scenarios cover contention, corrupt replacements, recovery
 and fresh-container restart. See the [verification record](docs/progress.md) for
 completed runs; the configured qualification is not itself evidence of a pass.
+The chosen mounted-device target is a **Raspberry Pi 5 (4 GB) with 64-bit Ubuntu
+Server 24.04 LTS**. Follow the [device setup](examples/edge/README.md#set-up-the-reference-device)
+to run the same checks on the board; physical Pi qualification is still pending.
 
 ## Install and try
 
