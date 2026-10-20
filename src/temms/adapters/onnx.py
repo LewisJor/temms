@@ -57,14 +57,14 @@ class OnnxRuntime:
         self._resources = dict(resources or {})
         self._session_factory = _create_session if session_factory is None else session_factory
         self._active: dict[str, _LoadedModel] = {}
-        self._locks: dict[str, threading.RLock] = {}
+        self._lock = threading.RLock()
         self._validate_inventory()
 
     async def models(self, slot: str) -> Sequence[ModelRef]:
         return tuple(model.ref for model in self._models.get(slot, ()))
 
     async def state(self, slot: str) -> RuntimeState:
-        with self._lock_for(slot):
+        with self._lock:
             active = self._active.get(slot)
         return RuntimeState(
             active_model=active.config.ref if active else None,
@@ -74,7 +74,7 @@ class OnnxRuntime:
     async def activate(self, slot: str, model: ModelRef) -> ActivationResult:
         config = self._find(slot, model)
         loaded = await asyncio.to_thread(self._load, config)
-        with self._lock_for(slot):
+        with self._lock:
             previous = self._active.get(slot)
             self._active[slot] = loaded
         return ActivationResult(
@@ -85,7 +85,7 @@ class OnnxRuntime:
         )
 
     async def infer(self, slot: str, value: OnnxInput) -> InferenceResult[OnnxOutput]:
-        with self._lock_for(slot):
+        with self._lock:
             loaded = self._active.get(slot)
         if loaded is None:
             raise NoActiveModelError(f"slot {slot!r} has no active model")
@@ -113,12 +113,6 @@ class OnnxRuntime:
         raise ModelUnavailableError(
             f"model {model.id!r} ({model.digest}) is unavailable for slot {slot!r}"
         )
-
-    def _lock_for(self, slot: str) -> threading.RLock:
-        lock = self._locks.get(slot)
-        if lock is None:
-            lock = self._locks[slot] = threading.RLock()
-        return lock
 
     def _validate_inventory(self) -> None:
         for slot, models in self._models.items():

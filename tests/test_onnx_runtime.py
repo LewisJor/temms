@@ -1,5 +1,7 @@
 import asyncio
+import gc
 import threading
+import weakref
 from pathlib import Path
 
 import pytest
@@ -94,6 +96,28 @@ async def test_onnx_runtime_requires_an_active_model() -> None:
 
     with pytest.raises(NoActiveModelError):
         await runtime.infer("missing", {"x": "value"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["state", "infer"])
+async def test_unknown_slot_queries_do_not_retain_caller_slot_names(operation):
+    class Slot(str):
+        __slots__ = ("__weakref__",)
+
+    runtime = OnnxRuntime(models={})
+    references = []
+    for index in range(32):
+        slot = Slot(f"unknown-{index}")
+        references.append(weakref.ref(slot))
+        if operation == "state":
+            assert (await runtime.state(slot)).active_model is None
+        else:
+            with pytest.raises(NoActiveModelError):
+                await runtime.infer(slot, {"x": "value"})
+    del slot
+    gc.collect()  # Release unreachable inference-exception traceback frames too.
+
+    assert all(reference() is None for reference in references)
 
 
 @pytest.mark.asyncio
@@ -285,9 +309,22 @@ async def test_cancelled_replacement_cannot_publish_late(tmp_path, phase) -> Non
     assert (await runtime.state("vision")).active_model == refs[2]
 
 
+async def _probe_other_slot(runtime, model, owner=None):
+    assert (await runtime.state("other")).active_model is None
+    if owner is None:
+        activation = await runtime.activate("other", model)
+    else:
+        activation = (await owner.reconcile("other", {"mode": "other"})).activation
+    assert (await runtime.state("other")).active_model == model
+    return activation, await runtime.infer("other", {"x": "request"})
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("phase", ["construction", "warmup"])
-async def test_blocked_replacement_preserves_serving_and_slot_progress(tmp_path, phase) -> None:
+@pytest.mark.parametrize("other_thread", [False, True], ids=["same-loop", "other-thread"])
+async def test_blocked_replacement_preserves_serving_and_slot_progress(
+    tmp_path, phase, other_thread,
+) -> None:
     from concurrent.futures import ThreadPoolExecutor
 
     from temms import TEMMS, BestFeasibleSelector, Constraint, ModelPolicy, Operator
@@ -307,39 +344,43 @@ async def test_blocked_replacement_preserves_serving_and_slot_progress(tmp_path,
         assert release.wait(timeout=10), "test did not release replacement worker"
 
     class Session:
-        def __init__(self, name):
-            self.name = name
+        def __init__(self, path, providers):
+            self.name = Path(path).stem
+            if self.name == "replacement" and phase == "construction":
+                block_worker()
 
         def run(self, output_names, input_feed):
             if self.name == "replacement" and phase == "warmup" and input_feed["x"] == "warm":
                 block_worker()
             return [f"{self.name}:{input_feed['x']}"]
 
-    def factory(path, providers):
-        name = Path(path).stem
-        if name == "replacement" and phase == "construction":
-            block_worker()
-        return Session(name)
-
     runtime = OnnxRuntime(
-        models={"vision": configs[:2], "other": configs[2:]}, session_factory=factory,
+        models={"vision": configs[:2], "other": configs[2:]}, session_factory=Session,
     )
     temms = TEMMS(runtime=runtime, selector=BestFeasibleSelector([
         ModelPolicy(ref, constraints=(Constraint("mode", Operator.EQ, ref.id),))
         for ref in refs
     ]))
+
     # Leave one worker available while replacement construction or warmup is blocked.
     executor = ThreadPoolExecutor(max_workers=2)
     loop.set_default_executor(executor)
     replacement = asyncio.create_task(temms.reconcile("vision", {"mode": "old"}))
+    pending = [replacement]
     try:
         await asyncio.wait_for(replacement, 2)
         replacement = asyncio.create_task(temms.reconcile("vision", {"mode": "replacement"}))
+        pending.append(replacement)
         await asyncio.wait_for(entered.wait(), 2)
 
-        other = await asyncio.wait_for(temms.reconcile("other", {"mode": "other"}), 2)
-        assert other.activation.active_model == refs[2]
-        result = await asyncio.wait_for(temms.infer("other", {"x": "request"}), 2)
+        # The other thread uses direct runtime calls; it never receives the TEMMS owner.
+        probe = asyncio.create_task(
+            asyncio.to_thread(lambda: asyncio.run(_probe_other_slot(runtime, refs[2])))
+            if other_thread else _probe_other_slot(runtime, refs[2], temms)
+        )
+        pending.append(probe)
+        activation, result = await asyncio.wait_for(probe, 2)
+        assert activation.active_model == refs[2]
         assert result.model == refs[2]
         assert result.output == ("other:request",)
         result = await asyncio.wait_for(temms.infer("vision", {"x": "request"}), 2)
@@ -358,8 +399,10 @@ async def test_blocked_replacement_preserves_serving_and_slot_progress(tmp_path,
         assert (await runtime.state("other")).active_model == refs[2]
     finally:
         release.set()
-        replacement.cancel()
+        for task in pending:
+            task.cancel()
         try:
-            await asyncio.wait_for(asyncio.gather(replacement, return_exceptions=True), 2)
+            await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), 2)
         finally:
+            # Also join a cancelled probe's thread and its asyncio.run-owned worker pool.
             executor.shutdown(wait=True, cancel_futures=True)

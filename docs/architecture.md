@@ -83,8 +83,11 @@ concurrent activation may change later requests but cannot change the in-flight
 request's model or attribution.
 
 For `OnnxRuntime`, admission occurs when `infer()` captures the loaded session
-under the slot lock, before dispatching inference to a thread. Publication occurs
-when `activate()` assigns the fully loaded and warmed session under that lock.
+under the adapter's single lock, before dispatching inference to a thread.
+Publication occurs when `activate()` assigns the fully loaded and warmed session
+under that lock. The lock protects only active-state capture and publication;
+native construction, warmup and inference execute outside it. Unknown-slot reads
+do not create retained lock entries. TEMMS reconciliation locks remain per slot.
 Calling an async method without awaiting or scheduling it does not admit a request.
 TEMMS delegates inference; it must not compare an old result with the latest state.
 
