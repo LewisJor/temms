@@ -8,7 +8,9 @@ Pet photographs; every served output is checked against direct ONNX execution fo
 that exact image and model.
 
 The target is **native Ubuntu 24.04 on x86_64 and ARM64**, using Docker and Python
-3.12 inside the image. Hosted qualification is pending. The
+3.12 inside the image. Both architectures passed the
+[first hosted qualification](https://github.com/LewisJor/temms/actions/runs/39485701787)
+at `827b7242`. The
 [verification record](../../docs/progress.md) identifies completed runs and exact
 revisions; a workflow configuration alone is not a passing result. Docker is a
 qualification tool outside the library. TEMMS core still has zero required runtime
@@ -119,6 +121,8 @@ retain worker output. Image and Docker-host metadata are saved alongside them.
 The launcher prints the verifier's result and saves it in `verification.log`, with
 `verification-container.json` recording that separate container's exit and limits.
 Use the exact source revision that produced the records when auditing them.
+Each run also retains the pinned `labels.txt`, allowing the verifier to check
+displayed labels as well as numerical predictions without downloading anything.
 
 Acceptance requires all of the following:
 
@@ -147,6 +151,10 @@ Activation and inference timings are descriptive. Compare them only with the
 recorded architecture, image, dependencies, quota and contention conditions. This
 scenario sets no deadline and establishes no general latency or throughput promise.
 Whole-container memory accounting is also distinct from process RSS.
+This constrained trace awaits each replacement before serving the next request.
+The separate [native in-flight test](../../tests/test_onnx_runtime_integration.py)
+checks inference overlapping publication; its installed-wheel execution is required
+in both architecture jobs.
 
 ## GitHub Actions
 

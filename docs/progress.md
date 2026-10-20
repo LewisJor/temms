@@ -40,21 +40,51 @@ and example code, not the library source checkout. Docker build context is expli
 limited to those inputs. CPU/memory probes, fault fixtures and Docker integration
 remain outside the published library; no public protocol or backend was added.
 
-## Qualification status
+## Hosted qualification
 
-The [native workflow](../.github/workflows/edge.yml) targets Ubuntu 24.04 x86_64 and
-ARM64 without QEMU. Its host installed-wheel suite and two constrained workers per
-architecture are configured; **hosted qualification has not yet completed** for
-this revision. Configuration and local unit results are not native Linux evidence.
-The image pins its Ubuntu base digest and ONNX Runtime 1.24.1, NumPy 2.4.2 and
-Pillow 12.1.0. Ubuntu's Python 3.12 patch and installed environment are recorded;
-apt package resolution is not frozen by the base-image digest.
+Implementation [`827b7242`](https://github.com/LewisJor/temms/commit/827b7242fc318d6567f20f5f7715ab71d7d7c049)
+passed the [native matrix](https://github.com/LewisJor/temms/actions/runs/39485701787)
+and the [existing Ubuntu qualification](https://github.com/LewisJor/temms/actions/runs/39485701691).
+Both architecture jobs ran **286 installed-wheel tests without skips** and two
+fresh constrained workers. The image used Ubuntu 24.04, Python **3.12.3**, ONNX
+Runtime **1.24.1**, NumPy **2.4.2** and Pillow **12.1.0**. The host test interpreter
+was Python 3.12.15. No QEMU was used. The base image is digest-pinned; apt package
+resolution is not frozen by that digest.
 
-Local checks will be recorded alongside the completed hosted result. A native
-ONNX regression already exercises the full 113-request fault/recovery trace using
-small real graphs. Focused resource tests reject unenforced or invalid limits,
-network leakage, inactive/escaped competitors, absent throttling and failed
-cleanup. These tests do not replace executing the real models under Linux limits.
+| Architecture | Served across two workers | Peak cgroup memory, worker 1 / 2 | Throttled periods during contention, worker 1 / 2 |
+| --- | ---: | ---: | ---: |
+| x86_64 | 226 | 358.61 / 344.42 MiB | 4 / 5 |
+| ARM64 | 226 | 338.61 / 397.60 MiB | 18 / 18 |
+
+All four workers checked **20/20 images and 40/40 model/image pairs**. All **452
+served vectors and identities matched** their references. Each worker rejected
+the corrupt replacement, kept the previous model serving, restored the artifact,
+completed twelve alternating swaps and abstained once before resuming. Each had
+**zero OOM events**, a successful exit and verified read-only assets. Both CPU
+competitors consumed CPU during each contention block. Independent verification
+passed in the constrained verifier container and again on the downloaded records.
+Each worker classified 99/113 requests as expected; this is descriptive, not an
+accuracy acceptance threshold or a new evaluation set.
+
+Artifacts `edge-x64-39485701787-1` and `edge-arm64-39485701787-1` retain full scores,
+references, labels, environment, cgroup counters, container inspections, build and
+test logs. GitHub retains them for 30 days; downloaded copies remain under
+`.demo-assets/edge/ci-39485701787/`, outside Git. Later revisions must be associated
+with their own workflow conclusions; these measurements identify `827b7242`.
+
+## Local checks and size
+
+The complete local suite now passes **303 tests with zero skips** on macOS ARM64.
+The additional seventeen verifier regressions include sixteen deliberately damaged
+evidence cases: wrong non-argmax scores, identity/hash drift, forged summaries,
+bad resource witnesses, reused containers and writable original assets. The full
+native scenario also has a regression using small real ONNX graphs. Resource
+tests reject unenforced limits, network leakage, escaped or inactive competitors,
+absent throttling and failed cleanup. Scoped Ruff, strict mypy on ten files, the
+architecture budget and the strict Sphinx documentation build pass. Source and
+wheel builds succeed; the source distribution includes the Dockerfile and launcher,
+while the wheel contains only the library. No constrained Docker workload was
+executed on this development Mac.
 
 Core remains **429 physical lines** across five modules, largest 178; exports 50,
 adapters 229 and the tiny example 37. Required runtime dependencies remain zero.
@@ -85,8 +115,8 @@ survival test. Constrained hosted CPUs do not qualify a Raspberry Pi, Jetson,
 thermal limits, battery life or sensor behavior. See the
 [release/support criteria](../CONTRIBUTING.md#release-and-support-criteria).
 
-**Exactly one next action:** complete the native Linux matrix and audit its retained
-evidence against the declared acceptance criteria.
+**Exactly one next action:** run the documented profile unchanged on the intended
+physical ARM64 edge device and retain its revision, environment and evidence.
 
 Read `exercise` in `examples/edge/run.py`, `cpu_pressure` in
 `examples/edge/resources.py`, and `OnnxRuntime.infer` in `src/temms/adapters/onnx.py`.
