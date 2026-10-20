@@ -76,8 +76,10 @@ python -m build --wheel --outdir dist
 docker build -f examples/edge/Dockerfile -t temms-edge .
 ```
 
-Asset preparation downloads about 61 MB of shared model assets and 655 KB of images.
-It verifies pinned sizes and hashes and reuses valid files. The image build also
+Asset preparation downloads about 61 MB of shared model assets and copies 655 KB
+of images from the checkout's [pinned fixtures](../live_swap/inputs/README.md).
+It verifies pinned sizes and hashes and reuses valid files. Input preparation needs
+no dataset-viewer connection. The image build also
 needs networking to obtain its base image and dependencies. Both steps happen
 before the offline qualification.
 
@@ -235,7 +237,9 @@ hosted status rather than assuming this configured matrix has passed.
 ## Limits and troubleshooting
 
 - If preparation reports a missing or corrupt asset, rerun the two preparation
-  commands while connected. The qualification does not download missing weights.
+  commands; model downloads require connectivity, while the twenty images come
+  from the checkout. If a bundled fixture fails its hash check, restore that file
+  from the same source revision. The qualification does not download missing weights.
 - If Docker or cgroup checks fail, inspect the host and saved container configuration.
   Do not remove the constraints to turn a failed qualification into a pass.
 - If an OOM event, timeout or native error occurs outside the deliberate corrupt

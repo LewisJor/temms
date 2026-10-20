@@ -44,7 +44,7 @@ def verify_assets(directory: Path, manifest: dict | None = None) -> dict:
 
 
 def prepare(directory: Path, manifest: dict | None = None) -> dict:
-    """Download missing/corrupt files, publishing only complete verified assets."""
+    """Transfer missing/corrupt files, publishing only complete verified assets."""
     manifest = _manifest() if manifest is None else manifest
     directory.mkdir(parents=True, exist_ok=True)
     for record in manifest["files"]:
@@ -52,7 +52,7 @@ def prepare(directory: Path, manifest: dict | None = None) -> dict:
         if _matches(destination, record):
             print(f"Verified {record['name']}", flush=True)
             continue
-        print(f"Downloading {record['name']} ({record['bytes']:,} bytes)", flush=True)
+        print(f"Preparing {record['name']} ({record['bytes']:,} bytes)", flush=True)
         staged = None
         try:
             with tempfile.NamedTemporaryFile(

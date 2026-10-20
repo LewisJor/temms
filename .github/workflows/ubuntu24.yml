@@ -106,7 +106,7 @@ jobs:
           assert required <= native, 'all three real ONNX integration cases must execute'
           print(f'{len(cases)} tests passed, zero skips; {len(native)} native ONNX cases')
           PY
-      - name: Prepare and verify the pinned models and inputs online
+      - name: Download pinned models and prepare bundled inputs
         run: |
           python examples/live_swap/assets.py --assets "$ASSETS" 2>&1 | tee "$EVIDENCE/preparation.log"
           python examples/live_swap/workload.py --assets "$ASSETS" 2>&1 | tee "$EVIDENCE/workload-preparation.log"

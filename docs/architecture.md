@@ -132,9 +132,9 @@ Runtime-specific dependencies live only in adapters.
 
 Reviewed against primary documentation on **2026-10-13**. The assumed customer is
 a developer embedding inference in a single-device Python application, initially
-on a Linux edge computer or robot. Execution evidence includes macOS ARM64 and the
-[Ubuntu 24.04 x86_64 hosted CPU qualification](https://github.com/LewisJor/temms/actions/runs/38754444278)
-completed on **2026-10-15**. A physical edge device has not been qualified. This
+on a Linux edge computer or robot. Execution evidence includes macOS ARM64 and
+[constrained Ubuntu 24.04 native x86_64 and ARM64 qualification](https://github.com/LewisJor/temms/actions/runs/39485701787)
+at `827b7242` on **2026-10-20**. A physical edge device has not been qualified. This
 comparison concerns architecture and integration cost, not measured performance
 across engines.
 
@@ -157,8 +157,9 @@ An ONNX Runtime Execution Provider assigns supported graph operations to executi
 backends; it does not choose model identities. Changing providers or placing the
 same runtime in several containers does not prove independent-engine portability.
 The in-memory adapter is useful contract evidence, not a second trained-model engine.
-Docker could later check installation and offline execution in named environments;
-emulated architectures would still need native-device qualification for performance.
+The maintained [Docker qualification](../examples/edge/README.md) checks installed
+execution, resource limits and offline operation on native hosted CPUs. It does
+not establish physical-device performance or another inference engine's compatibility.
 See [providers](https://onnxruntime.ai/docs/execution-providers/) and
 [Docker multi-platform builds](https://docs.docker.com/build/building/multi-platform/).
 

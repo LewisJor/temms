@@ -15,6 +15,7 @@ else:
 
 MANIFEST = Path(__file__).with_name("workload.json")
 VALIDATION_MANIFEST = Path(__file__).with_name("validation.json")
+BUNDLED_INPUTS = Path(__file__).with_name("inputs")
 
 
 def _manifest(name: str = "small") -> dict:
@@ -53,13 +54,22 @@ def _resolve(record: dict, rows: dict, names: list) -> str:
 
 
 def prepare_workload(directory: Path, name: str = "small") -> dict:
-    """Resolve expiring URLs only after checking the revision and row annotations."""
+    """Copy bundled inputs or resolve checked validation URLs, then verify bytes."""
     manifest = _manifest(name)
     print(f"Frozen selection: {manifest['selection_rule']}", flush=True)
     resolved = {**manifest, "files": [dict(record) for record in manifest["files"]]}
     pages = {}
     for record in resolved["files"]:
         if assets._matches(directory / record["name"], record):
+            continue
+        if name == "small":
+            source = BUNDLED_INPUTS / record["name"]
+            if not assets._matches(source, record):
+                raise ValueError(
+                    f"Missing or corrupt bundled workload image: {source}. "
+                    "Restore examples/live_swap/inputs from this checkout."
+                )
+            record["url"] = source.resolve().as_uri()
             continue
         offset = record["source_row"] // 100 * 100
         if offset not in pages:

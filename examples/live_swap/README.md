@@ -17,12 +17,16 @@ python examples/live_swap/assets.py
 python examples/live_swap/workload.py
 ```
 
-Preparation downloads about 61 MB of shared model assets and 655 KB of evaluation
-images into `.demo-assets/live-swap`. [assets.json](assets.json) pins the models,
+Preparation downloads about 61 MB of shared model assets and copies 655 KB of
+bundled evaluation images into `.demo-assets/live-swap`. [assets.json](assets.json) pins the models,
 labels and Chelsea photo used by the other experiments; [workload.json](workload.json)
 pins the twenty replay images and their expected classes. Both manifests retain
 source revisions, licenses, sizes and SHA-256 hashes. The `demo` extra adds Pillow;
-core TEMMS still has no required runtime dependencies. Keep assets and records out of Git.
+core TEMMS still has no required runtime dependencies. The twenty image fixtures
+and their [attribution](inputs/README.md) ship in the checkout and source distribution,
+outside the library wheel. Keep downloaded models, prepared copies and run records
+out of Git. Small-workload preparation needs no dataset-viewer service; the optional
+140-image validation workload still resolves and verifies its upstream annotations.
 
 Serving prepared models needs only the `onnx,demo` extras. The `dev` extra adds
 graph-building and test tools; it is not required on the device running this demo.
@@ -53,9 +57,10 @@ version. The example files are shipped in the source distribution, not the wheel
 Prepared inference and swapping need no upstream service. Missing or corrupt assets
 fail explicitly; the runner does not download replacements.
 
-If preparation is interrupted, rerun the preparation command when connectivity
+If model preparation is interrupted, rerun the preparation command when connectivity
 returns. Complete files with matching sizes and hashes are reused; only missing
-or invalid files are downloaded. An interrupted file starts again from the beginning.
+or invalid files are downloaded. Small-workload images are copied from the bundled
+fixtures without networking. An interrupted file starts again from the beginning.
 Staging keeps partial downloads from replacing existing files, and a completed
 preparation can be repeated offline. There is no automatic retry loop, byte-range
 resume or synchronization service. This supports local operation under unavailable
@@ -241,8 +246,8 @@ The maintained [qualification workflow](../../.github/workflows/ubuntu24.yml)
 targets **Ubuntu 24.04 x86_64, CPython 3.12.15, ONNX Runtime 1.24.1, NumPy 2.4.2
 and Pillow 12.1.0**, with ONNX 1.21.0 for native test fixtures. It builds and installs
 a wheel in a fresh environment. Missing required native cases or any skipped test
-fails qualification. Preparation downloads and verifies both the shared assets and
-twenty-image workload. The replay then runs as the runner
+fails qualification. Preparation downloads and verifies the shared assets and copies
+the bundled twenty-image workload with the same size and hash checks. The replay then runs as the runner
 user inside a new Linux network namespace, with no external interface. A direct-IP
 probe must fail with the kernel's no-route error before the replay starts. There is
 no fallback to connected execution if isolation fails.

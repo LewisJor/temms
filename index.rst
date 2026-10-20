@@ -20,6 +20,7 @@ in Git history.
    Architecture <docs/architecture>
    Edge CPU qualification <examples/edge/README>
    Real-model demo <examples/live_swap/README>
+   Input provenance and license <examples/live_swap/inputs/README>
    Comparison protocols and results <examples/live_swap/COMPARISON>
    Verification and progress <docs/progress>
    Contributing <CONTRIBUTING>

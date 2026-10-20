@@ -217,9 +217,10 @@ python examples/live_swap/workload.py
 python examples/live_swap/run.py
 ```
 
-Preparation downloads about 61 MB of shared model assets and 655 KB of pinned,
-labeled dog images. The offline replay cycles through twenty images while simulated
-battery changes trigger swaps, a failed replacement, continued serving and abstention.
+Preparation downloads about 61 MB of shared model assets and copies 655 KB of
+pinned, labeled dog images from the checkout. The offline replay cycles through
+twenty images while simulated battery changes trigger swaps, a failed replacement,
+continued serving and abstention.
 Each served request displays its input, expected class, prediction and inference time.
 Its full 1,000-score output must match direct ONNX execution for that input and model,
 and its model identity must match admission. These checks catch stale-image outputs

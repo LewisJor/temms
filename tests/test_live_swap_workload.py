@@ -26,6 +26,7 @@ def workload_manifest(tmp_path, monkeypatch):
     path = tmp_path / "workload.json"
     path.write_text(json.dumps(manifest))
     monkeypatch.setattr(workload, "MANIFEST", path)
+    monkeypatch.setattr(workload, "VALIDATION_MANIFEST", path)
     return manifest
 
 
@@ -56,12 +57,12 @@ def test_workload_resolves_checked_rows_and_preserves_manifest(
 
     monkeypatch.setattr(workload, "urlopen", metadata)
     monkeypatch.setattr(assets, "urlopen", download)
-    assert workload.prepare_workload(tmp_path) == workload_manifest
+    assert workload.prepare_workload(tmp_path, "validation") == workload_manifest
     assert len(metadata_requests) == 1
     assert "offset=0&length=100" in metadata_requests[0]
     assert len(image_requests) == 2
     assert all("signature=fresh" in url for url in image_requests)
-    assert json.loads(workload.MANIFEST.read_text()) == workload_manifest
+    assert json.loads(workload.VALIDATION_MANIFEST.read_text()) == workload_manifest
     assert not list(tmp_path.glob("*.part"))
 
 
@@ -85,20 +86,67 @@ def test_workload_rejects_source_drift_before_any_image_download(
     monkeypatch.setattr(assets, "urlopen", lambda *a, **k: pytest.fail("unexpected download"))
 
     with pytest.raises(ValueError, match="changed"):
-        workload.prepare_workload(tmp_path)
+        workload.prepare_workload(tmp_path, "validation")
     assert not list(tmp_path.glob("pet-*.jpg"))
 
 
-def test_prepared_workload_verifies_and_prepares_without_network(
-    tmp_path, monkeypatch, workload_manifest,
+@pytest.mark.parametrize("name", ["small", "validation"])
+def test_prepared_workload_verifies_and_prepares_without_network_or_bundled_inputs(
+    tmp_path, monkeypatch, workload_manifest, name,
 ):
     (tmp_path / "pet-beagle_1.jpg").write_bytes(b"first")
     (tmp_path / "pet-boxer_2.jpg").write_bytes(b"second")
     for module in (assets, workload):
         monkeypatch.setattr(module, "urlopen", lambda *a, **k: pytest.fail("unexpected network"))
+    monkeypatch.setattr(workload, "BUNDLED_INPUTS", tmp_path / "missing-fixtures")
 
-    assert workload.verify_workload(tmp_path) == workload_manifest
-    assert workload.prepare_workload(tmp_path) == workload_manifest
+    assert workload.verify_workload(tmp_path, name) == workload_manifest
+    assert workload.prepare_workload(tmp_path, name) == workload_manifest
+
+
+def test_fresh_small_workload_copies_all_frozen_inputs_without_network(tmp_path, monkeypatch):
+    manifest = workload._manifest()
+    downloads = []
+    local_open = assets.urlopen
+
+    def open_file(url, timeout):
+        assert url.startswith(workload.BUNDLED_INPUTS.resolve().as_uri() + "/")
+        downloads.append(url)
+        return local_open(url, timeout=timeout)
+
+    monkeypatch.setattr(workload, "urlopen", lambda *a, **k: pytest.fail("unexpected metadata"))
+    monkeypatch.setattr(assets, "urlopen", open_file)
+    destination = tmp_path / "fresh cache"
+    assert workload.prepare_workload(destination) == manifest
+    assert len(downloads) == len(manifest["files"]) == 20
+    assert sum((destination / record["name"]).stat().st_size
+               for record in manifest["files"]) == 654484
+    assert workload.verify_workload(destination) == manifest
+    assert json.loads(workload.MANIFEST.read_text()) == manifest
+    assert not list(destination.glob("*.part"))
+
+
+@pytest.mark.parametrize("damage", ["missing", "corrupt"])
+def test_bad_bundled_source_preserves_existing_destinations(
+    tmp_path, monkeypatch, workload_manifest, damage,
+):
+    bundled = tmp_path / "bundled"
+    bundled.mkdir()
+    first, second = workload_manifest["files"]
+    (bundled / first["name"]).write_bytes(b"first")
+    if damage == "corrupt":
+        (bundled / second["name"]).write_bytes(b"BROKEN")  # Same size, different digest.
+    monkeypatch.setattr(workload, "BUNDLED_INPUTS", bundled)
+    for module in (assets, workload):
+        monkeypatch.setattr(module, "urlopen", lambda *a, **k: pytest.fail("unexpected transfer"))
+    for record in workload_manifest["files"]:
+        (tmp_path / record["name"]).write_bytes(b"existing bytes")
+
+    with pytest.raises(ValueError, match="Missing or corrupt bundled workload image.*pet-boxer"):
+        workload.prepare_workload(tmp_path)
+    assert all((tmp_path / record["name"]).read_bytes() == b"existing bytes"
+               for record in workload_manifest["files"])
+    assert not list(tmp_path.glob("*.part"))
 
 
 def test_workload_missing_or_corrupt_error_gives_workload_command(

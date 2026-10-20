@@ -60,9 +60,12 @@ dataset revision, annotations, bytes, and SHA-256 hashes. Oxford licenses the
 Omkar M. Parkhi, Andrea Vedaldi, Andrew Zisserman, and C. V. Jawahar, *Cats and Dogs*,
 CVPR 2012. Image copyright remains with original owners. The prepared files are
 Hugging Face viewer JPEG renditions and may differ from original image encodings.
-Preparation checks the viewer's revision and annotations before resolving temporary
-image URLs; if the upstream revision or encoding changes, it fails instead of
-silently changing the experiment. Already verified files need no network.
+Small-workload preparation copies the unchanged [bundled fixtures](inputs/README.md)
+and verifies their hashes without networking. Their original acquisition checked
+the viewer's revision and annotations. The separate 140-image validation workload
+still performs those remote checks before resolving temporary image URLs; if its
+upstream revision or encoding changes, it fails instead of silently changing the
+experiment. Already verified files need no network.
 
 ## Predeclared workload and acceptance
 
