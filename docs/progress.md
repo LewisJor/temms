@@ -1,157 +1,136 @@
 # TEMMS progress — updated 2026-10-20
 
 TEMMS remains an alpha Python library for application-owned local inference. This
-measurement pass starts from `fe6a079e`. The baseline passed 275 tests; the current
-suite passes **310 tests with zero skips**, with Ruff, strict mypy, architecture
-checks, source/wheel builds and the strict documentation build passing.
+pass started at `fe6a079e`, whose 275-test baseline passed. Three bounded iterations
+addressed measurement quality, input-buffer ownership and adapter storage. Core
+policy, public protocols and application scheduling are unchanged.
 
-The [predeclared dispatch experiment](../examples/live_swap/COMPARISON.md#four-path-dispatch-protocol--2026-10-20)
-replaces the two-path probe with four equivalent paths on one warmed session.
-Four fresh Ubuntu processes and balanced call/model order will test whether a
-material cost belongs to thread dispatch, the adapter or TEMMS. Collection is
-pending; no performance improvement is claimed. Support code grows by 85 probe
-lines and 259 probe-test lines, outside the installed library.
+## Kept changes and evidence
 
-A separate characterization adds 42 test lines and seven architecture-document
-lines: inference snapshots its mapping but borrows mutable values, even after
-caller cancellation. The test shows why input storage must remain unchanged until
-native work completes. No deep copies, scheduling policy or runtime API was added.
+The [four-path dispatch study](../examples/live_swap/COMPARISON.md#four-path-dispatch-result--2026-10-20)
+tested native execution, thread dispatch, the ONNX adapter and TEMMS on the same
+warmed session. Its repetition count, balanced order and decision threshold were
+fixed before collection. Source `d0e2f324` completed
+[one Ubuntu run](https://github.com/LewisJor/temms/actions/runs/39501140290): four fresh
+processes, 1,920 blocks and **7,680 checked timed calls**, with no retries. Independent
+recomputation verified raw summaries, recorded output hashes, model identities,
+network isolation and installed-source provenance. No layer met the predeclared
+threshold across all four processes for either model. **Retain inference dispatch**;
+no speedup or zero-overhead claim follows. Probe support grows by 85 lines and its
+tests by 259 lines, outside the installed library. Raw records and the frozen source
+remain under `.demo-assets/live-swap/dispatch-20261020/` and in the linked workflow.
 
-## Previous qualification repair
+The ownership characterization at `53d02fe5` adds 42 test lines and seven architecture
+lines: inference snapshots its mapping but borrows mutable values, including after
+caller cancellation. A controlled worker observes a later mutation to the original
+buffer, while replacement of the caller's mapping entry does not change its input.
+Applications must preserve buffers until native work finishes. No deep copy,
+executor or new lifecycle API was introduced.
 
-The previous iteration started from `8caf55ac` and made three bounded changes: remove the
-graphical simulator, repair fresh qualification input preparation, and honor every
-explicitly injected ONNX session factory. No core policy or public protocol changed.
+The storage fix at `a8230850` replaces the ONNX adapter's growing per-slot lock map
+with one lock protecting only brief active-state capture/publication. Previously,
+1,000 unknown-slot reads retained 1,000 locks. Weak-reference regressions fail on
+that implementation and pass after the fix. Native construction, warmup and
+inference remain outside the lock. Existing progress tests now also exercise a
+separate calling thread; deliberately holding the lock across loading makes both
+new cases fail at bounded timeouts with clean teardown. The fix removes **six
+adapter lines** and adds a net 43 test lines. TEMMS reconciliation locks remain per
+slot; this bounds adapter synchronization storage, not every library allocation.
+The dispatch study predates this fix and is not its speed comparison.
 
-## Failure and acceptance
+## Verification and size
 
-At `8caf55ac`, [both native architecture jobs](https://github.com/LewisJor/temms/actions/runs/39492290202)
-and the [Ubuntu CPU replay](https://github.com/LewisJor/temms/actions/runs/39492290128)
-failed with HTTP 502 while requesting Hugging Face dataset-viewer metadata. Shared
-models, labels and the Chelsea image had downloaded and verified successfully.
-The failures occurred before inference; nevertheless, a fresh user's preparation
-path was broken. CI, core packaging and documentation passed at that revision.
-
-**Hypothesis:** the ordinary qualification can prepare its unchanged twenty inputs
-without a live metadata service. Acceptance requires fresh offline preparation,
-the original pinned hashes, fail-closed handling of damaged source fixtures,
-unchanged validation-workload provenance, and successful native Linux qualification
-without weakening its resource or output gates.
-
-The twenty existing JPEGs now ship as example fixtures: **654,484 bytes**, with
-[attribution and CC BY-SA 4.0 terms](../examples/live_swap/inputs/README.md). Their
-bytes and frozen manifest are unchanged. Preparation checks needed sources before
-copying through the existing atomic staging path. Prepared caches need neither
-the bundle nor networking. The optional 140-image validation workload still checks
-remote revision and annotations before downloading; its preparation retains that
-upstream availability dependency. Model acquisition and image builds still need
-networking before disconnected execution.
-
-The graphical simulator's workflow, world, controller, verifier and dedicated
-tests were removed, along with camera-only helpers. This deletes about **1,400
-lines** of support code. The maintained execution path is the
-[headless Ubuntu qualification](../examples/edge/README.md).
-
-Separately, the ONNX adapter used `session_factory or default`, silently ignoring
-a valid callable with false truthiness. It now defaults only on `None`. A regression
-failed before the fix and passes afterward, checking injected construction, warmup,
-activation and inference. The adapter's publication and session-capture logic is
-unchanged.
-
-## Local verification and size
-
-That repair passed **275 tests with zero skips** on macOS ARM64, Python 3.11.8,
-ONNX Runtime 1.24.1, NumPy 2.4.2 and Pillow 12.1.0. The lower count reflects removal
-of simulator-specific tests, with new preparation and injection regressions added.
-Ruff, strict mypy on ten files, the architecture budget and the strict Sphinx build
-pass. Fresh preparation tests permit only local fixture URLs and reject metadata
-access. They also check
-missing/corrupt sources, untouched prior destinations and cached offline reuse.
-
-Source and wheel builds succeed using the installed backend without isolation.
-The source distribution contains all twenty exact JPEGs and their attribution;
-the wheel contains only the library. The Docker build context excludes the fixtures
-because preparation supplies the separate read-only asset mount. No constrained
-Docker workload was executed on this development Mac.
-
-An extracted source archive also prepared all twenty inputs into an empty directory
-with a verified socket-connection denial hook: zero connection attempts, all pinned
-bytes intact. Neither distribution contains simulator paths. The built library
-wheel is **20,078 bytes**, including standard distribution metadata and license.
+The final local suite passes **314 tests with zero skips** on macOS ARM64,
+Python 3.11.8, ONNX Runtime 1.24.1, NumPy 2.4.2 and Pillow 12.1.0. The focused adapter,
+lifetime, conformance and architecture checks pass 37 tests. Ruff passes on the
+maintained `src tests examples` paths, and strict mypy passes all ten configured
+files. The strict Sphinx documentation build passes. Source/wheel builds succeed
+with the installed backend. A clean core-only
+environment imports every library module and runs the maintained example from the
+installed wheel without optional ML dependencies. Final hosted qualification of
+the storage fix is pending; earlier green runs do not substitute for it.
 
 Core remains **429 physical lines** across five modules, largest 178; exports 50,
-adapters 229 and the tiny example 37. Required runtime dependencies remain zero.
-No executor, cache, registry, backend or new public abstraction was introduced.
+adapters **223** and the tiny example 37. Required runtime dependencies remain zero.
+The locally built library wheel is **20,048 bytes**, including metadata and license.
+The experiment added no installed dependency, public abstraction or execution
+framework. No constrained Docker workload ran on this development Mac.
 
-## Hosted qualification
+## Previous qualification and preparation repair
 
-The fix at
-[`a0c8beca`](https://github.com/LewisJor/temms/commit/a0c8becab54d169e156b34837ce4c4dbbf417e52)
-passed the [native matrix](https://github.com/LewisJor/temms/actions/runs/39496958193)
-and [Ubuntu replay](https://github.com/LewisJor/temms/actions/runs/39496958438).
-[CI](https://github.com/LewisJor/temms/actions/runs/39496958066),
-[installed core packaging](https://github.com/LewisJor/temms/actions/runs/39496958061)
-and [documentation publication](https://github.com/LewisJor/temms/actions/runs/39496958125)
-also passed. Each native architecture ran **275 installed-wheel tests without skips**
-and two fresh constrained containers. The images used Ubuntu 24.04, Python 3.12.3, ONNX Runtime
-1.24.1, NumPy 2.4.2 and Pillow 12.1.0; the host test interpreter was Python 3.12.15.
-No QEMU was used. These measurements identify that code revision; later
-documentation-only status updates do not change the tested implementation.
+At `8caf55ac`, [native architecture jobs](https://github.com/LewisJor/temms/actions/runs/39492290202)
+and the [Ubuntu replay](https://github.com/LewisJor/temms/actions/runs/39492290128)
+failed before inference: Hugging Face dataset-viewer metadata returned HTTP 502.
+The ordinary twenty inputs now ship as **654,484 bytes** of pinned example JPEGs
+with [attribution and CC BY-SA 4.0 terms](../examples/live_swap/inputs/README.md).
+Their bytes and frozen workload manifest did not change. Fresh offline preparation,
+corrupt/missing-source rejection, atomic destination preservation and prepared-cache
+reuse passed. The source distribution includes them; the library wheel does not.
+The optional 140-image validation preparation still depends on upstream metadata;
+model acquisition and image builds still need networking before offline execution.
+
+The same pass removed about 1,400 lines of graphical-simulator support. The maintained
+path is the [headless Ubuntu qualification](../examples/edge/README.md). A separate
+regression corrected falsey injected session factories: the adapter chooses its
+default only when the supplied factory is `None`.
+
+The repaired source `a0c8beca` passed the
+[native matrix](https://github.com/LewisJor/temms/actions/runs/39496958193) and
+[Ubuntu replay](https://github.com/LewisJor/temms/actions/runs/39496958438).
+Both native architectures ran 275 installed-wheel tests without skips, including
+all three real ONNX integration tests, and two fresh constrained containers each.
+The fixed profile is one CPU quota, 512 MiB, no swap, no external network, non-root
+execution and read-only original assets. No QEMU was used.
 
 | Architecture | Served across two workers | Peak cgroup memory, workers 1 / 2 |
 | --- | ---: | ---: |
 | x86_64 | 226 | 348.77 / 373.07 MiB |
 | ARM64 | 226 | 346.41 / 330.95 MiB |
 
-All **452 served score vectors and identities matched** direct references, with
-20/20 images and 40/40 model/image pairs checked in each worker. All four completed
-corrupt-artifact recovery, twelve alternating swaps and missing-context abstention
-followed by recovery. They had zero OOM events and verified read-only assets.
-Both contention helpers consumed CPU during each serving block and cgroup counters
-witnessed throttling. Independent verification passed again on both downloaded
-architecture records. Raw artifacts are retained by GitHub for 30 days; downloaded
-copies remain under `.demo-assets/edge/ci-39496958193/`.
+All **452 served score vectors and identities matched** direct references; every
+worker checked 20/20 images and 40/40 model/image pairs, with zero OOM events. All
+completed corrupt-artifact recovery, twelve alternating swaps and missing-context
+abstention/resume. Helpers consumed CPU and cgroup counters witnessed throttling.
+The separate offline replay checked 69 served outputs, all twenty inputs and all
+seven scenes. Downloaded records were independently reverified and remain under
+`.demo-assets/edge/ci-39496958193/` and `.demo-assets/edge/cpu-39496958438/`.
+The intervening failed runs remain part of the record.
 
-The separate offline Ubuntu replay passed all seven scenes: **69 served outputs**,
-20/20 inputs and 35/40 model/input pairs, with zero score or identity mismatches.
-Its raw-record audit, network isolation and 275-test XML were checked again locally.
-Records remain under `.demo-assets/edge/cpu-39496958438/`. Earlier qualification
-[at `827b7242`](https://github.com/LewisJor/temms/actions/runs/39485701787) remains
-historical evidence; the intervening metadata failures above were not erased or
-treated as passing runs.
+All five push workflows also passed at `d0e2f324`, before the later storage fix:
+[CI](https://github.com/LewisJor/temms/actions/runs/39500758344),
+[installed core](https://github.com/LewisJor/temms/actions/runs/39500758338),
+[documentation](https://github.com/LewisJor/temms/actions/runs/39500758367),
+[native matrix](https://github.com/LewisJor/temms/actions/runs/39500758332) and
+[Ubuntu replay](https://github.com/LewisJor/temms/actions/runs/39500758331).
+Each revision's measurements stand separately.
 
-## Performance and evidence boundaries
+## Limits and next action
 
-The existing [comparison and memory studies](../examples/live_swap/COMPARISON.md)
-remain dated, narrow measurements. On the 140-image validation workload, background
-adaptation produced 102 timely correct responses per run versus 101 for fixed-small,
-while using substantially more memory. Existing wrapper-overhead differences
-changed sign between processes, and both comparison paths include adapter/thread
-dispatch. Direct ONNX controls also reproduced memory growth. None establishes
-a general speed advantage, leak-freedom or unique hot-swapping capability.
+The existing [task comparison and memory studies](../examples/live_swap/COMPARISON.md)
+remain narrow measurements. Background adaptation produced 102 timely correct
+responses versus 101 for fixed-small on the 140-image validation workload, while
+using substantially more memory. Direct ONNX controls also reproduced memory growth.
+No general speed advantage, leak-freedom or unique hot-swapping capability is established.
 
-The constrained trace uses application-scripted context, not automatic resource
-sensing. Its direct references share preprocessing and ONNX Runtime with serving;
-agreement checks integration consistency, not independent engine correctness.
-References warm native code and filesystem caches. The same twenty inputs are
-reused; this is neither a new accuracy study nor a cold-device benchmark.
-Whole-container memory includes native allocations, helpers and charged file cache.
-Recoverable corrupt-file rejection is not hard-OOM survival or a deadline guarantee.
+The constrained trace uses scripted application context. Its direct references
+share preprocessing and ONNX Runtime with serving, checking integration consistency
+rather than independent engine correctness. Reused inputs and warmed caches do not
+measure cold-device startup. Whole-container memory includes native allocations,
+helpers and charged cache. Recoverable artifact rejection is not hard-OOM survival,
+a deadline guarantee or a power measurement.
 
-The selected mounted-device target is **Raspberry Pi 5 (4 GB), running 64-bit
-Ubuntu Server 24.04 LTS**. Its [setup guide](../examples/edge/README.md#set-up-the-reference-device)
-uses the same one-CPU, 512 MiB, no-swap, disconnected profile. No physical Pi run
-has been established. Hosted ARM64 evidence does not establish battery life,
-thermal limits, power use or sensor integration. See the
-[release/support criteria](../CONTRIBUTING.md#release-and-support-criteria).
+The mounted-device target is **Raspberry Pi 5 (4 GB), running 64-bit Ubuntu Server
+24.04 LTS**. Its [setup guide](../examples/edge/README.md#set-up-the-reference-device)
+uses the same profile. No physical Pi execution has been established; hosted ARM64
+evidence does not establish device latency, thermal behavior, battery life or sensor
+integration. See the [release/support criteria](../CONTRIBUTING.md#release-and-support-criteria).
 
-**Exactly one next action:** measure direct native inference, thread dispatch,
-the ONNX adapter and TEMMS against the same warmed session using balanced paired
-ordering, full-output checks and bounded fresh-process repetitions before choosing
-an optimization.
+**Exactly one next action:** run the unchanged constrained qualification on that
+physical Pi and retain its board identity, power/cooling configuration and complete
+raw evidence before treating the mounted-device target as qualified.
 
-Read `TEMMS.reconcile` in `src/temms/engine.py`, `OnnxRuntime.infer` in
-`src/temms/adapters/onnx.py`, and `prepare_workload` in `examples/live_swap/workload.py`.
-The hardest invariant is that an admitted request retains its captured model and
-attribution across replacement. Exercise without AI: make the controlled old-model
-request fail after a new model publishes, and verify that the new model still serves.
+Read `OnnxRuntime.infer` in `src/temms/adapters/onnx.py` and the controlled interleavings
+in `tests/test_onnx_runtime.py`. The hardest invariant is that an admitted request
+retains its captured model and attribution across replacement. Exercise without AI:
+make the controlled old-model request fail after a new model publishes, and verify
+that the new model still serves.

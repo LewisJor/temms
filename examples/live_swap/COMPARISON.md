@@ -797,3 +797,75 @@ not just Python call overhead. Direct native execution blocks the event loop; a
 smaller number cannot justify dropping asynchronous progress. Fresh processes still
 share the OS and filesystem cache. This steady-state probe measures neither load
 contention, cancellation, multi-request throughput, task quality nor energy use.
+
+## Four-path dispatch result — 2026-10-20
+
+**Decision: retain the inference dispatch implementation.** No layer met the
+predeclared criterion for either model across all four processes. This does not
+establish zero overhead or a speed advantage.
+
+The [single collection run](https://github.com/LewisJor/temms/actions/runs/39501140290)
+used source `d0e2f324580dedf406b0227a964802f39220f1a5`. It completed without retries:
+four distinct processes, **1,920 blocks and 7,680 timed calls**, plus 272 declared
+untimed calls. An independent stdlib-only audit reconstructed reference float32
+hashes, checked every recorded path fingerprint and returned model identity,
+verified balanced orders, and recomputed all summaries from raw durations. All nine
+installed module hashes match the retained source archive and wheel. The audit
+checks recorded evidence; it does not independently rerun the inference engine.
+
+Environment: Ubuntu 24.04.5, Linux 6.17 Azure x86_64, AMD EPYC 7763 with four exposed
+logical CPUs, Python 3.12.15, ONNX Runtime 1.24.1, NumPy 2.4.2, Pillow 12.1.0 and
+TEMMS 0.2.0a1. CPU provider, native threads 1/1, default CPU arena enabled. The
+verified network namespace had only loopback and rejected external direct-IP
+connections. These host measurements have no edge-container quota or memory cap.
+
+Each cell below is **mean / p50 / p95 milliseconds**, with 240 observations per
+path/model/process. Rows retain execution order:
+
+| Process | Model | Native | Threaded | Adapter | TEMMS |
+| --- | --- | --- | --- | --- | --- |
+| 1 | MobileNetV2 | 10.733 / 10.692 / 11.266 | 10.643 / 10.633 / 11.009 | 10.670 / 10.633 / 11.066 | 10.657 / 10.657 / 11.002 |
+| 1 | ResNet18 | 39.420 / 39.507 / 40.145 | 39.143 / 39.074 / 39.959 | 39.194 / 39.128 / 39.961 | 39.201 / 39.109 / 39.983 |
+| 2 | ResNet18 | 39.640 / 39.746 / 40.307 | 39.807 / 39.871 / 40.521 | 39.799 / 39.825 / 40.552 | 39.809 / 39.776 / 40.468 |
+| 2 | MobileNetV2 | 10.291 / 10.269 / 10.532 | 10.594 / 10.566 / 10.865 | 10.591 / 10.577 / 10.863 | 10.596 / 10.594 / 10.826 |
+| 3 | MobileNetV2 | 10.727 / 10.691 / 11.205 | 10.550 / 10.529 / 10.825 | 10.548 / 10.528 / 10.791 | 10.548 / 10.533 / 10.800 |
+| 3 | ResNet18 | 39.668 / 39.762 / 40.195 | 39.340 / 39.147 / 40.267 | 39.374 / 39.190 / 40.209 | 39.352 / 39.171 / 40.192 |
+| 4 | ResNet18 | 39.905 / 39.913 / 40.459 | 39.386 / 39.158 / 40.187 | 39.421 / 39.286 / 40.280 | 39.471 / 39.263 / 40.313 |
+| 4 | MobileNetV2 | 10.810 / 10.721 / 11.376 | 10.698 / 10.675 / 10.986 | 10.714 / 10.682 / 11.006 | 10.709 / 10.673 / 10.951 |
+
+Signed within-block differences below are **mean / p50 / p95 microseconds**,
+again 240 observations per cell. A difference's p95 is not end-to-end tail latency.
+The last column is the process/model's predeclared median decision threshold:
+
+| Process | Model | Threaded − native | Adapter − threaded | TEMMS − adapter | Threshold (µs) |
+| --- | --- | --- | --- | --- | ---: |
+| 1 | MobileNetV2 | −90.187 / −14.953 / 359.679 | 26.667 / 21.074 / 295.503 | −13.005 / −6.748 / 313.211 | 106.915 |
+| 1 | ResNet18 | −276.711 / −209.761 / 550.213 | 50.295 / 46.752 / 884.921 | 7.314 / −11.787 / 882.004 | 395.069 |
+| 2 | ResNet18 | 166.929 / 240.090 / 1291.371 | −8.016 / −0.560 / 1008.498 | 10.527 / −45.861 / 1266.211 | 397.460 |
+| 2 | MobileNetV2 | 303.249 / 293.169 / 565.474 | −3.041 / −7.298 / 311.546 | 4.995 / 22.417 / 263.801 | 102.694 |
+| 3 | MobileNetV2 | −176.863 / −179.571 / 416.390 | −2.012 / 12.303 / 238.301 | −0.095 / 5.265 / 274.198 | 106.907 |
+| 3 | ResNet18 | −327.735 / −389.014 / 862.802 | 33.598 / 19.331 / 1073.862 | −21.647 / −26.269 / 1150.439 | 397.616 |
+| 4 | ResNet18 | −518.740 / −653.202 / 410.966 | 34.645 / 57.889 / 1119.622 | 49.587 / −27.005 / 1242.718 | 399.131 |
+| 4 | MobileNetV2 | −112.092 / −12.769 / 365.024 | 16.838 / 5.240 / 291.543 | −5.076 / 8.997 / 308.834 | 107.207 |
+
+Threaded-minus-native changes sign between processes. The adapter and TEMMS
+differences are below the decision threshold in every process; negative values
+are retained rather than interpreted as free execution. Balanced order does not
+remove variability: native position medians span 80–452 µs within MobileNet
+processes and 94–465 µs within ResNet processes. Order-specific adapter/TEMMS
+medians cross zero in every process. Each exact-order cell has only ten blocks;
+these are not independent replicates or grounds for selecting a faster order.
+
+Raw records are in the workflow's `ubuntu24-qualification-39501140290-1` artifact
+(30-day retention), also downloaded under `.demo-assets/live-swap/dispatch-20261020/`.
+That local directory retains the source archive, independent audit code, JSON/text
+results and provenance checks. The original auditor rejected an empty route-table
+string before reading timings; its preserved version and correction record show
+the sole repair: accept empty or header-only tables while rejecting route rows.
+No statistical criterion or raw measurement changed. The corrected auditor SHA-256
+is `37369f984d694f0682f03be03eaf85141ef2a10a21c90ccd6835ab23b9a62c36`.
+
+The later adapter lock-storage fix is outside this measured revision. It removes
+retained entries for unknown slots; this experiment is not a before/after speed
+comparison for that fix. Physical Raspberry Pi latency, throughput, thermal
+behavior and power consumption remain unmeasured.
