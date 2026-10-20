@@ -252,6 +252,12 @@ user inside a new Linux network namespace, with no external interface. A direct-
 probe must fail with the kernel's no-route error before the replay starts. There is
 no fallback to connected execution if isolation fails.
 
+For a deliberate timing study, manually dispatch that workflow with `dispatch_probe`
+enabled. It adds four fresh processes of the
+[four-path dispatch experiment](COMPARISON.md#four-path-dispatch-protocol--2026-10-20)
+inside the same disconnected namespace and retains their raw records in the artifact.
+Ordinary push and pull-request qualification omits this optional timing study.
+
 The qualification pacing is declared as `--frames 12 --interval 0.5`: 84 attempts
 across seven phases, with six seconds of pacing per phase. All seven scenes and all
 twenty served inputs must pass in one run. Every served frame's full scores and

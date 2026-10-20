@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      dispatch_probe:
+        description: Run four fresh processes of the balanced inference-dispatch probe
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -112,19 +117,22 @@ jobs:
           python examples/live_swap/workload.py --assets "$ASSETS" 2>&1 | tee "$EVIDENCE/workload-preparation.log"
           cp examples/live_swap/assets.json "$EVIDENCE/assets.json"
           cp examples/live_swap/workload.json "$EVIDENCE/workload.json"
-      - name: Run all seven scenes without external networking
+      - name: Run the replay and optional dispatch probe without external networking
+        env:
+          DISPATCH_PROBE: ${{ github.event_name == 'workflow_dispatch' && inputs.dispatch_probe }}
         run: |
           sudo -n unshare --net --setgid "$(id -g)" --setuid "$(id -u)" -- \
             "$(command -v python)" - "$PWD" "$ASSETS" "$EVIDENCE" \
-            "$(readlink /proc/self/ns/net)" <<'PY' 2>&1 | tee "$EVIDENCE/offline.log"
+            "$(readlink /proc/self/ns/net)" "$DISPATCH_PROBE" <<'PY' 2>&1 | tee "$EVIDENCE/offline.log"
           import errno
           import json
           import os
           import socket
+          import subprocess
           import sys
           from pathlib import Path
 
-          workspace, assets, evidence, host_namespace = sys.argv[1:]
+          workspace, assets, evidence, host_namespace, dispatch_probe = sys.argv[1:]
           probe = {
               'host_namespace': host_namespace,
               'namespace': os.readlink('/proc/self/ns/net'),
@@ -145,9 +153,19 @@ jobs:
           assert all(name == 'lo' for _, name in probe['interfaces']), probe
           assert probe['connect_errno'] == errno.ENETUNREACH, probe
           print('Network isolation verified; starting the real replay.', flush=True)
-          os.execv(sys.executable, [sys.executable, str(Path(workspace, 'examples/live_swap/run.py')),
+          subprocess.run([sys.executable, str(Path(workspace, 'examples/live_swap/run.py')),
               '--assets', assets, '--records', str(Path(evidence, 'replay.jsonl')),
-              '--frames', '12', '--interval', '0.5'])
+              '--frames', '12', '--interval', '0.5'], check=True)
+          if dispatch_probe == 'true':
+              records = Path(evidence, 'dispatch')
+              records.mkdir()
+              for repetition in range(4):
+                  command = [sys.executable, str(Path(workspace, 'examples/live_swap/overhead.py')),
+                             '--assets', assets, '--blocks', '240',
+                             '--records', str(records / f'run-{repetition + 1}.jsonl')]
+                  if repetition % 2:
+                      command.append('--reverse-models')
+                  subprocess.run(command, check=True)
           PY
       - name: Verify raw output integrity, scene evidence and unchanged assets
         run: |

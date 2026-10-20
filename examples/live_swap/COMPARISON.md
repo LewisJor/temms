@@ -168,11 +168,13 @@ size. Report bytes on macOS and convert Linux KiB to bytes; unsupported platform
 report unavailable. Do not subtract high-water marks or call Python allocation
 tracking native model memory. Power/energy and hard real-time guarantees are not measured.
 
-Wrapper overhead is a **separate paired experiment**: call `TEMMS.infer` and
+The historical wrapper probe was a **separate paired experiment**: call `TEMMS.infer` and
 `OnnxRuntime.infer` on the same already-active session/input, alternating pair order.
 Retain signed per-pair differences. This excludes preprocessing, activation, policy
 selection and request queueing; negative differences are measurement noise, not
 evidence that a wrapper accelerates inference.
+The current command uses the [four-path dispatch protocol](#four-path-dispatch-protocol--2026-10-20)
+below; historical files retain their original two-path schema and results.
 
 Method references: [ONNX Runtime threading](https://onnxruntime.ai/docs/performance/tune-performance/threading.html),
 [Python monotonic performance timer](https://docs.python.org/3/library/time.html#time.perf_counter_ns),
@@ -728,3 +730,70 @@ All raw runs, the 47-file source archive, exact order, isolation probe and indep
 `.demo-assets/live-swap/arena-20261012/`. Frozen runner SHA-256:
 `999c11fa94f2ca7ba95ee47e6570e174c73c2ec4cdb45b35c0c1e9e5d41b473a`.
 Earlier experiments retain their original source/metadata and are not pooled.
+
+## Four-path dispatch protocol — 2026-10-20
+
+**Hypothesis:** separating native execution, thread dispatch, the ONNX adapter and
+TEMMS will identify whether a material steady-state cost belongs to the library.
+The earlier two-path probe included the adapter and thread dispatch in both arms.
+This replacement probe uses the same native session and input for four paths:
+
+1. `session.run(None, dict(feed))` directly on the calling thread.
+2. The same native call through `asyncio.to_thread`.
+3. `OnnxRuntime.infer`.
+4. `TEMMS.infer` using that runtime.
+
+The injected factory captures the ordinary session without wrapping it or reading
+private runtime state. Model loading and the adapter's initial warmup are outside
+timing; that warmup discards its output. A separate native call supplies a copied,
+finite reference. Eight further calls per path warm dispatch and validate complete
+outputs. Input buffers are read-only. Every timed block runs all four paths in one
+of the 24 possible orders; ten complete cycles give **240 blocks per model per
+process**. All normal mapping copies, locks, dispatch and result construction are
+inside the corresponding timed call. Validation, record writing, preprocessing,
+activation, policy and reconciliation are outside it. Failed output/identity checks
+abort the run; there is no retry or selective removal of slow samples.
+
+Before data collection, the repetition count is fixed at **four fresh processes**
+with alternating model order: MobileNet/ResNet, ResNet/MobileNet, MobileNet/ResNet,
+ResNet/MobileNet. All use the same pinned assets, Chelsea input, CPU provider and
+one intra-op/inter-op thread per session. The existing Ubuntu 24.04 qualification
+can run this optional probe in its verified disconnected network namespace:
+
+```bash
+gh workflow run ubuntu24.yml --ref main -f dispatch_probe=true
+```
+
+The normal push/PR checks omit the timing probe. A manual run retains four JSONL
+files under `dispatch/` in its qualification artifact, plus source/wheel provenance,
+CPU details, dependency versions and the isolation probe. These are hosted x86_64
+measurements without the separate edge container's CPU/memory limits; they do not
+qualify physical Pi performance. Run each fresh process locally with:
+
+```bash
+python examples/live_swap/overhead.py --blocks 240 --records /tmp/temms-dispatch-1.jsonl
+python examples/live_swap/overhead.py --blocks 240 --reverse-models --records /tmp/temms-dispatch-2.jsonl
+python examples/live_swap/overhead.py --blocks 240 --records /tmp/temms-dispatch-3.jsonl
+python examples/live_swap/overhead.py --blocks 240 --reverse-models --records /tmp/temms-dispatch-4.jsonl
+```
+
+Use fresh record paths and avoid concurrent workloads. Retain each process/model's
+path durations and signed within-block differences: threaded minus native, adapter
+minus threaded, and TEMMS minus adapter. Report count, mean, median and p95; retain
+order/position splits when auditing. Do not pool repeated blocks as independent
+processes or describe p95 of a difference as end-to-end tail latency.
+
+**Predeclared optimization decision:** investigate a layer only if its median signed
+difference is positive and exceeds `max(50 microseconds, 1% of native median)` for
+at least one predeclared model in every fresh process. Otherwise retain the implementation and report
+noise or a cost below that practical threshold. An actual optimization would still
+require unchanged-protocol before/after measurements meeting that improvement
+threshold for that model in every process, no median or p95 regression greater
+than the same threshold for either model, identical outputs and attribution, and passing concurrency/cancellation
+contracts. These are experimental decision rules, not product latency promises.
+
+Native versus threaded includes thread/core/cache placement and scheduling effects,
+not just Python call overhead. Direct native execution blocks the event loop; a
+smaller number cannot justify dropping asynchronous progress. Fresh processes still
+share the OS and filesystem cache. This steady-state probe measures neither load
+contention, cancellation, multi-request throughput, task quality nor energy use.

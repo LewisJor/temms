@@ -1,7 +1,25 @@
 # TEMMS progress — updated 2026-10-20
 
 TEMMS remains an alpha Python library for application-owned local inference. This
-iteration starts from `8caf55ac` and makes three bounded changes: remove the
+measurement pass starts from `fe6a079e`. The baseline passed 275 tests; the current
+suite passes **310 tests with zero skips**, with Ruff, strict mypy, architecture
+checks, source/wheel builds and the strict documentation build passing.
+
+The [predeclared dispatch experiment](../examples/live_swap/COMPARISON.md#four-path-dispatch-protocol--2026-10-20)
+replaces the two-path probe with four equivalent paths on one warmed session.
+Four fresh Ubuntu processes and balanced call/model order will test whether a
+material cost belongs to thread dispatch, the adapter or TEMMS. Collection is
+pending; no performance improvement is claimed. Support code grows by 85 probe
+lines and 259 probe-test lines, outside the installed library.
+
+A separate characterization adds 42 test lines and seven architecture-document
+lines: inference snapshots its mapping but borrows mutable values, even after
+caller cancellation. The test shows why input storage must remain unchanged until
+native work completes. No deep copies, scheduling policy or runtime API was added.
+
+## Previous qualification repair
+
+The previous iteration started from `8caf55ac` and made three bounded changes: remove the
 graphical simulator, repair fresh qualification input preparation, and honor every
 explicitly injected ONNX session factory. No core policy or public protocol changed.
 
@@ -42,7 +60,7 @@ unchanged.
 
 ## Local verification and size
 
-The full suite passes **275 tests with zero skips** on macOS ARM64, Python 3.11.8,
+That repair passed **275 tests with zero skips** on macOS ARM64, Python 3.11.8,
 ONNX Runtime 1.24.1, NumPy 2.4.2 and Pillow 12.1.0. The lower count reflects removal
 of simulator-specific tests, with new preparation and injection regressions added.
 Ruff, strict mypy on ten files, the architecture budget and the strict Sphinx build

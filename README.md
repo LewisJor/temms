@@ -250,7 +250,8 @@ The [comparison protocol and results](examples/live_swap/COMPARISON.md) explain
 the shared request schedule, deadlines, policy admission, process memory, and raw
 records. Background replacement keeps admitting requests on the old model while
 it remains feasible; startup and infeasible-active transitions wait for replacement.
-A separate paired experiment measures inference wrapper overhead. The initial
+A separate balanced experiment measures native, thread-dispatch, adapter and TEMMS
+inference costs. The initial
 blocking comparison improved raw correctness slightly but did not improve correct
 responses before the predeclared deadline over fixed MobileNetV2.
 In the follow-up on the same Mac and workload, background swapping delivered
