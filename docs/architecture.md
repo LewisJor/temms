@@ -138,6 +138,10 @@ Runtime-specific dependencies live only in adapters.
 - No compatibility facade for the previous prototype.
 - No abstraction without two concrete consumers.
 
+The import check covers every direct core file, including public exports. It allows
+standard-library and TEMMS imports, with SQLite explicitly excluded. This static
+check supplements installed-package qualification; it does not analyze dynamic imports.
+
 ## Runtime choice and long-term fit
 
 Reviewed against primary documentation on **2026-10-13**. The assumed customer is

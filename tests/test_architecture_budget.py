@@ -1,22 +1,12 @@
 """Keep the AI-assisted codebase inside an explicit complexity budget."""
 
 import ast
+import sys
 import tomllib
 from pathlib import Path
 
 CORE = Path("src/temms")
 CORE_FILES = sorted(path for path in CORE.glob("*.py") if path.name != "__init__.py")
-FORBIDDEN_IMPORTS = {
-    "fastapi",
-    "httpx",
-    "mlflow",
-    "onnxruntime",
-    "pydantic",
-    "prometheus_client",
-    "sqlalchemy",
-    "sqlite3",
-    "uvicorn",
-}
 
 
 def test_core_stays_below_concept_and_line_budgets() -> None:
@@ -40,19 +30,20 @@ def test_core_has_only_the_intended_protocols() -> None:
 
 def test_core_has_no_platform_dependencies_or_subpackages() -> None:
     imported: set[str] = set()
-    for path in CORE_FILES:
+    for path in CORE.glob("*.py"):
         tree = ast.parse(path.read_text(), filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 imported.update(alias.name.split(".")[0] for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.module:
+            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
                 imported.add(node.module.split(".")[0])
     unexpected_dirs = [
         path.name
         for path in CORE.iterdir()
         if path.is_dir() and path.name not in {"__pycache__", "adapters"}
     ]
-    assert imported.isdisjoint(FORBIDDEN_IMPORTS), imported & FORBIDDEN_IMPORTS
+    allowed = (sys.stdlib_module_names | {"temms"}) - {"sqlite3"}
+    assert imported <= allowed, imported - allowed
     assert not unexpected_dirs, unexpected_dirs
 
 

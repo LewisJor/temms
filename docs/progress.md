@@ -1,11 +1,37 @@
-# TEMMS progress — updated 2026-10-20
+# TEMMS progress — updated 2026-10-21
 
 TEMMS remains an alpha Python library for application-owned local inference.
-This pass starts at `20a0bd36`: all five hosted workflows and the local **314-test
-suite with zero skips** passed. Review found a dependency-resolution defect worth
-fixing; no further adapter behavior change was justified.
+This pass starts at `88083b1a`, where all five hosted workflows passed. A focused
+review of first-install and offline preparation found no reproducible defect.
 
-## Optional native dependency compatibility
+## Dependency boundary regression guard
+
+**Hypothesis:** the architecture test's dependency denylist permits undeclared
+third-party imports, weakening the zero-dependency boundary. Acceptance requires
+rejecting those imports without rejecting standard-library or local imports and
+without changing library behavior.
+
+An isolated source-mutation probe confirmed four false passes: a `requests` import,
+a `from requests.sessions` import, a NumPy import in public exports, and a deferred
+NumPy import inside a function. The guard now checks all direct core files,
+including `__init__.py`, against Python's standard-library module names and TEMMS.
+All four mutations fail. Unchanged source, a standard-library import and a relative
+local import pass; the existing SQLite prohibition remains enforced.
+
+The test is **nine lines smaller**. Core, adapters, public APIs and distribution
+metadata are unchanged. Before/after results and the standalone probe are retained
+in `.demo-assets/architecture-20261021/`. This is preventive static coverage;
+dynamic imports still require review and installed-package checks.
+
+The full suite passed **314 tests with zero skips** before and after the change.
+Ruff and strict mypy passed. The strict documentation build passed. No performance
+measurement was needed for this test-only change; prior measurements below retain
+their original revisions and scope.
+
+## Previous pass: optional native dependency compatibility
+
+The October 20 pass started at `20a0bd36` and reproduced a dependency-resolution
+defect. Its evidence and shipped correction follow.
 
 **Hypothesis:** the independently declared floors `onnxruntime>=1.16` and
 `numpy>=1.26` permit an installation that cannot import the native runtime. Acceptance
