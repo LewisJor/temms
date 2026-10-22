@@ -22,7 +22,8 @@ and fresh-container restart. See the [verification record](docs/progress.md) for
 completed runs; the configured qualification is not itself evidence of a pass.
 The chosen mounted-device target is a **Raspberry Pi 5 (4 GB) with 64-bit Ubuntu
 Server 24.04 LTS**. Follow the [device setup](examples/edge/README.md#set-up-the-reference-device)
-to run the same checks on the board; physical Pi qualification is still pending.
+to run the same checks on the board when hardware is available. Physical Pi
+qualification is deferred; the hosted Ubuntu examples remain available now.
 
 ## Install and try
 

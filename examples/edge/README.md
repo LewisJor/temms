@@ -53,9 +53,10 @@ Then clone TEMMS and follow the same preparation and run commands below on the P
 This uses prepared image inputs; no camera, ROS installation or graphical simulator
 is required for these model-execution checks.
 
-**Physical-device status:** a Pi 5 run has not yet been recorded. The passing
-GitHub ARM64 jobs establish the hosted baseline; the actual Pi must produce its
-own evidence before it is qualified.
+**Physical-device status:** qualification is deferred until hardware is available;
+a Pi 5 run has not yet been recorded. The passing GitHub ARM64 jobs establish the
+hosted baseline and remain usable without a board. The actual Pi must produce
+its own evidence before it is qualified.
 
 ## Prepare and run
 
