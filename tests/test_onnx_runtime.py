@@ -121,27 +121,40 @@ async def test_unknown_slot_queries_do_not_retain_caller_slot_names(operation):
 
 
 @pytest.mark.asyncio
-async def test_onnx_inference_stays_on_old_session_across_swap(tmp_path: Path) -> None:
+@pytest.mark.parametrize("old_fails", [False, True], ids=["returns", "raises"])
+async def test_onnx_inference_stays_on_old_session_across_swap(tmp_path: Path, old_fails) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from temms import TEMMS, BestFeasibleSelector, Constraint, ModelPolicy, Operator
+
     first_path = tmp_path / "first.onnx"
     second_path = tmp_path / "second.onnx"
     first_path.write_bytes(b"first")
     second_path.write_bytes(b"second")
     first = ModelRef(id="first", digest="sha256:first")
     second = ModelRef(id="second", digest="sha256:second")
-    started = threading.Event()
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
     release = threading.Event()
+    failure = RuntimeError("admitted first-model inference failed")
+    calls, constructions = [], []
 
     class BlockingSession:
         def run(self, output_names, input_feed):
-            started.set()
-            assert release.wait(timeout=2)
+            calls.append(("first", input_feed["x"]))
+            loop.call_soon_threadsafe(started.set)
+            assert release.wait(timeout=10), "test did not release admitted inference"
+            if old_fails:
+                raise failure
             return [f"first:{input_feed['x']}"]
 
     class ImmediateSession:
         def run(self, output_names, input_feed):
+            calls.append(("second", input_feed["x"]))
             return [f"second:{input_feed['x']}"]
 
     def factory(model_path: str, providers):
+        constructions.append(model_path)
         return BlockingSession() if model_path == str(first_path) else ImmediateSession()
 
     runtime = OnnxRuntime(
@@ -153,20 +166,47 @@ async def test_onnx_inference_stays_on_old_session_across_swap(tmp_path: Path) -
         },
         session_factory=factory,
     )
-    await runtime.activate("vision", first)
+    temms = TEMMS(runtime=runtime, selector=BestFeasibleSelector([
+        ModelPolicy(ref, constraints=(Constraint("mode", Operator.EQ, ref.id),))
+        for ref in (first, second)
+    ]))
+    executor = ThreadPoolExecutor(max_workers=2)
+    loop.set_default_executor(executor)
+    in_flight = None
+    try:
+        await asyncio.wait_for(temms.reconcile("vision", {"mode": first.id}), 2)
+        in_flight = asyncio.create_task(temms.infer("vision", {"x": "old-request"}))
+        await asyncio.wait_for(started.wait(), 2)
+        published = await asyncio.wait_for(temms.reconcile("vision", {"mode": second.id}), 2)
+        assert published.activation.active_model == second
+        assert (await runtime.state("vision")).active_model == second
+        assert not in_flight.done() and not release.is_set()
+        before = await asyncio.wait_for(temms.infer("vision", {"x": "before-release"}), 2)
+        assert before.model == second and before.output == ("second:before-release",)
+        assert not in_flight.done()
 
-    in_flight = asyncio.create_task(runtime.infer("vision", {"x": "request"}))
-    assert await asyncio.to_thread(started.wait, 2)
-    await runtime.activate("vision", second)
-    release.set()
-
-    old_result = await in_flight
-    new_result = await runtime.infer("vision", {"x": "request"})
-
-    assert old_result.model == first
-    assert old_result.output == ("first:request",)
-    assert new_result.model == second
-    assert new_result.output == ("second:request",)
+        release.set()
+        if old_fails:
+            with pytest.raises(RuntimeError) as caught:
+                await asyncio.wait_for(in_flight, 2)
+            assert caught.value is failure
+        else:
+            old_result = await asyncio.wait_for(in_flight, 2)
+            assert old_result.model == first and old_result.output == ("first:old-request",)
+        assert (await runtime.state("vision")).active_model == second
+        after = await asyncio.wait_for(temms.infer("vision", {"x": "after-release"}), 2)
+        assert after.model == second and after.output == ("second:after-release",)
+        assert calls == [("first", "old-request"), ("second", "before-release"),
+                         ("second", "after-release")]
+        assert constructions == [str(first_path), str(second_path)]
+    finally:
+        release.set()
+        try:
+            if in_flight is not None:
+                in_flight.cancel()
+                await asyncio.wait_for(asyncio.gather(in_flight, return_exceptions=True), 2)
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
 
 
 @pytest.mark.asyncio

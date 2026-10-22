@@ -1,9 +1,58 @@
 # TEMMS progress — updated 2026-10-22
 
 TEMMS remains an alpha Python library for application-owned local inference.
-The completion audit starts at `aaf27f4f`; local HEAD and remote `main` match.
-The previous pass made verified progress by tightening the dependency guard.
+This pass starts at `4acb3d9d` and follows the completed software audit below.
+It checks a fresh clone and the old-request failure interleaving previously left
+as an exercise. The runtime implementation is unchanged.
 Physical-device testing is deferred at the owner's request.
+
+## Inference failure after publication
+
+**Hypothesis:** an admitted old-model request can fail after a replacement publishes
+without undoing that publication, retrying the request or hiding its original error.
+The existing controlled swap test now covers both success and failure through one
+TEMMS owner. Events establish worker admission, replacement publication and successful
+replacement service before releasing the old request. Its original exception must
+reach the caller; a second replacement request must still succeed afterward.
+
+The unchanged implementation passes both cases. Three isolated deliberate regressions
+are rejected at the intended assertions: restoring the old model, retrying on the
+replacement before rethrowing, and swallowing the error. Exact invocation and
+construction logs detect extra work; bounded waits and finally cleanup drain the
+worker. This is injected-session contract coverage, separate from the existing
+real-ONNX numerical pinning test, and makes no native-crash or hard-cancellation claim.
+
+The full suite increased from **314 to 315 passing tests, zero skips**. Ruff,
+strict mypy and strict Sphinx passed. The extended test adds **40 net support lines**; core, adapters,
+public APIs and dependencies did not grow. Mutation controls, failure logs, source/test
+hashes and full-suite XML are retained in `.demo-assets/inflight-failure-20261022/`.
+
+## Fresh-clone trial — October 22
+
+A new HTTPS clone of `4acb3d9d05c450478926a29390dd3f9dc41bc42a` and a fresh
+CPython 3.11.8 environment on macOS ARM64 passed the documented `pip install .`,
+tiny example, README quickstart and no-active-model example. All nine installed
+modules matched source hashes, installation was non-editable, and NumPy, ONNX,
+ONNX Runtime and Pillow were absent from the core-only environment.
+
+The documented `pip install '.[onnx,demo]'` resolved ONNX Runtime **1.31.0**,
+NumPy **2.4.6** and Pillow **13.0.0** without version overrides. Empty-cache
+preparation verified four shared assets and twenty bundled input images.
+One default replay then ran with macOS network denial; its launcher observed
+TCP `EPERM` before executing the demo in the same sandbox. It offered **84 requests**:
+**69 served, 3 waiting and 12 abstained**. All seven scenes passed, including
+eleven successful requests after replacement failure. Independent record checks
+confirmed twenty-input coverage, **35/40** served model/input pairs and zero
+full-score or model-attribution mismatches. Sources and all 24 assets stayed unchanged.
+
+No preparation or replay retry was needed. Pip reported an unwritable cache, and
+the separate native-import probe warned that its telemetry identifier could not
+be persisted; installation and inference still succeeded. Replay stderr was empty.
+This validates the documented Mac installation and prepared offline execution,
+not performance, independent engine correctness, Linux resource limits or physical
+hardware. The library source matches this checkout; only tests and documentation
+changed afterward. Commands, dependency versions, hashes, network evidence and
+raw records are retained in `.demo-assets/fresh-clone-20261022/`.
 
 ## Current software milestone status
 
@@ -15,16 +64,16 @@ The original available-CPU milestones are complete within their declared scope:
 | B: one real local workload | Current runtime, executable examples and manifests match the retained `f28365ad` Ubuntu evidence. An independent audit recomputed all 69 full-score/admission checks, twenty-input coverage, seven scenes, eleven post-failure continuity witnesses and twelve abstentions. Namespace evidence establishes offline execution. |
 | C: measured value and clean integration | An independent audit recalculated 33 retained strategy runs / 4,620 requests, confirming matched protocols, outcome counts, latency, throughput and summaries. The separate 7,680-call dispatch audit and installed-package trial retain their historical scope. |
 
-All five workflows passed at `aaf27f4f`, rechecked against GitHub:
-[CI](https://github.com/LewisJor/temms/actions/runs/39611652107),
-[installed core](https://github.com/LewisJor/temms/actions/runs/39611652064),
-[documentation](https://github.com/LewisJor/temms/actions/runs/39611652068),
-[native x86/ARM qualification](https://github.com/LewisJor/temms/actions/runs/39611652042)
-and [Ubuntu replay](https://github.com/LewisJor/temms/actions/runs/39611652189).
+The pre-change baseline passed all five workflows at `4acb3d9d`:
+[CI](https://github.com/LewisJor/temms/actions/runs/39789224968),
+[installed core](https://github.com/LewisJor/temms/actions/runs/39789224820),
+[documentation](https://github.com/LewisJor/temms/actions/runs/39789224814),
+[native x86/ARM qualification](https://github.com/LewisJor/temms/actions/runs/39789224837)
+and [Ubuntu replay](https://github.com/LewisJor/temms/actions/runs/39789224858).
 The native jobs completed installed-source verification, the no-skip test gate,
 two fresh constrained workers and record verification on each architecture.
 
-The graphical simulator implementation and workflow are removed. This audit
+The graphical simulator implementation and workflow are removed. That audit
 rechecked records and source identity without rerunning benchmarks or inference.
 Completion means the requested software demonstration and qualification are
 established; it does not establish unique novelty, general superiority or production readiness.
@@ -58,7 +107,7 @@ established; it does not establish unique novelty, general superiority or produc
   Fresh offline preparation and corrupt-source handling passed, followed by
   [native qualification](https://github.com/LewisJor/temms/actions/runs/39496958193).
 
-The full local suite passed **314 tests, zero skips**, before and after the latest
+The full local suite passed **314 tests, zero skips**, before and after the dependency
 guard change; Ruff, strict mypy and strict Sphinx passed. Core remains **429 physical
 lines** across five modules, largest 178; exports 50, adapters **223**, tiny example
 37, and required runtime dependencies **zero**. The corrected wheel measured
@@ -135,12 +184,11 @@ The reference device remains **Pi 5, 4 GB, 64-bit Ubuntu Server 24.04 LTS**.
 Physical qualification is deferred until hardware is available. Hosted ARM64 does
 not establish board latency, thermal behavior, battery life or sensor integration.
 
-**Exactly one next action:** complete the owner's fresh-clone trial using the
-[Ubuntu qualification runbook](../examples/live_swap/README.md#ubuntu-2404-qualification-in-github-actions),
-recording integration or diagnostic friction before expanding model or runtime scope.
+**Exactly one next action:** choose one application-specific recorded input/context
+trace and declare its success criterion before changing policy or adding models.
 
 Read `OnnxRuntime.infer` in `src/temms/adapters/onnx.py` and its controlled interleavings
 in `tests/test_onnx_runtime.py`. The hardest invariant is that an admitted request
-retains its captured model across replacement. Small exercise without AI: make the
-old-model request fail after a new model publishes, then verify the new model still
-serves. That exact error interleaving is not currently a dedicated maintained test.
+retains its captured model across replacement. The previously suggested failure
+exercise is now maintained coverage: the old request can fail after publication
+while the replacement remains active and serves subsequent requests.

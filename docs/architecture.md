@@ -82,6 +82,12 @@ An inference request is pinned to the model instance captured at admission. A
 concurrent activation may change later requests but cannot change the in-flight
 request's model or attribution.
 
+An ordinary inference exception from the ONNX adapter propagates to its caller.
+If a replacement has already published, the adapter neither restores the old active
+session nor retries the failed request on the replacement. The controlled swap test
+checks original exception identity and continued replacement service; failures do
+not return a model-tagged `InferenceResult`.
+
 For `OnnxRuntime`, admission occurs when `infer()` captures the loaded session
 under the adapter's single lock, before dispatching inference to a thread.
 Publication occurs when `activate()` assigns the fully loaded and warmed session
